@@ -40,5 +40,6 @@ Project references enforce the constitution's layer rules: `Services` depends on
 |---|---|
 | Setup (T001–T005) | done |
 | Spike: RTP / FU-A / SPS rewrite / transport crypto / Opus (T007, T009–T011) | done — byte-exact vs Python |
-| Spike: libdave build, gateway/voice/go-live, test-pattern run (T006, T008, T012, T013) | not started |
+| Spike: libdave bindings + `IDaveSession` (T008) | done — unit-tested against a fake; native smoke test runs when `libdave.so` is present |
+| Spike: libdave build, gateway/voice/go-live, test-pattern run (T006, T012, T013) | not started |
 | US1–US5 | not started |
