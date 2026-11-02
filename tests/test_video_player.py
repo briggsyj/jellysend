@@ -1660,3 +1660,4 @@ def test_unregister_audio_follower_only_removes_own_event(make_player):
     assert p._audio_drained is ev
     p.unregister_audio_follower(ev)
     assert p._audio_drained is None
+
