@@ -382,6 +382,27 @@ _STREAM_PRESETS: dict[str, tuple[str, float, str]] = {
 _DEFAULT_QUALITY = "1080p"
 
 
+# Query parameters that carry credentials (Jellyfin uses both api_key= and
+# ApiKey=; matching is case-insensitive).
+_SECRET_QUERY_KEYS = frozenset(
+    {"api_key", "apikey", "token", "access_token", "password", "x-emby-token"}
+)
+
+
+def redact_url(url: str) -> str:
+    """Strip credentials (user:pass and secret query params) for safe logging."""
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    p = urlparse(url)
+    netloc = (p.hostname or "") + (f":{p.port}" if p.port else "")
+    query = [
+        (k, v)
+        for k, v in parse_qsl(p.query, keep_blank_values=True)
+        if k.lower() not in _SECRET_QUERY_KEYS
+    ]
+    return urlunparse(p._replace(netloc=netloc, query=urlencode(query)))
+
+
 def _packet_pace_fraction() -> float:
     """Fraction of the frame interval to spread each frame's RTP packets across,
     instead of bursting them (see _DEFAULT_PACKET_PACE). STREAM_PACKET_PACE,
@@ -526,6 +547,8 @@ def _detect_encoder() -> _EncoderConfig | None:
                     "4.2",
                     "-aud",
                     "1",
+                    "-bf",
+                    "0",  # no B-frames: see the h264_vaapi note below
                     "-rc",
                     "cbr",
                     "-b:v",
@@ -557,6 +580,12 @@ def _detect_encoder() -> _EncoderConfig | None:
                     "42",
                     "-aud",
                     "1",
+                    # h264_vaapi defaults to 2 B-frames. Frames are sent in
+                    # decode order with evenly spaced RTP timestamps, so
+                    # B-frames make receivers show them out of order: judder
+                    # even at low load. libx264 zerolatency already uses none.
+                    "-bf",
+                    "0",
                     "-b:v",
                     br,
                 ],
@@ -1170,12 +1199,7 @@ class H264VideoPlayer(threading.Thread):
             except Exception:
                 log.warning("DAVE: failed to register video SSRC", exc_info=True)
         cmd = self._ffmpeg_cmd()
-        from urllib.parse import urlparse, urlunparse
-
-        _p = urlparse(self._url)
-        _safe = urlunparse(
-            _p._replace(netloc=(_p.hostname or "") + (f":{_p.port}" if _p.port else ""))
-        )
+        _safe = redact_url(self._url)
         log.info("Starting H.264 video stream from %s", _safe)
         # Log the encoder and full FFmpeg command (URL redacted) so the active
         # encoder is verifiable from the logs, including after a fallback retry.

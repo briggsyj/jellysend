@@ -18,14 +18,18 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import discord
 
 from cogs.utils import ensure_voice
 from streaming.golive import GoLiveAudioSender, GoLiveConnection, _GoLiveVCProxy
 from streaming.video_player import _ENCODER as _VIDEO_ENCODER
-from streaming.video_player import H264VideoPlayer, _AudioPipeSource, _stream_fps
+from streaming.video_player import (
+    H264VideoPlayer,
+    _AudioPipeSource,
+    _stream_fps,
+    redact_url,
+)
 
 if TYPE_CHECKING:
     from bot import SlopSoil
@@ -37,15 +41,8 @@ _LIVE_FIFO_TIMEOUT = 45.0
 
 
 def _safe_url(url: str) -> str:
-    """Strip credentials (user:pass and api_key= query param) for safe logging."""
-    p = urlparse(url)
-    netloc = (p.hostname or "") + (f":{p.port}" if p.port else "")
-    qs = {
-        k: v
-        for k, v in parse_qs(p.query, keep_blank_values=True).items()
-        if k.lower() not in ("api_key", "token", "password")
-    }
-    return urlunparse(p._replace(netloc=netloc, query=urlencode(qs, doseq=True)))
+    """Strip credentials (user:pass and secret query params) for safe logging."""
+    return redact_url(url)
 
 
 def cancel_stream(bot: SlopSoil, guild_id: int) -> None:
