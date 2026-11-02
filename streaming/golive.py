@@ -436,6 +436,7 @@ class GoLiveAudioSender(threading.Thread):
         file_obj,
         conn: GoLiveConnection,
         is_source_active: Callable[[], bool] | None = None,
+        pause_gate: threading.Event | None = None,
     ) -> None:
         super().__init__(name="GoLiveAudio", daemon=True)
         self._f = file_obj
@@ -445,6 +446,8 @@ class GoLiveAudioSender(threading.Thread):
         # FIFO gap during a software-encoder fallback restart.  When set, a short
         # read is treated as that gap (wait for the new writer) rather than EOF.
         self._is_source_active = is_source_active
+        # Shared with H264VideoPlayer: cleared while playback is paused.
+        self._pause_gate = pause_gate
 
         self._seq: int = 0
         self._ts: int = 0
@@ -479,6 +482,13 @@ class GoLiveAudioSender(threading.Thread):
         loops = 0
 
         while not self._end.is_set():
+            if self._pause_gate is not None and not self._pause_gate.is_set():
+                while not self._pause_gate.wait(timeout=0.1):
+                    if self._end.is_set():
+                        return
+                t0 = time.perf_counter()  # restart pacing after the pause
+                loops = 0
+                continue
             pcm = self._f.read(self._FRAME_SIZE)
             if len(pcm) < self._FRAME_SIZE:
                 # Short read = current FFmpeg closed the FIFO write end.  If the

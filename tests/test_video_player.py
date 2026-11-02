@@ -1207,3 +1207,260 @@ def test_thread_start_join_end_to_end(make_player, popen):
     p.join(timeout=5)
     assert not p.is_alive()
     assert len(_frames(conn)) == 2
+
+
+# ── start offset / pause / seek ──────────────────────────────────────────────
+
+
+class _Gate(threading.Event):
+    """Pause gate whose wait() never blocks; it re-opens after ``opens_after``
+    waits and runs ``on_wait`` (if any) on each wait."""
+
+    def __init__(self, opens_after: int = 2, on_wait=None) -> None:
+        super().__init__()
+        self.waits = 0
+        self.opens_after = opens_after
+        self.on_wait = on_wait
+
+    def wait(self, timeout=None):
+        self.waits += 1
+        if self.on_wait:
+            self.on_wait()
+        if self.waits >= self.opens_after:
+            self.set()
+        return self.is_set()
+
+
+def test_ffmpeg_cmd_start_offset_seeks_before_input(make_player):
+    p, _ = make_player(url="https://h/x.m3u8", start_offset=90.5)
+    cmd = p._ffmpeg_cmd()
+    assert _opt(cmd, "-ss") == "90.500"
+    assert cmd.index("-ss") < cmd.index("-i")
+
+
+@pytest.mark.parametrize("offset", [0.0, -5.0])
+def test_ffmpeg_cmd_no_seek_at_start(make_player, offset):
+    p, _ = make_player(start_offset=offset)
+    assert "-ss" not in p._ffmpeg_cmd()
+    assert p.position == 0.0
+
+
+def test_pause_resume_and_position(make_player):
+    p, _ = make_player(fps=25.0, start_offset=60.0)
+    assert not p.paused and p.pause_gate.is_set()
+    p.pause()
+    assert p.paused and not p.pause_gate.is_set()
+    p.resume()
+    assert not p.paused
+    p._frames_emitted = 50
+    assert p.position == pytest.approx(62.0)
+
+
+def test_stop_requested_reflects_stop(make_player):
+    p, _ = make_player()
+    assert not p.stop_requested
+    p.stop()
+    assert p.stop_requested
+
+
+def test_seek_terminates_running_proc_and_clamps(make_player):
+    p, _ = make_player()
+    p.seek(-3)
+    assert p._seek_to == 0.0  # no proc yet: nothing to terminate
+    proc = _FakeProc(running=True)
+    p._proc = proc
+    p.seek(42.0)
+    assert p._seek_to == 42.0 and proc.terminated == 1
+    done = _FakeProc(running=False)
+    p._proc = done
+    p.seek(1.0)
+    assert done.terminated == 0
+
+
+def test_run_restarts_stream_on_seek(hw_player):
+    p = hw_player
+    offsets = []
+    first_proc = _FakeProc(running=True)
+
+    def fake_stream():
+        offsets.append(p._offset)
+        if len(offsets) == 1:
+            p._proc = first_proc
+            p._frames_emitted = 10
+            p._seek_to = 30.0
+        else:
+            assert p._proc is None and p._seek_to is None
+            p._frames_emitted = 3
+
+    p._stream = fake_stream
+    p.run()
+    assert offsets == [0.0, 30.0]
+    assert first_proc.terminated == 1  # killed before the restart
+    assert p._enc is _HW  # a seek restart is not an encoder fallback
+    assert p.position == pytest.approx(30.0 + 3 / 25)
+
+
+def test_run_seek_restart_without_proc(hw_player):
+    p = hw_player
+    calls = []
+
+    def fake_stream():
+        calls.append(p._offset)
+        if len(calls) == 1:
+            p._proc = None
+            p._seek_to = 5.0
+        p._frames_emitted = 1
+
+    p._stream = fake_stream
+    p.run()
+    assert calls == [0.0, 5.0]
+
+
+def test_stream_pause_mid_stream_holds_then_resumes(make_player, popen):
+    popen(_FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD, _P2, _AUD) + _SC))
+    p, conn = make_player()
+    gate = _Gate(opens_after=3)
+    gate.set()
+    p.pause_gate = gate
+    sent_at_pause = []
+
+    def on_send(pkt):
+        if len(conn.sent) == 1:
+            p.pause()  # pause after the first frame → _t0 already set
+            sent_at_pause.append(len(conn.sent))
+
+    conn.on_send = on_send
+    p._stream()
+    assert sent_at_pause == [1]
+    assert gate.waits == 3  # held until the gate re-opened
+    assert _frames(conn) == [[_IDR], [_P1], [_P2]]
+
+
+def test_stream_paused_before_first_frame(make_player, popen):
+    popen(_FakeProc(stdout=_annexb(_IDR, _AUD) + _SC))
+    p, conn = make_player()
+    p.pause_gate = _Gate(opens_after=2)  # starts cleared (paused)
+    p._stream()
+    assert _frames(conn) == [[_IDR]]
+    assert p.pause_gate.waits == 2
+
+
+def test_stream_stop_while_paused(make_player, popen):
+    proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD), running=True)
+    popen(proc)
+    p, conn = make_player()
+    p.pause_gate = _Gate(opens_after=99, on_wait=p._end.set)
+    p._stream()
+    assert conn.sent == []
+    assert proc.terminated == 1
+
+
+def test_stream_seek_while_paused_bails_out(make_player, popen):
+    proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD), running=True)
+    popen(proc)
+    p, conn = make_player()
+
+    def request_seek():
+        p._seek_to = 12.0
+
+    p.pause_gate = _Gate(opens_after=99, on_wait=request_seek)
+    p._stream()
+    assert conn.sent == []
+    assert proc.terminated == 1  # FFmpeg reaped so run() can restart it
+    assert p._seek_to == 12.0  # left for run() to consume
+
+
+def test_stream_seek_pending_skips_frames_and_tail_flush(make_player, popen):
+    proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD, _P2), running=True)
+    popen(proc)
+    p, conn = make_player()
+
+    def on_send(pkt):
+        p._seek_to = 7.0
+
+    conn.on_send = on_send
+    p._stream()
+    assert _frames(conn) == [[_IDR]]  # P1 and the trailing P2 never sent
+    assert proc.terminated == 1
+
+
+def test_position_reports_pending_seek_target(make_player):
+    p, _ = make_player(fps=25.0, start_offset=10.0)
+    p._frames_emitted = 250
+    assert p.position == pytest.approx(20.0)
+    p.seek(300.0)  # restart not processed by run() yet
+    assert p.position == 300.0
+
+
+# ── seek / natural-end races ─────────────────────────────────────────────────
+
+
+def test_seek_ignored_once_finished(make_player):
+    p, _ = make_player()
+    proc = _FakeProc(running=True)
+    p._proc = proc
+    p._finished = True
+    p.seek(30.0)
+    assert p._seek_to is None and proc.terminated == 0
+
+
+def test_run_marks_finished_so_later_seeks_are_ignored(hw_player):
+    p = hw_player
+
+    def fake_stream():
+        p._frames_emitted = 1
+
+    p._stream = fake_stream
+    p.run()
+    assert p._finished and p._seek_to is None
+    p.seek(10.0)
+    assert p._seek_to is None
+
+
+def test_run_honours_seek_that_lands_at_natural_end(hw_player):
+    p = hw_player
+    offsets = []
+
+    def fake_stream():
+        offsets.append(p._offset)
+        p._frames_emitted = 1
+
+    real_apply = p._apply_pending_seek
+    calls = []
+
+    def apply_then_race():
+        applied = real_apply()
+        calls.append(applied)
+        if len(calls) == 1:
+            p.seek(20.0)  # arrives just after the pending-seek check
+        return applied
+
+    p._stream = fake_stream
+    p._apply_pending_seek = apply_then_race
+    p.run()
+    assert offsets == [0.0, 20.0]
+    assert p._finished and p._seek_to is None
+
+
+def test_run_finally_clears_pending_seek_on_error(hw_player, caplog):
+    p = hw_player
+
+    def boom():
+        p._seek_to = 5.0
+        raise RuntimeError("kaboom")
+
+    p._stream = boom
+    with caplog.at_level("ERROR", logger="streaming.video_player"):
+        p.run()
+    assert p._finished and p._seek_to is None
+
+
+def test_stream_seek_pending_at_popen_kills_fresh_ffmpeg(make_player, popen):
+    proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD), running=True)
+    popen(proc)
+    p, conn = make_player()
+    p._seek_to = 40.0
+    p._stream()
+    assert proc.terminated == 1
+    assert conn.sent == []
+    assert p._seek_to == 40.0  # left for run() to apply

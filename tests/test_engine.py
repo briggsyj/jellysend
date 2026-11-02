@@ -8,6 +8,7 @@ so the real asyncio.to_thread(open, ...) path is exercised.
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,8 +33,13 @@ class FakePlayer:
     instances: list[FakePlayer] = []
     fifo_path = ""
 
-    def __init__(self, url, voice_client, fps, live, audio, probe_size):
+    def __init__(
+        self, url, voice_client, fps, live, audio, probe_size, start_offset=0.0
+    ):
         self.url = url
+        self.start_offset = start_offset
+        self.pause_gate = threading.Event()
+        self.pause_gate.set()
         self.voice_client = voice_client
         self.fps = fps
         self.live = live
@@ -57,6 +63,10 @@ class FakePlayer:
     def is_source_active(self):
         return True
 
+    @property
+    def stop_requested(self):
+        return self.stopped > 0
+
     def join(self):
         return None
 
@@ -64,7 +74,8 @@ class FakePlayer:
 class FakeAudioSender:
     instances: list[FakeAudioSender] = []
 
-    def __init__(self, file_obj, conn, is_source_active):
+    def __init__(self, file_obj, conn, is_source_active, pause_gate=None):
+        self.pause_gate = pause_gate
         self.file_obj = file_obj
         self.conn = conn
         self.is_source_active = is_source_active
@@ -575,3 +586,77 @@ async def test_start_live_cancel_tears_down_connection(env, monkeypatch):
     assert env.bot.live_connections == {}
     assert FakeAudioSender.instances[0].stopped
     FakeAudioSender.instances[0].file_obj.close()
+
+
+# ── start_live_stream: start offset, pause gate, on_end ──────────────────────
+
+
+async def test_start_live_passes_offset_and_pause_gate(env):
+    await _start_live(env, start_offset=95.0)
+    await env.bot.stream_tasks[GID]
+    (vp,) = FakePlayer.instances
+    assert vp.start_offset == 95.0
+    (sender,) = FakeAudioSender.instances
+    assert sender.pause_gate is vp.pause_gate
+    sender.file_obj.close()
+
+
+async def test_start_live_on_end_runs_after_natural_end(env):
+    on_end = AsyncMock()
+    await _start_live(env, on_end=on_end)
+    await env.bot.stream_tasks[GID]
+    await _wait_for(lambda: on_end.await_count == 1)
+    # Cleanup ran before the callback was scheduled.
+    assert env.bot.video_players == {} and env.bot.live_connections == {}
+    FakeAudioSender.instances[0].file_obj.close()
+
+
+async def test_start_live_on_end_skipped_when_stopped(env, monkeypatch):
+    on_end = AsyncMock()
+
+    def join_after_stop(self):
+        self.stopped += 1  # stop() was called (replaced / !media stop)
+
+    monkeypatch.setattr(FakePlayer, "join", join_after_stop)
+    await _start_live(env, on_end=on_end)
+    await env.bot.stream_tasks[GID]
+    await _settle()
+    on_end.assert_not_awaited()
+    FakeAudioSender.instances[0].file_obj.close()
+
+
+async def test_start_live_on_end_skipped_when_cancelled(env, monkeypatch):
+    on_end = AsyncMock()
+    blocker = asyncio.Event()
+    real_to_thread = asyncio.to_thread
+
+    async def to_thread(fn, *a):
+        if fn == FakePlayer.instances[0].join:
+            await blocker.wait()
+            return None
+        return await real_to_thread(fn, *a)
+
+    monkeypatch.setattr(engine.asyncio, "to_thread", to_thread)
+    await _start_live(env, on_end=on_end)
+    await _wait_for(lambda: FakeAudioSender.instances)
+    task = env.bot.stream_tasks[GID]
+    cancel_live_stream(env.bot, GID)
+    await _wait_for(task.done)
+    await _settle()
+    on_end.assert_not_awaited()
+    FakeAudioSender.instances[0].file_obj.close()
+
+
+async def test_start_live_on_end_without_callback(env):
+    await _start_live(env)  # on_end=None: natural end, nothing scheduled
+    await env.bot.stream_tasks[GID]
+    await _settle()
+    FakeAudioSender.instances[0].file_obj.close()
+
+
+async def test_run_on_end_logs_exceptions(caplog):
+    on_end = AsyncMock(side_effect=RuntimeError("advance failed"))
+    with caplog.at_level("ERROR", logger="streaming.engine"):
+        await engine._run_on_end(on_end, "Movie")
+    on_end.assert_awaited_once()
+    assert "end-of-stream callback failed for 'Movie'" in caplog.text

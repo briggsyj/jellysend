@@ -1,9 +1,10 @@
 """Tests for the Jellyfin cog helpers and the JellyfinClient API calls."""
 from __future__ import annotations
 
+import asyncio
 import json
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -507,6 +508,10 @@ def _make_client(**overrides) -> MagicMock:
     client.get_seasons = AsyncMock(return_value=[])
     client.get_episodes = AsyncMock(return_value=[])
     client.start_playback = AsyncMock(return_value=None)
+    client.stop_encoding = AsyncMock()
+    client.get_item = AsyncMock(return_value=None)
+    # A MagicMock attribute is truthy; default to "no SyncPlay credentials".
+    client.has_user_credentials = False
     url_mock = overrides.pop("get_stream_url", None)
     if url_mock is not None:
         # Legacy shorthand: a URL with no PlaybackInfo metadata (→ ffprobe path).
@@ -584,11 +589,34 @@ async def test_media_single_movie_plays_immediately(media_cog):
 
 async def test_media_single_series_goes_to_season_picker(media_cog):
     media_cog.client.search.return_value = [SERIES]
-    media_cog._pick_season_then_episode = AsyncMock()
+    media_cog._pick_season_then_episode = AsyncMock(return_value=EPISODE)
     ctx = _make_ctx()
     await Jellyfin.media.callback(media_cog, ctx, query="breaking bad")
     media_cog._pick_season_then_episode.assert_awaited_once_with(ctx, SERIES)
+    media_cog._play_item.assert_awaited_once_with(ctx, EPISODE)
+
+
+async def test_media_series_picker_cancelled_plays_nothing(media_cog):
+    media_cog.client.search.return_value = [SERIES]
+    media_cog._pick_season_then_episode = AsyncMock(return_value=None)
+    ctx = _make_ctx()
+    await Jellyfin.media.callback(media_cog, ctx, query="breaking bad")
     media_cog._play_item.assert_not_awaited()
+
+
+async def test_media_empty_query_sends_help(media_cog):
+    ctx = _make_ctx()
+    await Jellyfin.media.callback(media_cog, ctx, query="  ")
+    assert _sent(ctx)[0].startswith("**Jellyfin commands**")
+    media_cog.client.search.assert_not_awaited()
+
+
+async def test_media_search_subcommand_delegates(media_cog):
+    media_cog.client.search.return_value = [MOVIE]
+    ctx = _make_ctx()
+    await Jellyfin.media_search.callback(media_cog, ctx, query="stop making sense")
+    media_cog.client.search.assert_awaited_once_with("stop making sense")
+    media_cog._play_item.assert_awaited_once_with(ctx, MOVIE)
 
 
 async def test_media_multiple_results_lists_and_plays_choice(media_cog):
@@ -606,7 +634,7 @@ async def test_media_multiple_results_lists_and_plays_choice(media_cog):
 async def test_media_multiple_results_series_choice(media_cog):
     media_cog.client.search.return_value = [MOVIE, SERIES]
     media_cog.bot.wait_for = AsyncMock(return_value=_reply(" 2 "))
-    media_cog._pick_season_then_episode = AsyncMock()
+    media_cog._pick_season_then_episode = AsyncMock(return_value=None)
     ctx = _make_ctx()
     await Jellyfin.media.callback(media_cog, ctx, query="b")
     media_cog._pick_season_then_episode.assert_awaited_once_with(ctx, SERIES)
@@ -676,10 +704,10 @@ async def test_pick_season_none_found():
 async def test_pick_season_single_season_skips_prompt():
     season = {"Id": "s1", "Name": "Season 1"}
     cog = _make_jellyfin_cog(_make_client(get_seasons=AsyncMock(return_value=[season])))
-    cog._pick_episode = AsyncMock()
+    cog._pick_episode = AsyncMock(return_value=EPISODE)
     cog.bot.wait_for = AsyncMock()
     ctx = _make_ctx()
-    await cog._pick_season_then_episode(ctx, SERIES)
+    assert await cog._pick_season_then_episode(ctx, SERIES) is EPISODE
     cog._pick_episode.assert_awaited_once_with(ctx, "ser1", "Breaking Bad", season)
     cog.bot.wait_for.assert_not_awaited()
 
@@ -687,10 +715,10 @@ async def test_pick_season_single_season_skips_prompt():
 async def test_pick_season_multiple_prompts_then_picks():
     seasons = [{"Id": "s1", "Name": "Season 1"}, {"Id": "s2"}]
     cog = _make_jellyfin_cog(_make_client(get_seasons=AsyncMock(return_value=seasons)))
-    cog._pick_episode = AsyncMock()
+    cog._pick_episode = AsyncMock(return_value=EPISODE)
     cog.bot.wait_for = AsyncMock(return_value=_reply("2"))
     ctx = _make_ctx()
-    await cog._pick_season_then_episode(ctx, SERIES)
+    assert await cog._pick_season_then_episode(ctx, SERIES) is EPISODE
     listing = _sent(ctx)[0]
     assert "**Breaking Bad** — 2 seasons" in listing
     assert "`1` Season 1" in listing
@@ -704,7 +732,7 @@ async def test_pick_season_multiple_cancelled():
     cog._pick_episode = AsyncMock()
     cog.bot.wait_for = AsyncMock(return_value=_reply("!media other"))
     ctx = _make_ctx()
-    await cog._pick_season_then_episode(ctx, SERIES)
+    assert await cog._pick_season_then_episode(ctx, SERIES) is None
     assert _sent(ctx)[-1] == "cancelled"
     cog._pick_episode.assert_not_awaited()
 
@@ -723,33 +751,32 @@ async def test_pick_episode_none_found():
     assert _sent(ctx) == ["no episodes found for **Season 1** of **Breaking Bad**"]
 
 
-async def test_pick_episode_lists_and_plays_choice():
+async def test_pick_episode_lists_and_returns_choice():
     episodes = [
         {"Id": "e1", "Name": "Pilot", "IndexNumber": 1},
         {"Id": "e2", "Name": "Cat's in the Bag"},  # no IndexNumber
     ]
     client = _make_client(get_episodes=AsyncMock(return_value=episodes))
     cog = _make_jellyfin_cog(client)
-    cog._play_item = AsyncMock()
     cog.bot.wait_for = AsyncMock(return_value=_reply("2"))
     ctx = _make_ctx()
-    await cog._pick_episode(ctx, "ser1", "Breaking Bad", {"Id": "s1", "Name": "Season 1"})
+    picked = await cog._pick_episode(
+        ctx, "ser1", "Breaking Bad", {"Id": "s1", "Name": "Season 1"}
+    )
     client.get_episodes.assert_awaited_once_with("ser1", "s1")
     listing = _sent(ctx)[0]
     assert "**Breaking Bad — Season 1**" in listing
     assert "`1` E01 — Pilot" in listing
     assert "`2` Cat's in the Bag" in listing
-    cog._play_item.assert_awaited_once_with(ctx, episodes[1])
+    assert picked is episodes[1]
 
 
-async def test_pick_episode_timeout_does_not_play():
+async def test_pick_episode_timeout_returns_none():
     client = _make_client(get_episodes=AsyncMock(return_value=[{"Id": "e1"}]))
     cog = _make_jellyfin_cog(client)
-    cog._play_item = AsyncMock()
     cog.bot.wait_for = AsyncMock(side_effect=TimeoutError)
     ctx = _make_ctx()
-    await cog._pick_episode(ctx, "ser1", "BB", {"Id": "s1"})
-    cog._play_item.assert_not_awaited()
+    assert await cog._pick_episode(ctx, "ser1", "BB", {"Id": "s1"}) is None
 
 
 async def test_media_series_end_to_end_to_play_item():
@@ -819,6 +846,7 @@ async def test_play_item_probe_fails(play_env):
     play_env["probe"].assert_awaited_once_with(url)
     assert "could not probe the Jellyfin stream" in _sent(ctx)[-1]
     play_env["start"].assert_not_awaited()
+    client.stop_encoding.assert_awaited_once_with("sess")
 
 
 async def test_play_item_unsupported_codec(play_env):
@@ -829,6 +857,7 @@ async def test_play_item_unsupported_codec(play_env):
     await cog._play_item(ctx, MOVIE)
     assert _sent(ctx)[-1] == "unsupported video codec `av1` from Jellyfin for **Inception (2010)**"
     play_env["start"].assert_not_awaited()
+    client.stop_encoding.assert_awaited_once_with("sess")
 
 
 async def test_play_item_success_uses_resolved_variant(play_env, caplog):
@@ -858,7 +887,12 @@ async def test_play_item_success_uses_resolved_variant(play_env, caplog):
         live=True,
         audio=True,
         probe_size=10_000_000,
+        start_offset=0.0,
+        on_end=ANY,
     )
+    on_end = play_env["start"].call_args.kwargs["on_end"]
+    assert on_end.func == cog._on_stream_end
+    assert on_end.args == (play_env["guild"].id, 1)
     # The API key must never appear in logs.
     assert "SECRETKEY" not in caplog.text
     assert "***" in caplog.text
@@ -950,3 +984,132 @@ async def test_start_playback_reports_stream_metadata(client, source, expected):
         stream = await client.start_playback("item-1")
     assert (stream.has_audio, stream.video_codec) == expected
     assert stream.play_session_id == "ps-9"
+
+
+# ── auth / user sign-in / get_item / stop_encoding ───────────────────────────
+
+from services import jellyfin as svc  # noqa: E402
+
+
+def test_auth_header_with_and_without_token():
+    hdr = svc.auth_header("tok", "dev-1")
+    assert hdr.startswith("MediaBrowser ")
+    assert 'Client="slopsoil"' in hdr and 'DeviceId="dev-1"' in hdr
+    assert 'Version="1.0"' in hdr and hdr.endswith('Token="tok"')
+    anon = svc.auth_header(None)
+    assert "Token=" not in anon and f'DeviceId="{svc._DEVICE_ID}"' in anon
+
+
+def test_authenticate_by_name_posts_credentials():
+    resp = _mock_response({"AccessToken": "AT", "User": {"Id": "U1"}})
+    with patch("urllib.request.urlopen", return_value=resp) as urlopen:
+        assert svc._authenticate_by_name("http://jf", "bob", "pw", "dev") == ("AT", "U1")
+    req = urlopen.call_args.args[0]
+    assert req.full_url == "http://jf/Users/AuthenticateByName"
+    assert json.loads(req.data) == {"Username": "bob", "Pw": "pw"}
+    assert "Token=" not in req.get_header("Authorization")
+    assert urlopen.call_args.kwargs["timeout"] == 10
+
+
+def test_client_headers_use_api_key():
+    c = JellyfinClient("http://jf/", api_key="KEY")
+    assert c.base_url == "http://jf"
+    assert c._headers["Authorization"].endswith('Token="KEY"')
+    assert not c.has_user_credentials
+
+
+@pytest.mark.parametrize(
+    "username, password, expected",
+    [("bob", "pw", True), ("bob", "", False), ("", "pw", False)],
+)
+def test_has_user_credentials(username, password, expected):
+    c = JellyfinClient("http://jf", username=username, password=password)
+    assert c.has_user_credentials is expected
+
+
+async def test_authenticate_uses_device_id():
+    c = JellyfinClient("http://jf", username="bob", password="pw")
+    with patch.object(svc, "_authenticate_by_name", return_value=("T", "U")) as auth:
+        assert await c.authenticate("slopsoil-5") == ("T", "U")
+    auth.assert_called_once_with("http://jf", "bob", "pw", "slopsoil-5")
+
+
+async def test_ensure_auth_signs_in_once_lazily():
+    c = JellyfinClient("http://jf", username="bob", password="pw")
+    assert "Token=" not in c._headers["Authorization"]
+    with patch.object(svc, "_authenticate_by_name", return_value=("T", "U")) as auth:
+        await asyncio.gather(c._ensure_auth(), c._ensure_auth())
+        await c._ensure_auth()
+    auth.assert_called_once()
+    assert c._api_key == "T" and c._user_id == "U"
+    assert c._headers["Authorization"].endswith('Token="T"')
+
+
+async def test_ensure_auth_noop_with_api_key_or_no_credentials():
+    for c in (
+        JellyfinClient("http://jf", api_key="K", username="bob", password="pw"),
+        JellyfinClient("http://jf"),
+    ):
+        with patch.object(svc, "_authenticate_by_name") as auth:
+            await c._ensure_auth()
+        auth.assert_not_called()
+
+
+async def test_search_signs_in_first_with_user_credentials():
+    c = JellyfinClient("http://jf", username="bob", password="pw")
+    resp = _mock_response({"Items": [{"Id": "1"}]})
+    with patch.object(svc, "_authenticate_by_name", return_value=("T", "U")), \
+         patch("urllib.request.urlopen", return_value=resp) as urlopen:
+        await c.search("x")
+    assert urlopen.call_args.args[0].get_header("Authorization").endswith('Token="T"')
+
+
+async def test_get_user_id_uses_signed_in_user():
+    c = JellyfinClient("http://jf", username="bob", password="pw")
+    with patch.object(svc, "_authenticate_by_name", return_value=("T", "U9")), \
+         patch("urllib.request.urlopen") as urlopen:
+        assert await c._get_user_id() == "U9"
+    urlopen.assert_not_called()
+
+
+async def test_get_item_found(client):
+    resp = _mock_response({"Items": [{"Id": "abc", "Name": "X"}]})
+    with patch("urllib.request.urlopen", return_value=resp) as urlopen:
+        assert await client.get_item("abc") == {"Id": "abc", "Name": "X"}
+    url = urlopen.call_args.args[0].full_url
+    assert url.startswith("http://jellyfin.local:8096/Items?") and "Ids=abc" in url
+
+
+async def test_get_item_missing(client):
+    with patch("urllib.request.urlopen", return_value=_mock_response({"Items": []})):
+        assert await client.get_item("abc") is None
+
+
+async def test_get_item_error_returns_none(client, caplog):
+    with patch("urllib.request.urlopen", side_effect=OSError("down")), \
+         caplog.at_level("WARNING", logger="services.jellyfin"):
+        assert await client.get_item("abc") is None
+    assert "could not fetch item abc" in caplog.text
+
+
+async def test_stop_encoding_deletes_active_encoding(client):
+    with patch("urllib.request.urlopen", return_value=_mock_response({})) as urlopen:
+        await client.stop_encoding("ps-1")
+    req = urlopen.call_args.args[0]
+    assert req.get_method() == "DELETE"
+    assert req.full_url == (
+        "http://jellyfin.local:8096/Videos/ActiveEncodings"
+        f"?deviceId={svc._DEVICE_ID}&playSessionId=ps-1"
+    )
+
+
+async def test_stop_encoding_without_session_is_noop(client):
+    with patch("urllib.request.urlopen") as urlopen:
+        await client.stop_encoding(None)
+        await client.stop_encoding("")
+    urlopen.assert_not_called()
+
+
+async def test_stop_encoding_errors_swallowed(client):
+    with patch("urllib.request.urlopen", side_effect=OSError("404")):
+        await client.stop_encoding("ps-1")  # must not raise

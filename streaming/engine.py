@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -73,6 +73,13 @@ def _pop_if_owned(registry: dict, guild_id: int, owner: object) -> object | None
     if registry.get(guild_id) is owner:
         return registry.pop(guild_id)
     return None
+
+
+async def _run_on_end(on_end: Callable[[], Awaitable[None]], title: str) -> None:
+    try:
+        await on_end()
+    except Exception:
+        log.exception("end-of-stream callback failed for '%s'", title)
 
 
 def cancel_live_stream(bot: SlopSoil, guild_id: int) -> None:
@@ -213,6 +220,8 @@ async def start_live_stream(
     live: bool | None = True,
     audio: bool = True,
     probe_size: int = 2_000_000,
+    start_offset: float = 0.0,
+    on_end: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     """
     Connect to voice and begin a go-live screenshare stream.
@@ -227,6 +236,9 @@ async def start_live_stream(
     url      — full stream URL passed directly to FFmpeg
     subtitle — optional secondary label (channel number, etc.)
     live     — True for live/MPEG-2 sources, False for VOD/H.264 copy sources
+    start_offset — seconds into the source to start from (FFmpeg -ss)
+    on_end   — awaited (as a new task) when the stream finishes on its own,
+               i.e. not stopped or replaced; used for playlist auto-advance
     """
     if _VIDEO_ENCODER is None:
         log.warning("no H.264 encoder available — go-live requires video encoding")
@@ -274,7 +286,7 @@ async def start_live_stream(
     proxy_vc = _GoLiveVCProxy(conn)
     video_player = H264VideoPlayer(
         url=url, voice_client=proxy_vc, fps=_stream_fps(),  # type: ignore[arg-type]
-        live=live, audio=audio, probe_size=probe_size,
+        live=live, audio=audio, probe_size=probe_size, start_offset=start_offset,
     )
     bot.video_players[guild.id] = video_player
     video_player.start()
@@ -285,6 +297,7 @@ async def start_live_stream(
         log.info("go-live task started for '%s'", title)
         audio_sender: GoLiveAudioSender | None = None
         fifo_file = None
+        ended_naturally = False
         try:
             # Open audio FIFO — blocks in a thread until FFmpeg opens the write end.
             # Generous timeout: a cold server-side transcode (e.g. Jellyfin 4K
@@ -306,6 +319,7 @@ async def start_live_stream(
                 file_obj=f,
                 conn=conn,
                 is_source_active=video_player.is_source_active,
+                pause_gate=video_player.pause_gate,
             )
             audio_sender.start()
             log.info("go-live audio sender started for '%s'", title)
@@ -313,6 +327,7 @@ async def start_live_stream(
             # Block until the video player thread exits (stream ends or is stopped)
             await asyncio.to_thread(video_player.join)
             log.info("go-live stream finished for '%s'", title)
+            ended_naturally = not video_player.stop_requested
 
         except asyncio.CancelledError:
             log.info("go-live stream cancelled for '%s'", title)
@@ -340,6 +355,8 @@ async def start_live_stream(
             except Exception:
                 pass
             log.debug("go-live cleanup done for guild %s", guild.id)
+            if ended_naturally and on_end is not None:
+                asyncio.create_task(_run_on_end(on_end, title))
 
     live_task = asyncio.create_task(_run_live())
     bot.stream_tasks[guild.id] = live_task

@@ -19,6 +19,43 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 _DEVICE_ID = "slopsoil-discord-bot"
+_CLIENT_NAME = "slopsoil"
+_CLIENT_VERSION = "1.0"
+
+
+def auth_header(token: str | None, device_id: str = _DEVICE_ID) -> str:
+    """Build a Jellyfin ``Authorization: MediaBrowser ...`` header value.
+
+    Works for both API keys and user access tokens. Client/Device/DeviceId are
+    required for user sign-in and make the bot show up properly in the
+    server's dashboard.
+    """
+    parts = [
+        f'Client="{_CLIENT_NAME}"',
+        'Device="slopsoil"',
+        f'DeviceId="{device_id}"',
+        f'Version="{_CLIENT_VERSION}"',
+    ]
+    if token:
+        parts.append(f'Token="{token}"')
+    return "MediaBrowser " + ", ".join(parts)
+
+
+def _authenticate_by_name(
+    base_url: str, username: str, password: str, device_id: str
+) -> tuple[str, str]:
+    """Blocking sign-in; returns (access_token, user_id)."""
+    req = urllib.request.Request(
+        f"{base_url}/Users/AuthenticateByName",
+        data=json.dumps({"Username": username, "Pw": password}).encode(),
+        headers={
+            "Authorization": auth_header(None, device_id),
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    return data["AccessToken"], data["User"]["Id"]
 
 
 @dataclass(frozen=True)
@@ -52,14 +89,50 @@ def _stream_metadata(source: dict, transcoding: bool) -> tuple[bool | None, str 
 
 
 class JellyfinClient:
-    def __init__(self, url: str, api_key: str) -> None:
+    def __init__(
+        self, url: str, api_key: str = "", username: str = "", password: str = ""
+    ) -> None:
         self.base_url = url.rstrip("/")
-        self._api_key = api_key
+        self.username = username
+        self._password = password
+        self._user_id: str | None = None  # cached after first fetch
+        self._auth_lock = asyncio.Lock()
+        self._set_token(api_key)
+
+    def _set_token(self, token: str) -> None:
+        self._api_key = token
         self._headers = {
-            "Authorization": f'MediaBrowser Token="{api_key}"',
+            "Authorization": auth_header(token or None),
             "Content-Type": "application/json",
         }
-        self._user_id: str | None = None  # cached after first fetch
+
+    @property
+    def has_user_credentials(self) -> bool:
+        """True when a username/password is configured (required for SyncPlay)."""
+        return bool(self.username and self._password)
+
+    async def authenticate(self, device_id: str = _DEVICE_ID) -> tuple[str, str]:
+        """Sign in with the configured username/password for ``device_id``.
+
+        Each device id gets its own Jellyfin session, which matters for
+        SyncPlay: a session can only be in one group at a time.
+        """
+        return await asyncio.to_thread(
+            _authenticate_by_name, self.base_url, self.username, self._password,
+            device_id,
+        )
+
+    async def _ensure_auth(self) -> None:
+        """Sign in on first use when no API key is configured."""
+        if self._api_key or not self.has_user_credentials:
+            return
+        async with self._auth_lock:
+            if self._api_key:
+                return
+            token, user_id = await self.authenticate()
+            self._set_token(token)
+            self._user_id = user_id
+            log.info("Jellyfin: signed in as %s", self.username)
 
     async def _get_user_id(self) -> str | None:
         """Fetch and cache the first Jellyfin user ID.
@@ -67,6 +140,7 @@ class JellyfinClient:
         PlaybackInfo requires a UserId even with API key auth — without it
         Jellyfin returns 400.  We fetch the user list once and cache the result.
         """
+        await self._ensure_auth()
         if self._user_id is not None:
             return self._user_id
 
@@ -188,6 +262,7 @@ class JellyfinClient:
 
     async def search(self, query: str, limit: int = 25) -> list[dict]:
         """Search Jellyfin for movies, series, and episodes matching query."""
+        await self._ensure_auth()
         def _fetch() -> list[dict]:
             params = urllib.parse.urlencode({
                 "searchTerm": query,
@@ -231,6 +306,7 @@ class JellyfinClient:
 
     async def get_seasons(self, series_id: str) -> list[dict]:
         """Return all seasons for a series, ordered by IndexNumber."""
+        await self._ensure_auth()
         def _fetch() -> list[dict]:
             params = urllib.parse.urlencode({"Fields": "Id,Name,IndexNumber"})
             req = urllib.request.Request(
@@ -246,6 +322,7 @@ class JellyfinClient:
 
     async def get_episodes(self, series_id: str, season_id: str) -> list[dict]:
         """Return all episodes for a season, ordered by IndexNumber."""
+        await self._ensure_auth()
         def _fetch() -> list[dict]:
             params = urllib.parse.urlencode({
                 "SeasonId": season_id,
@@ -261,3 +338,51 @@ class JellyfinClient:
             return sorted(episodes, key=lambda e: e.get("IndexNumber") or 0)
 
         return await asyncio.to_thread(_fetch)
+
+    async def get_item(self, item_id: str) -> dict | None:
+        """Fetch a single item (movie/episode) by id, or None if not found."""
+        await self._ensure_auth()
+
+        def _fetch() -> dict | None:
+            params = urllib.parse.urlencode({
+                "Ids": item_id,
+                "Fields": "ProductionYear,SeriesName,IndexNumber,ParentIndexNumber",
+            })
+            req = urllib.request.Request(
+                f"{self.base_url}/Items?{params}", headers=self._headers
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                items = json.loads(resp.read()).get("Items", [])
+            return items[0] if items else None
+
+        try:
+            return await asyncio.to_thread(_fetch)
+        except Exception as exc:
+            log.warning("Jellyfin: could not fetch item %s: %s", item_id, exc)
+            return None
+
+    async def stop_encoding(self, play_session_id: str | None) -> None:
+        """Tell Jellyfin to kill the transcode for a finished playback session.
+
+        Without this the server keeps transcoding (CPU/GPU + disk) until its
+        own inactivity timeout notices nobody is fetching segments.
+        """
+        if not play_session_id:
+            return
+
+        def _delete() -> None:
+            params = urllib.parse.urlencode(
+                {"deviceId": _DEVICE_ID, "playSessionId": play_session_id}
+            )
+            req = urllib.request.Request(
+                f"{self.base_url}/Videos/ActiveEncodings?{params}",
+                headers=self._headers,
+                method="DELETE",
+            )
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+
+        try:
+            await asyncio.to_thread(_delete)
+        except Exception as exc:
+            log.debug("Jellyfin: stop_encoding(%s) failed: %s", play_session_id, exc)
