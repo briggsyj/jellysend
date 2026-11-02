@@ -1,0 +1,9 @@
+# Build context rules for dotnet/Dockerfile only (BuildKit picks up
+# <Dockerfile>.dockerignore instead of the root .dockerignore, which excludes
+# dotnet/ from the Python image). Send just the .NET sources.
+*
+!dotnet/
+dotnet/**/bin/
+dotnet/**/obj/
+dotnet/**/TestResults/
+dotnet/tests/
