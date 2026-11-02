@@ -474,7 +474,7 @@ The Docker image is based on Fedora and uses `ffmpeg-free`. This package does no
 
 ## Running Tests
 
-The test suite covers the permissions system, the IPTV/EPG and stream-probing services, the Jellyfin and TVheadend clients, the yt-dlp helpers, the video player's stream-profile logic, voice utilities, the video compat patches, and the DAVE shim logic.
+The test suite covers every cog, service and streaming module (bot commands, Jellyfin/TVheadend/IPTV clients, EPG, yt-dlp helpers, the H.264 video player, go-live connection and audio sender, the stream engine, the video compat patches and the DAVE shim). CI runs it on every PR and on pushes to `develop`, and fails if total coverage drops below 90%.
 
 ### Install test dependencies
 
