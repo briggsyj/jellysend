@@ -108,31 +108,28 @@ def _fmt_item(item: dict) -> str:
 
 
 HELP_TEXT = """\
-**Jellyfin commands**
-__Play something__
-`!media <movie>` — search and play a movie, e.g. `!media inception`
-`!media <show> sXXeYY` — play one episode directly, e.g. `!media breaking bad s03e05`
-`!media <show>` — pick a season, then an episode, from numbered lists
-`!media search <title>` — same as `!media <title>`; only needed for titles \
-starting with queue/order/remove/search (e.g. `!media search queue`)
+**🎬 Jellyfin — `!media`**
 
-__Playback__
-`!media pause` / `!media play` — pause and carry on
-`!media resume <time>` — jump to a time: `1:23:45`, `1.23.45`, `1:23` (h:mm), \
-`45m`, `90s`
-`!media skip` — move on to the next playlist item
-`!media stop` — stop, clear the playlist and leave the voice channel
+**Play**
+`!media <movie>` — e.g. `!media inception`
+`!media <show> s03e05` — a specific episode
+`!media <show>` — pick season → episode
 
-__Playlist__ (up to 10 items, plays automatically in order)
-`!media queue <movie>` or `!media queue <show> sXXeYY` — add to the playlist \
-(a show without sXXeYY asks for the season and episode); starts playing if idle
-`!media playlist` — show what's playing and what's up next
-`!media order <# or title> <position>` — move an item, e.g. `!media order 3 1`
-`!media remove <# or title>` — drop an item"""
+**Control**
+`!media pause` · `!media play`
+`!media resume 1:23:45` — jump to a time (`1:23` = 1h 23m; also `45m`, `90s`)
+`!media skip` · `!media stop` (stops and leaves voice)
+
+**Playlist** (max 10, plays in order)
+`!media queue <movie>` or `!media queue <show> s01e02`
+`!media playlist`
+`!media order <#> <new #>` · `!media remove <#>`
+
+-# Title starts with queue, order or remove? Use `!media search <title>`."""
 
 SYNCPLAY_HELP = (
-    "\n\n__Watching in Jellyfin too?__\nOpen SyncPlay in a Jellyfin app and join "
-    "**{group}** — pausing, playing or seeking there controls this stream as well."
+    "\n\n**Jellyfin SyncPlay** — join **{group}** in a Jellyfin app to "
+    "pause, play and seek this stream together."
 )
 
 

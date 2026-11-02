@@ -607,7 +607,7 @@ async def test_media_series_picker_cancelled_plays_nothing(media_cog):
 async def test_media_empty_query_sends_help(media_cog):
     ctx = _make_ctx()
     await Jellyfin.media.callback(media_cog, ctx, query="  ")
-    assert _sent(ctx)[0].startswith("**Jellyfin commands**")
+    assert _sent(ctx)[0].startswith("**🎬 Jellyfin")
     media_cog.client.search.assert_not_awaited()
 
 
