@@ -1661,11 +1661,3 @@ def test_unregister_audio_follower_only_removes_own_event(make_player):
     p.unregister_audio_follower(ev)
     assert p._audio_drained is None
 
-
-
-def test_last_frame_age(make_player, monkeypatch):
-    p, _ = make_player()
-    assert p.last_frame_age == float("inf")
-    p._last_frame_at = 100.0
-    monkeypatch.setattr(vpmod.time, "monotonic", lambda: 100.5)
-    assert p.last_frame_age == pytest.approx(0.5)
