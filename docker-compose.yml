@@ -1,5 +1,10 @@
 services:
   slopsoil:
+    # Image published by this repo's "Publish Docker image" workflow.
+    # `docker compose pull && docker compose up -d` uses the CI-built image;
+    # `docker compose up -d --build` builds locally instead. Override with
+    # SLOPSOIL_IMAGE in .env (e.g. a sha-xxxxxxx tag to pin a build).
+    image: ${SLOPSOIL_IMAGE:-ghcr.io/briggsyj/slopsoil:latest}
     build: .
     restart: unless-stopped
     env_file: .env

@@ -255,3 +255,233 @@ async def test_member_moves_to_another_channel_no_leave():
 
     # before.channel != after.channel, so it IS treated as a leave from bot_channel
     guild.voice_client.disconnect.assert_awaited_once_with(force=False)
+
+
+@pytest.mark.asyncio
+async def test_auto_leave_golive_disconnect_error_still_leaves():
+    """A failing go-live disconnect is logged and the voice client still disconnects."""
+    cog = _make_cog()
+    channel = MagicMock()
+    bot_member = MagicMock()
+    bot_member.id = BOT_USER_ID
+    guild = _make_guild(channel, members_in_channel=[bot_member])
+    member = _make_member(guild)
+    live_conn = MagicMock()
+    live_conn.disconnect = AsyncMock(side_effect=RuntimeError("ws closed"))
+    cog.bot.live_connections = {guild.id: live_conn}
+
+    with patch("cogs.voice.cancel_stream"):
+        await cog.on_voice_state_update(
+            member, _make_voice_state(channel=channel), _make_voice_state(channel=None)
+        )
+
+    assert guild.id not in cog.bot.live_connections
+    guild.voice_client.disconnect.assert_awaited_once_with(force=False)
+
+
+# ---------------------------------------------------------------------------
+# Commands: !join / !leave / !stop
+# ---------------------------------------------------------------------------
+
+
+def _make_ctx(guild=None, bot_guilds=()):
+    ctx = MagicMock()
+    ctx.guild = guild
+    ctx.bot.guilds = list(bot_guilds)
+    ctx.send = AsyncMock()
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_join_not_in_voice():
+    cog = _make_cog()
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(MagicMock(), None, None))):
+        await Voice.join.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("you're not in a voice channel")
+
+
+@pytest.mark.asyncio
+async def test_join_connects_when_not_connected():
+    cog = _make_cog()
+    ctx = _make_ctx()
+    channel = MagicMock()
+    channel.connect = AsyncMock()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(MagicMock(), channel, None))):
+        await Voice.join.callback(cog, ctx)
+    channel.connect.assert_awaited_once_with(self_deaf=True)
+    ctx.send.assert_awaited_once_with("joined!")
+
+
+@pytest.mark.asyncio
+async def test_join_moves_when_already_connected():
+    cog = _make_cog()
+    ctx = _make_ctx()
+    channel = MagicMock()
+    channel.connect = AsyncMock()
+    vc = MagicMock()
+    vc.move_to = AsyncMock()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(MagicMock(), channel, vc))):
+        await Voice.join.callback(cog, ctx)
+    vc.move_to.assert_awaited_once_with(channel)
+    channel.connect.assert_not_awaited()
+    ctx.send.assert_awaited_once_with("joined!")
+
+
+@pytest.mark.asyncio
+async def test_leave_dm_no_guild_with_voice():
+    cog = _make_cog()
+    g = MagicMock()
+    g.voice_client = None
+    ctx = _make_ctx(guild=None, bot_guilds=[g])
+    with patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.leave.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("not in a voice channel")
+    mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_leave_guild_without_voice_client():
+    cog = _make_cog()
+    guild = MagicMock()
+    guild.voice_client = None
+    ctx = _make_ctx(guild=guild)
+    with patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.leave.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("not in a voice channel")
+    mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_leave_in_guild_disconnects():
+    cog = _make_cog()
+    guild = MagicMock()
+    guild.id = 42
+    guild.voice_client.disconnect = AsyncMock()
+    ctx = _make_ctx(guild=guild)
+    with patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.leave.callback(cog, ctx)
+    mock_cancel.assert_called_once_with(cog.bot, 42)
+    guild.voice_client.disconnect.assert_awaited_once_with(force=False)
+    ctx.send.assert_awaited_once_with("left!")
+
+
+@pytest.mark.asyncio
+async def test_leave_from_dm_finds_connected_guild():
+    cog = _make_cog()
+    idle = MagicMock()
+    idle.voice_client = None
+    active = MagicMock()
+    active.id = 7
+    active.voice_client.disconnect = AsyncMock()
+    ctx = _make_ctx(guild=None, bot_guilds=[idle, active])
+    with patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.leave.callback(cog, ctx)
+    mock_cancel.assert_called_once_with(cog.bot, 7)
+    active.voice_client.disconnect.assert_awaited_once_with(force=False)
+    ctx.send.assert_awaited_once_with("left!")
+
+
+@pytest.mark.asyncio
+async def test_stop_no_voice_client():
+    cog = _make_cog()
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(MagicMock(), None, None))), \
+         patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.stop.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("nothing is playing")
+    mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_no_guild():
+    cog = _make_cog()
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(None, None, MagicMock()))):
+        await Voice.stop.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("nothing is playing")
+
+
+@pytest.mark.asyncio
+async def test_stop_idle_voice_client():
+    cog = _make_cog()
+    cog.bot.stream_tasks = {}
+    guild = MagicMock()
+    guild.id = 42
+    vc = MagicMock()
+    vc.is_playing.return_value = False
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(guild, None, vc))), \
+         patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.stop.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("nothing is playing")
+    mock_cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_playing_stops_and_disconnects_golive():
+    cog = _make_cog()
+    guild = MagicMock()
+    guild.id = 42
+    vc = MagicMock()
+    vc.is_playing.return_value = True
+    live_conn = MagicMock()
+    live_conn.disconnect = AsyncMock()
+    cog.bot.stream_tasks = {}
+    cog.bot.live_connections = {42: live_conn}
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(guild, None, vc))), \
+         patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.stop.callback(cog, ctx)
+    mock_cancel.assert_called_once_with(cog.bot, 42)
+    vc.stop.assert_called_once()
+    live_conn.disconnect.assert_awaited_once()
+    assert 42 not in cog.bot.live_connections
+    ctx.send.assert_awaited_once_with("stopped")
+
+
+@pytest.mark.asyncio
+async def test_stop_with_task_but_not_playing():
+    """A pending stream task counts as 'playing' even if vc.is_playing() is False."""
+    cog = _make_cog()
+    guild = MagicMock()
+    guild.id = 42
+    vc = MagicMock()
+    vc.is_playing.return_value = False
+    cog.bot.stream_tasks = {42: MagicMock()}
+    cog.bot.live_connections = {}
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(guild, None, vc))), \
+         patch("cogs.voice.cancel_stream") as mock_cancel:
+        await Voice.stop.callback(cog, ctx)
+    mock_cancel.assert_called_once_with(cog.bot, 42)
+    vc.stop.assert_not_called()
+    ctx.send.assert_awaited_once_with("stopped")
+
+
+@pytest.mark.asyncio
+async def test_stop_golive_disconnect_error_still_reports_stopped():
+    cog = _make_cog()
+    guild = MagicMock()
+    guild.id = 42
+    vc = MagicMock()
+    vc.is_playing.return_value = True
+    live_conn = MagicMock()
+    live_conn.disconnect = AsyncMock(side_effect=OSError("gone"))
+    cog.bot.stream_tasks = {}
+    cog.bot.live_connections = {42: live_conn}
+    ctx = _make_ctx()
+    with patch("cogs.voice.resolve_voice", AsyncMock(return_value=(guild, None, vc))), \
+         patch("cogs.voice.cancel_stream"):
+        await Voice.stop.callback(cog, ctx)
+    ctx.send.assert_awaited_once_with("stopped")
+
+
+@pytest.mark.asyncio
+async def test_voice_setup_adds_cog():
+    from cogs.voice import setup
+
+    bot = MagicMock()
+    bot.add_cog = AsyncMock()
+    await setup(bot)
+    assert isinstance(bot.add_cog.call_args[0][0], Voice)

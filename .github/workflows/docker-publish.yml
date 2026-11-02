@@ -2,7 +2,9 @@ name: Publish Docker image
 
 on:
   pull_request:
-    types: [closed]         # gated to merged-only below; publishes "latest"
+    # opened/synchronize/reopened → build-only check (nothing pushed).
+    # closed → gated to merged-only below; publishes "latest".
+    types: [opened, synchronize, reopened, closed]
     branches: [develop]     # PRs whose base branch is develop
   push:
     tags: ["v*.*.*"]        # publishes versioned (1.2.3 / 1.2 / 1) tags
@@ -15,18 +17,41 @@ concurrency:
 
 env:
   # GHCR derives its repo from the GitHub repository and authenticates with the
-  # built-in GITHUB_TOKEN. Docker Hub uses the DOCKERHUB_* repo variable/secret.
-  GHCR_IMAGE: ghcr.io/${{ github.repository }}
-  DOCKERHUB_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/slopsoil
+  # built-in GITHUB_TOKEN, so forks publish to their own ghcr.io/<owner>/<repo>
+  # with no extra setup. Docker Hub is optional: it is only used when the
+  # DOCKERHUB_USERNAME repo variable (and DOCKERHUB_TOKEN secret) are set.
+  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
   # The image relies on VA-API / NVENC hardware H.264 paths, which are x86-only.
   PLATFORMS: linux/amd64
 
 jobs:
+  # PR check: make sure the image still builds. Nothing is pushed.
+  build-check:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ env.PLATFORMS }}
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
   # A closed-but-unmerged PR must never publish, so gate on merged == true.
   test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    if: github.event_name != 'pull_request' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -37,7 +62,7 @@ jobs:
 
   publish:
     needs: test             # only publish if the tests passed
-    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    if: github.event_name != 'pull_request' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
 
     # On a merged PR the triggering ref is the PR merge ref, not develop. Resolve
@@ -60,6 +85,21 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
 
+      - name: Resolve image repositories
+        id: images
+        shell: bash
+        run: |
+          # Registry paths must be lowercase; GitHub owners may not be.
+          ghcr="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "list<<EOF"
+            echo "${ghcr}"
+            if [[ -n "${DOCKERHUB_USERNAME}" ]]; then
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/slopsoil"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Compute image tags and labels
         id: meta
         uses: ./.github/actions/docker-meta
@@ -68,9 +108,7 @@ jobs:
           ref-type: ${{ env.TARGET_REF_TYPE }}
           ref-name: ${{ env.TARGET_REF_NAME }}
           sha: ${{ env.TARGET_SHA }}
-          images: |
-            ${{ env.GHCR_IMAGE }}
-            ${{ env.DOCKERHUB_IMAGE }}
+          images: ${{ steps.images.outputs.list }}
           title: slopsoil
           description: >-
             Discord self-bot that streams live TV, IPTV, YouTube, Jellyfin and
@@ -88,6 +126,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@v4
         with:
           registry: docker.io

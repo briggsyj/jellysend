@@ -2,6 +2,14 @@ name: Tests
 
 on:
   pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+# Cancel superseded runs for the same branch/PR to save minutes.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -19,6 +27,7 @@ jobs:
         uses: ./.github/actions/unit-tests
 
       - name: Post coverage comment
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

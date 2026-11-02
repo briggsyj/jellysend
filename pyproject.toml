@@ -32,6 +32,8 @@ branch = true
 relative_files = true
 
 [tool.coverage.report]
+# CI gate: pytest --cov fails the run if total coverage drops below this.
+fail_under = 90
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
