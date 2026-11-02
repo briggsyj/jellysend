@@ -101,6 +101,8 @@ cut-over; one solution with per-layer projects.
 1. **Foundation** — solution, CI job, options/redaction/permissions, command router, logging.
 2. **US1** — Jellyfin client, pickers, video player, audio sender, engine → watch a title (MVP).
 3. **US2** — pause/play/resume/aspect/stop/leave/auto-leave, title fall-through.
+3b. **US6** — stability hardening + `!media debug` overlay (diagnostics snapshot, drawtext overlay, periodic
+   log line, soak test against SC-008–SC-010).
 4. **US3** — playlist + auto-advance.
 5. **US4** — SyncPlay.
 6. **US5** — image publishing (`dotnet` tags), parity checklist, cut-over PR (`feat!:`).

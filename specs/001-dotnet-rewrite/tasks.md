@@ -99,6 +99,23 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 
 ---
 
+## Phase 5b: User Story 6 — Stable stream performance and on-stream diagnostics (P2)
+
+**Goal**: smooth 2-hour streams (SC-008–SC-010) and `!media debug on|off` burning live diagnostics into the
+stream.
+
+**Independent Test**: spec User Story 6 — 2-hour item with debug on; overlay refreshes ≥ 1/s; stability
+targets hold; `off` removes it without a screenshare drop.
+
+- [ ] T044 [P] [US6] Tests then implementation of `dotnet/src/Slopsoil.Streaming/Diagnostics/StreamDiagnostics.cs`: rolling 10 s window and immutable snapshot with exactly the fields in data-model.md "StreamDiagnostics" (FpsSent/FpsTarget, LateFrames, MaxLatenessMs, ReadStallMs, PacketsPerSec, SendDrops, SendErrors, DriftMs, Holds, Skips, Releases, Encoder, Resolution, Bitrate, SourceCodec, Position, Runtime); fed by VideoPlayer, AudioSender and the UDP transport; tests in `dotnet/tests/Slopsoil.Tests/Streaming/StreamDiagnosticsTests.cs`
+- [ ] T045 [US6] Periodic log line every 10 s while streaming (debug on or off, redacted) from the snapshot, matching the Python "video stats" fields (FR-053), in `dotnet/src/Slopsoil.Streaming/Diagnostics/DiagnosticsLogger.cs` with tests
+- [ ] T046 [US6] Overlay: when debug is on, `FfmpegCommand` appends a `drawtext=textfile=<tmp>/slopsoil_<ssrc>_debug.txt:reload=1` stage (after scaling, before hwupload for VA-API; monospace, top-left, semi-opaque box) and `VideoPlayer` rewrites that file atomically once per second from the snapshot with the four groups in spec US6 scenario 1; no extra filter when off (FR-051, US6 scenario 5); tests in `FfmpegCommandTests.cs` and `VideoPlayerTests.cs`
+- [ ] T047 [US6] `MediaModule` `!media debug [on|off]` (Friend): on/off toggles per-guild `DebugOverlay` and applies via the in-place restart path (FR-052); bare `debug` replies with state + snapshot text; other words → title search; setting survives playlist advance and is cleared on leaving voice; reply wording added to contracts/commands.md parity rows; tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaDebugTests.cs`
+- [ ] T048 [US6] Port the follower's stall/persistence rules exactly as FR-054 (hold only when `LastFrameAge` ≥ 150 ms, ≤ 15 frames; drift > 120 ms for ≥ 1 s → one 20 ms step per 250 ms until ≤ 30 ms) with the anti-rubber-banding test cases from `tests/test_golive.py` (transient lag untouched, persistence, rate limit, exit band, restart reset) in `AudioSenderTests.cs`
+- [ ] T049 [US6] Soak harness `dotnet/tests/soak/README.md` + `SLOPSOIL_SOAK=1` mode in the host that streams a local 2-hour test file with debug on and writes the per-10 s snapshots to CSV; document how to check SC-008/SC-009 from the CSV; run once on reference hardware before the parity sign-off
+
+---
+
 ## Phase 6: User Story 3 — Playlist (P3)
 
 **Independent Test**: quickstart.md scenario 4.
@@ -137,6 +154,7 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 
 - Phase 1 → Phase 2 (spike gate) → Phase 3 → US1 → US2 → US3 → US4 → US5 → Polish.
 - US2–US4 depend on US1's engine and media module; US3 and US4 are independent of each other once US2 lands.
+- US6 depends on US1 (pipeline) and US2 (in-place restart); T048 can be done together with T033.
 - Within a phase, `[P]` test tasks can be written in parallel; each implementation task follows its tests.
 
 ## Parallel Examples
@@ -148,5 +166,6 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 ## Implementation Strategy
 
 1. **MVP** = Phases 1–4 (through US1): an operator can watch a Jellyfin title in Discord from the .NET bot.
-2. Add US2 (controls) before any real-world use; US3/US4 next; US5 publishes the `dotnet` tag.
+2. Add US2 (controls) and US6 (stability + debug overlay) before any real-world use; US3/US4 next; US5
+   publishes the `dotnet` tag. The US6 soak run (T049) is part of the parity sign-off.
 3. Cut-over (T043) only after the parity checklist passes — Python stays on `latest` until then.

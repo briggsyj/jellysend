@@ -16,6 +16,7 @@ Prefix `!`. Replies and behaviour MUST match the Python bot (`cogs/jellyfin.py`,
 | `!media remove <# or title>` | Friend | | remove item |
 | `!media playlist` | Friend | | now playing (pos/runtime/paused) + numbered list |
 | `!media aspect-ratio` / `aspect` / `ar` | Friend | optional 1–5 | picker: Original, 16:9, 4:3, 2.39:1, 1.85:1; applies live to Jellyfin streams only |
+| `!media debug [on\|off]` | Friend | `on`, `off`, or none | on/off: burn diagnostics overlay into the stream (in-place restart, per guild); none: reply with state + current diagnostics; other words → title search |
 | `!join` / `!leave` / `!stop` | Friend | | voice controls; `!leave`/`!stop` also end the go-live |
 | `!help`, `!ping` | Viewer | | as Python `cogs/general.py` |
 | `!play`, `!channels`, `!search`, `!add-source`, `!sources`, `!delete-source` | — | | reply: not available in the .NET edition |

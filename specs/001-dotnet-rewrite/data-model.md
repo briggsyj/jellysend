@@ -12,6 +12,7 @@ All state is in memory; nothing is persisted (no database — constitution Princ
 | Queue | list of MediaItem | max 10 (`PlaylistMax`); order matters |
 | Generation | int | bumped on every start/stop; stale end-of-stream callbacks compare and ignore |
 | ForcedAspect | double? | null = original; survives leaving voice (kept in a separate per-guild map) |
+| DebugOverlay | bool | per guild; survives playlist advance; cleared when the bot leaves voice |
 | SyncPlay | SyncPlayGroup? | only when a Jellyfin login is configured |
 | SyncSent | map itemId → time | echo window 10 s |
 | SyncOwnCommandAt | time | own-command drift window 5 s |
@@ -46,6 +47,20 @@ All state is in memory; nothing is persisted (no database — constitution Princ
 | VideoPlayer | FFmpeg process + pacing thread; `Position`, `Paused`, `SeekPending`, `RestartSeq`, `SegmentOffset`, `SegmentFrames`, `Fps`, `Aspect` |
 | AudioSender | reads PCM FIFO; follows `VideoPlayer` clock (slack max(40 ms, 0.5/fps+20 ms), hold ≤15 frames, drain on restart) |
 | OnEnd | invoked only on natural end (not stop/replace) |
+
+## StreamDiagnostics
+
+Rolling 10 s window maintained by VideoPlayer + AudioSender + transport; snapshot is immutable.
+
+| Field | Source |
+|---|---|
+| FpsSent / FpsTarget, LateFrames, MaxLatenessMs, ReadStallMs | VideoPlayer pacing loop |
+| PacketsPerSec, SendDrops, SendErrors | transport (UDP send) |
+| DriftMs, Holds, Skips, Releases | AudioSender follower |
+| Encoder, Resolution, Bitrate, SourceCodec, Position, Runtime | FFmpeg command / PlaybackStream / VideoPlayer |
+
+Overlay: FFmpeg `drawtext` reading a small text file (`textfile=…:reload=1`) that the player rewrites once
+per second from the snapshot; only added to the filter chain when DebugOverlay is on.
 
 ## SyncPlayGroup
 
