@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PLAYLIST_MAX = 10
+
+# (label, forced display aspect ratio). None = keep the media's own ratio.
+ASPECT_OPTIONS: list[tuple[str, float | None]] = [
+    ("Original (default) — keep the media's own shape", None),
+    ("16:9 — widescreen", 16 / 9),
+    ("4:3 — classic TV", 4 / 3),
+    ("2.39:1 — cinema scope (21:9)", 2.39),
+    ("1.85:1 — theatrical widescreen", 1.85),
+]
 _SUPPORTED_CODECS = ("h264", "hevc", "mpeg2video", "mpeg4", "mjpeg")
 # How far (seconds) a SyncPlay position may drift from ours before we seek.
 _SYNC_DRIFT_TOLERANCE = 3.0
@@ -108,31 +117,29 @@ def _fmt_item(item: dict) -> str:
 
 
 HELP_TEXT = """\
-**Jellyfin commands**
-__Play something__
-`!media <movie>` — search and play a movie, e.g. `!media inception`
-`!media <show> sXXeYY` — play one episode directly, e.g. `!media breaking bad s03e05`
-`!media <show>` — pick a season, then an episode, from numbered lists
-`!media search <title>` — same as `!media <title>`; only needed for titles \
-starting with queue/order/remove/search (e.g. `!media search queue`)
+**🎬 Jellyfin — `!media`**
 
-__Playback__
-`!media pause` / `!media play` — pause and carry on
-`!media resume <time>` — jump to a time: `1:23:45`, `1.23.45`, `1:23` (h:mm), \
-`45m`, `90s`
-`!media skip` — move on to the next playlist item
-`!media stop` — stop, clear the playlist and leave the voice channel
+**Play**
+`!media <movie>` — e.g. `!media inception`
+`!media <show> s03e05` — a specific episode
+`!media <show>` — pick season → episode
 
-__Playlist__ (up to 10 items, plays automatically in order)
-`!media queue <movie>` or `!media queue <show> sXXeYY` — add to the playlist \
-(a show without sXXeYY asks for the season and episode); starts playing if idle
-`!media playlist` — show what's playing and what's up next
-`!media order <# or title> <position>` — move an item, e.g. `!media order 3 1`
-`!media remove <# or title>` — drop an item"""
+**Control**
+`!media pause` · `!media play`
+`!media resume 1:23:45` — jump to a time (`1:23` = 1h 23m; also `45m`, `90s`)
+`!media skip` · `!media stop` (stops and leaves voice)
+`!media aspect-ratio` — change the picture shape
+
+**Playlist** (max 10, plays in order)
+`!media queue <movie>` or `!media queue <show> s01e02`
+`!media playlist`
+`!media order <#> <new #>` · `!media remove <#>`
+
+-# Title starts with queue, order or remove? Use `!media search <title>`."""
 
 SYNCPLAY_HELP = (
-    "\n\n__Watching in Jellyfin too?__\nOpen SyncPlay in a Jellyfin app and join "
-    "**{group}** — pausing, playing or seeking there controls this stream as well."
+    "\n\n**Jellyfin SyncPlay** — join **{group}** in a Jellyfin app to "
+    "pause, play and seek this stream together."
 )
 
 
@@ -164,6 +171,8 @@ class Jellyfin(commands.Cog):
         self.bot = cast("SlopSoil", bot)
         self.client = client
         self._states: dict[int, _GuildState] = {}
+        # guild id → forced aspect ratio; survives leaving voice (a preference)
+        self._aspect: dict[int, float] = {}
         self._tasks: set[asyncio.Task] = set()  # keep background tasks alive
 
     def _spawn(self, coro) -> None:
@@ -488,6 +497,7 @@ class Jellyfin(commands.Cog):
             probe_size=10_000_000,
             start_offset=start,
             on_end=functools.partial(self._on_stream_end, guild.id, generation),
+            aspect=self._aspect.get(guild.id),
         )
 
         if previous is not None and previous.stream is not stream:
@@ -964,6 +974,69 @@ class Jellyfin(commands.Cog):
             return
         item = state.queue.pop(found)
         await ctx.send(f"removed **{_fmt_item(item)}** from the playlist")
+
+    @require_role(Role.FRIEND)
+    @media.command(name="aspect-ratio", aliases=["aspect", "ar"])
+    async def media_aspect(self, ctx: commands.Context, *, choice: str = "") -> None:
+        """Pick a picture shape from a numbered list (or `!media aspect-ratio 2`)."""
+        guild = await self._context_guild(ctx)
+        if guild is None:
+            await ctx.send("you're not in a voice channel")
+            return
+        current = self._aspect.get(guild.id)
+
+        if choice.strip():
+            if not any(c.isdigit() for c in choice):
+                # `!media ar rahman` / `!media aspect of …` — a title, not a pick.
+                word = ctx.invoked_with if isinstance(ctx.invoked_with, str) else ""
+                if await self._title_fallthrough(ctx, word or "aspect-ratio", choice):
+                    return
+            if not choice.strip().isdecimal() or not (
+                1 <= int(choice) <= len(ASPECT_OPTIONS)
+            ):
+                await ctx.send(
+                    f"pick a number between 1 and {len(ASPECT_OPTIONS)} — "
+                    "see `!media aspect-ratio`"
+                )
+                return
+            index = int(choice) - 1
+        else:
+            lines = ["**Aspect ratio** — reply with a number:"]
+            for i, (label, ratio) in enumerate(ASPECT_OPTIONS, 1):
+                mark = "  ← current" if ratio == current else ""
+                lines.append(f"`{i}` {label}{mark}")
+            await ctx.send("\n".join(lines))
+            picked = await self._wait_for_number(ctx, len(ASPECT_OPTIONS))
+            if picked is None:
+                return
+            index = picked - 1
+
+        label, ratio = ASPECT_OPTIONS[index]
+        if ratio is None:
+            self._aspect.pop(guild.id, None)
+        else:
+            self._aspect[guild.id] = ratio
+        name = label.split(" — ")[0]
+        # Only restart a Jellyfin stream: TV/IPTV/yt-dlp share video_players,
+        # and an in-place restart with -ss on a live input would stall it.
+        state = self._states.get(guild.id)
+        player = self._player(guild.id)
+        if (
+            player is not None
+            and state is not None
+            and state.now is not None
+            and player.is_source_active()
+            and player.aspect != ratio
+        ):
+            player.set_aspect(ratio)
+            await ctx.send(f"📐 aspect ratio set to **{name}** — applying now")
+        else:
+            await ctx.send(
+                f"📐 aspect ratio set to **{name}** — applies to the next "
+                "Jellyfin item"
+                if player is not None and (state is None or state.now is None)
+                else f"📐 aspect ratio set to **{name}**"
+            )
 
     @require_role(Role.FRIEND)
     @media.command(name="playlist")

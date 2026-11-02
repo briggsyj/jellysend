@@ -485,3 +485,45 @@ async def test_voice_setup_adds_cog():
     bot.add_cog = AsyncMock()
     await setup(bot)
     assert isinstance(bot.add_cog.call_args[0][0], Voice)
+
+
+@pytest.mark.asyncio
+async def test_leave_stops_stream_and_golive_before_disconnecting():
+    """!leave must end the screenshare too, not just drop the voice channel."""
+    cog = _make_cog()
+    order: list[str] = []
+    live_conn = MagicMock()
+    live_conn.disconnect = AsyncMock(side_effect=lambda: order.append("golive"))
+    cog.bot.live_connections = {42: live_conn}
+    guild = MagicMock()
+    guild.id = 42
+    guild.voice_client.is_playing.return_value = True
+    guild.voice_client.stop.side_effect = lambda: order.append("vc.stop")
+    guild.voice_client.disconnect = AsyncMock(
+        side_effect=lambda **k: order.append("voice")
+    )
+    ctx = _make_ctx(guild=guild)
+    with patch(
+        "cogs.voice.cancel_stream", side_effect=lambda *a: order.append("cancel")
+    ):
+        await Voice.leave.callback(cog, ctx)
+    assert order == ["cancel", "vc.stop", "golive", "voice"]
+    assert cog.bot.live_connections == {}
+    ctx.send.assert_awaited_once_with("left!")
+
+
+@pytest.mark.asyncio
+async def test_leave_golive_disconnect_error_still_leaves():
+    cog = _make_cog()
+    live_conn = MagicMock()
+    live_conn.disconnect = AsyncMock(side_effect=RuntimeError("gateway gone"))
+    cog.bot.live_connections = {42: live_conn}
+    guild = MagicMock()
+    guild.id = 42
+    guild.voice_client.is_playing.return_value = False
+    guild.voice_client.disconnect = AsyncMock()
+    ctx = _make_ctx(guild=guild)
+    with patch("cogs.voice.cancel_stream"):
+        await Voice.leave.callback(cog, ctx)
+    guild.voice_client.disconnect.assert_awaited_once_with(force=False)
+    ctx.send.assert_awaited_once_with("left!")

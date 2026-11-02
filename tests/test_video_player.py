@@ -1524,3 +1524,62 @@ def test_fit_scale_preserves_aspect_ratio_with_real_ffmpeg(
         check=True, capture_output=True, text=True,
     )
     assert tuple(int(x) for x in probe.stdout.strip().split(",")) == expected
+
+
+
+def test_with_aspect_none_keeps_source_ratio():
+    vf = vpmod._fit_scale("960:540")
+    assert vpmod._with_aspect(vf, None) == vf
+
+
+def test_with_aspect_substitutes_forced_ratio():
+    vf = vpmod._with_aspect(vpmod._fit_scale("960:540", "scale_vaapi"), 4 / 3)
+    assert "dar" not in vf and "1.3333333333" in vf
+    assert vf.startswith("scale_vaapi=")
+
+
+def test_ffmpeg_cmd_uses_forced_aspect(make_player):
+    import dataclasses
+
+    p, _ = make_player(aspect=16 / 9)
+    p._enc = dataclasses.replace(p._enc, vf=vpmod._fit_scale("960:540"))
+    cmd = p._ffmpeg_cmd()
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "1.7777777778" in vf and "dar" not in vf
+
+
+def test_set_aspect_restarts_in_place_at_current_position(make_player):
+    p, _ = make_player()
+    assert p.aspect is None
+    p._frames_emitted = 250  # 10 s at 25 fps
+    p.set_aspect(2.39)
+    assert p.aspect == 2.39
+    assert p._seek_to == pytest.approx(10.0)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+@pytest.mark.parametrize(
+    "src,aspect,expected",
+    [
+        ("1440x1080", 16 / 9, (960, 540)),  # 4:3 stretched to fill 16:9
+        ("1920x1080", 4 / 3, (720, 540)),  # 16:9 squeezed to 4:3
+        ("1920x1080", 2.39, (960, 402)),  # stretched to scope
+    ],
+)
+def test_forced_aspect_with_real_ffmpeg(tmp_path, src, aspect, expected):
+    out = tmp_path / "f.png"
+    vf = vpmod._with_aspect(vpmod._fit_scale("960:540"), aspect)
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", f"testsrc=size={src}:duration=0.1",
+            "-vf", vf, "-frames:v", "1", "-y", str(out),
+        ],
+        check=True,
+    )
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+         "-of", "csv=p=0", str(out)],
+        check=True, capture_output=True, text=True,
+    )
+    assert tuple(int(x) for x in probe.stdout.strip().split(",")) == expected

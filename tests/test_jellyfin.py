@@ -607,7 +607,7 @@ async def test_media_series_picker_cancelled_plays_nothing(media_cog):
 async def test_media_empty_query_sends_help(media_cog):
     ctx = _make_ctx()
     await Jellyfin.media.callback(media_cog, ctx, query="  ")
-    assert _sent(ctx)[0].startswith("**Jellyfin commands**")
+    assert _sent(ctx)[0].startswith("**🎬 Jellyfin")
     media_cog.client.search.assert_not_awaited()
 
 
@@ -889,6 +889,7 @@ async def test_play_item_success_uses_resolved_variant(play_env, caplog):
         probe_size=10_000_000,
         start_offset=0.0,
         on_end=ANY,
+        aspect=None,
     )
     on_end = play_env["start"].call_args.kwargs["on_end"]
     assert on_end.func == cog._on_stream_end

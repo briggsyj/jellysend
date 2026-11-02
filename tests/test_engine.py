@@ -34,8 +34,10 @@ class FakePlayer:
     fifo_path = ""
 
     def __init__(
-        self, url, voice_client, fps, live, audio, probe_size, start_offset=0.0
+        self, url, voice_client, fps, live, audio, probe_size, start_offset=0.0,
+        aspect=None,
     ):
+        self.aspect = aspect
         self.url = url
         self.start_offset = start_offset
         self.pause_gate = threading.Event()
@@ -660,3 +662,10 @@ async def test_run_on_end_logs_exceptions(caplog):
         await engine._run_on_end(on_end, "Movie")
     on_end.assert_awaited_once()
     assert "end-of-stream callback failed for 'Movie'" in caplog.text
+
+
+
+async def test_start_live_passes_forced_aspect(env):
+    await _start_live(env, aspect=4 / 3)
+    await env.bot.stream_tasks[GID]
+    assert FakePlayer.instances[-1].aspect == 4 / 3

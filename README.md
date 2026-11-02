@@ -361,6 +361,7 @@ TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, 
 | `!media play` | Friend | Carry on after a pause; if nothing is playing, starts the playlist |
 | `!media resume <time>` | Friend | Jump to a time and play. Hours first, seconds optional, `:` or `.` separators: `1:23:45`, `1.23.45`, `1:23` (1 h 23 m), `0:05`; also `45m`, `90s`, `1h30m`. A bare number is minutes |
 | `!media stop` | Friend | Stop the stream, clear the playlist and leave the voice channel |
+| `!media aspect-ratio` | Friend | Pick the picture shape from a numbered list: **Original** (default, keeps the media's own ratio), 16:9, 4:3, 2.39:1 (21:9) or 1.85:1. Non-original choices stretch the picture to that shape. Applies immediately in place and is remembered for that Discord server. Shortcuts: `!media aspect-ratio 2`, `!media aspect`, `!media ar` |
 | `!media skip` | Friend | Skip to the next playlist item (stops if the playlist is empty) |
 | `!media queue <title>` | Friend | Add a movie, or an episode (`!media queue <show> sXXeYY`, or pick season → episode), to the playlist. Plays immediately if nothing is on. Max 10 items |
 | `!media playlist` | Friend | Show what's playing (with position) and the numbered playlist |
