@@ -791,7 +791,7 @@ def test_audio_in_step_with_video_is_untouched(fake_opus):
     s._sync = _Clock(position=lambda: s._audio_position())
     s._send_audio()
     assert _payload_ids(conn) == [0, 1, 2, 3]
-    assert s.corrections == {"silence": 0, "dropped": 0}
+    assert s.corrections == {"silence": 0, "dropped": 0, "released": 0}
 
 
 def test_no_correction_before_first_video_frame(fake_opus):
@@ -810,7 +810,7 @@ def test_target_offset_from_av_sync_ms_is_kept(fake_opus, monkeypatch):
     s._sync = _Clock(position=lambda: s._audio_position() - 0.04)
     s._send_audio()
     assert _payload_ids(conn) == [2, 3, 4]
-    assert s.corrections == {"silence": 0, "dropped": 0}
+    assert s.corrections == {"silence": 0, "dropped": 0, "released": 0}
 
 
 def test_restart_rebases_audio_position_and_drains(fake_opus, monkeypatch):
@@ -854,3 +854,101 @@ def test_drain_stale_empties_fifo_without_blocking():
 
 def test_drain_stale_ignores_non_fd_sources():
     assert GoLiveAudioSender(io.BytesIO(b"abc"), _AudioConn())._drain_stale() == 0
+
+
+def test_audio_hold_is_capped_then_released_and_reanchored(fake_opus):
+    """A long video stall must not hold audio indefinitely: the FIFO would fill,
+    block FFmpeg's audio write and freeze the video for good."""
+    conn = _AudioConn()
+    clock = _Clock(position=0.0)
+    s = _sender(_pcm(40), conn, sync_source=clock)
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 25:
+            s._end.set()
+
+    conn.send_packet = send
+    s._send_audio()
+    assert s.corrections["silence"] == golive._SYNC_MAX_HOLD_FRAMES
+    assert s.corrections["released"] == 1
+    assert s._seg_frames > 3  # kept consuming PCM after the release
+
+
+def test_pending_seek_sends_silence_without_reading(fake_opus):
+    conn = _AudioConn()
+    clock = _Clock(position=100.0)
+    clock.seek_pending = True
+    f = _pcm(3)
+    s = _sender(f, conn, sync_source=clock)
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 4:
+            s._end.set()
+
+    conn.send_packet = send
+    s._send_audio()
+    assert f.tell() == 0  # old segment's audio not played or "caught up"
+    assert s.corrections == {"silence": 0, "dropped": 0, "released": 0}
+
+
+def test_no_hold_until_new_segment_emits_video(fake_opus):
+    conn = _AudioConn()
+    clock = _Clock(position=0.0)
+    clock.segment_frames = 0  # new FFmpeg hasn't produced a frame yet
+    s = _sender(_pcm(5), conn, sync_source=clock)
+    s._send_audio()
+    assert _payload_ids(conn) == [0, 1, 2, 3, 4]
+
+
+def test_restart_while_paused_drains_and_signals_player(fake_opus):
+    conn = _AudioConn()
+    clock = _Clock(position=0.0)
+    drained = threading.Event()
+    clock.register_audio_follower = lambda: drained
+    gate = threading.Event()  # paused
+    s = _sender(_pcm(1), conn, sync_source=clock, pause_gate=gate)
+    calls = []
+
+    def fake_wait(timeout=None):
+        calls.append(timeout)
+        if len(calls) == 1:
+            clock.restart_seq = 1  # seek while paused → FFmpeg restarted
+            clock.segment_offset = 30.0
+            return False
+        s._end.set()
+        return False
+
+    gate.wait = fake_wait
+    s._send_audio()
+    assert drained.is_set()
+    assert s._seg_base == 30.0 and s._seen_seq == 1
+
+
+@pytest.mark.parametrize("fps,expected", [(30.0, 0.04), (10.0, 0.07), (1.0, 0.52)])
+def test_slack_widens_for_low_frame_rates(fps, expected):
+    clock = _Clock()
+    clock.fps = fps
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn(), sync_source=clock)
+    assert s._slack == pytest.approx(expected)
+
+
+def test_hold_rearms_once_video_moves_again(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(5), conn, sync_source=_Clock(position=1.0))
+    s._released_at = 0.5  # released earlier at 0.5 s; video now at 1.0 s
+    s._seg_base = 2.0  # audio well ahead → would hold
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 2:
+            s._end.set()
+
+    conn.send_packet = send
+    s._send_audio()
+    assert s._released_at is None
+    assert s.corrections["silence"] == 2

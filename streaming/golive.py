@@ -426,6 +426,10 @@ class _GoLiveVCProxy:
 # ahead) or dropping a 20 ms frame (audio behind). Two frames of slack keeps
 # it from chattering on normal jitter.
 _SYNC_SLACK = 0.04
+# Longest the follower holds audio (silence without reading) before giving up
+# and re-anchoring. The FIFO only buffers ~0.34 s, so holding longer would
+# block FFmpeg's audio write and with it the video: a permanent stall.
+_SYNC_MAX_HOLD_FRAMES = 15  # 300 ms
 
 
 class GoLiveAudioSender(threading.Thread):
@@ -466,7 +470,21 @@ class GoLiveAudioSender(threading.Thread):
         self._seen_seq: int = getattr(sync_source, "restart_seq", 0)
         self._seg_base: float = getattr(sync_source, "segment_offset", 0.0)
         self._seg_frames: int = 0  # 20 ms frames consumed since the restart
-        self.corrections = {"silence": 0, "dropped": 0}
+        self._hold_frames: int = 0  # consecutive silence frames sent to hold
+        # After releasing a hold, don't hold again until video moves past this.
+        self._released_at: float | None = None
+        self.corrections = {"silence": 0, "dropped": 0, "released": 0}
+        self._drained: threading.Event | None = None
+        register = getattr(sync_source, "register_audio_follower", None)
+        if callable(register):
+            self._drained = register()
+        # Position moves in 1/fps steps; keep the dead band wider than a step
+        # so low frame rates don't flip-flop between silence and drops.
+        fps = getattr(sync_source, "fps", None)
+        self._slack = max(
+            _SYNC_SLACK,
+            0.5 / fps + 0.02 if isinstance(fps, (int, float)) and fps > 0 else 0.0,
+        )
 
         self._seq: int = 0
         self._ts: int = 0
@@ -474,6 +492,34 @@ class GoLiveAudioSender(threading.Thread):
 
     def stop(self) -> None:
         self._end.set()
+
+    def _check_restart(self) -> bool:
+        """Handle an FFmpeg restart (drain + re-anchor). True if one happened."""
+        sync = self._sync
+        if sync is None or sync.restart_seq == self._seen_seq:
+            return False
+        self._seen_seq = sync.restart_seq
+        dropped = self._drain_stale()
+        self._seg_base = sync.segment_offset
+        self._seg_frames = 0
+        self._hold_frames = 0
+        if self._drained is not None:
+            self._drained.set()
+        log.info(
+            "GoLiveAudio: source restarted at %.1fs — dropped %d stale bytes",
+            self._seg_base, dropped,
+        )
+        return True
+
+    @staticmethod
+    def _video_flowing(sync) -> bool:
+        """True once the current FFmpeg segment has emitted video. Uses the
+        per-segment frame count so a restart doesn't arm the hold before the
+        new process produces its first frame."""
+        frames = getattr(sync, "segment_frames", None)
+        if isinstance(frames, int):
+            return frames > 0
+        return sync.first_frame_sent.is_set()
 
     def _audio_position(self) -> float:
         return self._seg_base + self._seg_frames * self._FRAME_DURATION
@@ -533,40 +579,62 @@ class GoLiveAudioSender(threading.Thread):
                 while not self._pause_gate.wait(timeout=0.1):
                     if self._end.is_set():
                         return
+                    # A seek/aspect change while paused restarts FFmpeg now;
+                    # drain the old audio before the new process fills the FIFO.
+                    self._check_restart()
                 t0 = time.perf_counter()  # restart pacing after the pause
                 loops = 0
                 continue
 
             sync = self._sync
-            if sync is not None and sync.restart_seq != self._seen_seq:
-                # FFmpeg restarted: drop the old process's leftover audio and
-                # re-anchor our media position to the new segment.
-                self._seen_seq = sync.restart_seq
-                dropped = self._drain_stale()
-                self._seg_base = sync.segment_offset
-                self._seg_frames = 0
-                log.info(
-                    "GoLiveAudio: source restarted at %.1fs — dropped %d stale "
-                    "bytes", self._seg_base, dropped,
-                )
+            if self._check_restart():
+                # FFmpeg restarted: old audio dropped, position re-anchored.
                 t0 = time.perf_counter()
                 loops = 0
                 continue
 
             pcm: bytes | None = None
-            if sync is not None and sync.first_frame_sent.is_set():
-                drift = self._audio_position() - sync.position - target
-                if drift > _SYNC_SLACK:
+            if sync is not None and getattr(sync, "seek_pending", False) is True:
+                # Seek requested but the old FFmpeg isn't gone yet: its audio
+                # is stale, so neither play it nor "catch up" through it.
+                pcm = bytes(self._FRAME_SIZE)
+            elif sync is not None and self._video_flowing(sync):
+                video_pos = sync.position
+                if self._released_at is not None and video_pos > self._released_at:
+                    self._released_at = None  # video is moving again
+                drift = self._audio_position() - video_pos - target
+                if drift > self._slack and self._released_at is not None:
+                    pass  # still stalled after a release: let audio play on
+                elif drift > self._slack and self._hold_frames < _SYNC_MAX_HOLD_FRAMES:
                     # Audio ahead (video stalled/late): hold the audio by
                     # sending 20 ms of silence without consuming any PCM.
                     pcm = bytes(self._FRAME_SIZE)
+                    self._hold_frames += 1
                     self.corrections["silence"] += 1
-                elif drift < -_SYNC_SLACK:
+                elif drift > self._slack:
+                    # Held as long as the FIFO allows: release and re-anchor
+                    # so we don't immediately start holding again.
+                    self._seg_frames = max(
+                        0,
+                        round(
+                            (video_pos + target - self._seg_base)
+                            / self._FRAME_DURATION
+                        ),
+                    )
+                    self._hold_frames = 0
+                    self._released_at = video_pos
+                    self.corrections["released"] += 1
+                    log.warning(
+                        "GoLiveAudio: video stalled — releasing audio hold "
+                        "after %d ms", _SYNC_MAX_HOLD_FRAMES * 20,
+                    )
+                elif drift < -self._slack:
                     # Audio behind: skip one 20 ms frame to catch up.
                     if len(self._f.read(self._FRAME_SIZE)) == self._FRAME_SIZE:
                         self._seg_frames += 1
                         self.corrections["dropped"] += 1
             if pcm is None:
+                self._hold_frames = 0
                 pcm = self._f.read(self._FRAME_SIZE)
                 if len(pcm) == self._FRAME_SIZE:
                     self._seg_frames += 1

@@ -853,6 +853,10 @@ class H264VideoPlayer(threading.Thread):
         # encoder fallback) so the audio sender can drop stale FIFO audio and
         # re-anchor; segment_offset is the media time the new process starts at.
         self.restart_seq: int = 0
+        # Set by the audio sender once it has drained the old process's FIFO
+        # audio after a restart; the new FFmpeg waits for it (bounded) so its
+        # fresh audio isn't drained too. None until a follower registers.
+        self._audio_drained: threading.Event | None = None
         self._finished = False  # set under _ctl_lock once run() won't restart
         self._ctl_lock = threading.Lock()
 
@@ -900,6 +904,34 @@ class H264VideoPlayer(threading.Thread):
     @property
     def segment_offset(self) -> float:
         return self._offset
+
+    @property
+    def segment_frames(self) -> int:
+        """Frames emitted since the current FFmpeg process started."""
+        return self._frames_emitted
+
+    @property
+    def seek_pending(self) -> bool:
+        return self._seek_to is not None
+
+    @property
+    def fps(self) -> float:
+        return self._fps
+
+    def register_audio_follower(self) -> threading.Event:
+        """Called by the audio sender; see _audio_drained."""
+        self._audio_drained = threading.Event()
+        return self._audio_drained
+
+    def _signal_restart(self) -> None:
+        """Bump restart_seq and give the audio follower a moment to drain the
+        old process's leftover audio before the new FFmpeg starts writing."""
+        ev = self._audio_drained
+        if ev is not None:
+            ev.clear()
+        self.restart_seq += 1
+        if ev is not None and not self._end.is_set():
+            ev.wait(timeout=0.5)
 
     @property
     def paused(self) -> bool:
@@ -983,7 +1015,7 @@ class H264VideoPlayer(threading.Thread):
                     self._enc = _SW_ENCODER
                     self._proc = None
                     self._frames_emitted = 0
-                    self.restart_seq += 1
+                    self._signal_restart()
                     continue
                 # Natural end — unless a seek slipped in since the check above.
                 with self._ctl_lock:
@@ -1015,7 +1047,7 @@ class H264VideoPlayer(threading.Thread):
         self._offset = seek_to
         self._frames_emitted = 0
         self._proc = None
-        self.restart_seq += 1
+        self._signal_restart()
         return True
 
     # ── FIFO helpers ──────────────────────────────────────────────────────────
@@ -1064,8 +1096,10 @@ class H264VideoPlayer(threading.Thread):
             "-vf", _with_aspect(enc.vf, self._aspect),
             "-c:v", enc.name,
             *enc.post_codec,
-            "-r", str(int(self._fps)),
-            "-g", str(int(self._fps)),
+            # Exact rate (e.g. 29.97): `position` counts frames at self._fps,
+            # so FFmpeg must emit that rate or the A/V follower sees drift.
+            "-r", f"{self._fps:g}",
+            "-g", str(max(1, round(self._fps))),
             "-f", "h264",
             "pipe:1",
         ]

@@ -1593,3 +1593,31 @@ def test_restart_seq_and_segment_offset_track_seeks(make_player):
     assert (p.restart_seq, p.segment_offset) == (1, 42.0)
     assert p._apply_pending_seek() is False
     assert p.restart_seq == 1
+
+
+def test_output_rate_is_exact_for_fractional_fps(make_player):
+    p, _ = make_player(fps=29.97)
+    cmd = p._ffmpeg_cmd()
+    assert cmd[cmd.index("-r") + 1] == "29.97"
+    assert cmd[cmd.index("-g") + 1] == "30"
+
+
+def test_signal_restart_waits_for_audio_follower(make_player):
+    p, _ = make_player()
+    p._signal_restart()  # no follower registered: just bumps
+    assert p.restart_seq == 1
+    ev = p.register_audio_follower()
+    ev.set()
+    waited = []
+    ev.wait = lambda timeout=None: waited.append(timeout) or True
+    p._signal_restart()
+    assert p.restart_seq == 2
+    assert waited == [0.5]
+    assert not threading.Event.is_set(ev)  # cleared before the bump
+
+
+def test_sync_properties(make_player):
+    p, _ = make_player(fps=25.0)
+    assert p.fps == 25.0 and p.segment_frames == 0 and p.seek_pending is False
+    p._seek_to = 3.0
+    assert p.seek_pending is True
