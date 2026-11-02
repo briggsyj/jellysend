@@ -156,6 +156,19 @@ Pre-built images are published automatically, so you can run slopsoil **without 
 
 > `latest` follows active development. For a stable deployment, pin a version tag (e.g. `:1.2.3`).
 
+### Publishing your own image (forks)
+
+The **Publish Docker image** workflow pushes to the GitHub Container Registry of whichever repository it runs in, so a fork publishes `ghcr.io/<your-user>/slopsoil` with no extra setup:
+
+- Every PR into `develop` gets a build-only check (nothing pushed).
+- Merging a PR into `develop` publishes `:latest` and `:sha-<commit>`.
+- Pushing a `vX.Y.Z` tag publishes versioned tags; **Run workflow** on the Actions tab builds on demand.
+- Docker Hub is optional — set the `DOCKERHUB_USERNAME` repo variable and `DOCKERHUB_TOKEN` secret to also push there.
+
+New GHCR packages are private. Either make the package public (GitHub → your profile → Packages → slopsoil → Package settings) or run `docker login ghcr.io` on the host with a token that has `read:packages`.
+
+The repo's own `docker-compose.yml` uses `${SLOPSOIL_IMAGE:-ghcr.io/briggsyj/slopsoil:latest}`; set `SLOPSOIL_IMAGE` in `.env` to point it at your image or pin a `sha-` tag. `docker compose pull && docker compose up -d` uses the CI-built image, `docker compose up -d --build` builds locally.
+
 ### Option A - Pre-built image (recommended)
 
 #### 1. Create a `docker-compose.yml`
