@@ -44,8 +44,8 @@ jobs:
           context: .
           platforms: ${{ env.PLATFORMS }}
           push: false
+          # Read-only: PR checks must not race the publish job for cache slots.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
@@ -143,7 +143,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # Reuse layers across runs via the GitHub Actions cache backend.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # A cache write failure ("failed to reserve cache") must not fail the
+          # publish — the image itself was built fine.
+          cache-to: type=gha,mode=max,ignore-error=true
           # Supply-chain metadata: SLSA provenance + SBOM attached to the image.
           provenance: mode=max
           sbom: true

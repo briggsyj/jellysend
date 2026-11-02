@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Upper bound on how long a go-live stream waits for FFmpeg to open its outputs.
+_LIVE_FIFO_TIMEOUT = 45.0
+
 
 def _safe_url(url: str) -> str:
     """Strip credentials (user:pass and api_key= query param) for safe logging."""
@@ -58,6 +61,18 @@ def cancel_stream(bot: SlopSoil, guild_id: int) -> None:
             vp.stop()
         except Exception:
             log.warning("error stopping video player for guild %s", guild_id, exc_info=True)
+
+
+def _pop_if_owned(registry: dict, guild_id: int, owner: object) -> object | None:
+    """Remove ``registry[guild_id]`` only if it is still ``owner``.
+
+    A cancelled stream's cleanup can run after a newer stream for the same
+    guild has registered itself; an unconditional pop would tear down the new
+    stream instead of the old one.
+    """
+    if registry.get(guild_id) is owner:
+        return registry.pop(guild_id)
+    return None
 
 
 def cancel_live_stream(bot: SlopSoil, guild_id: int) -> None:
@@ -176,10 +191,10 @@ async def start_stream(
             except Exception:
                 pass
         finally:
-            bot.stream_tasks.pop(guild.id, None)
-            vp = bot.video_players.pop(guild.id, None)
-            if vp is not None:
-                vp.stop()
+            _pop_if_owned(bot.stream_tasks, guild.id, asyncio.current_task())
+            if video_player is not None:
+                _pop_if_owned(bot.video_players, guild.id, video_player)
+                video_player.stop()
             log.debug("stream cleanup done for guild %s", guild.id)
 
     audio_task = asyncio.create_task(_run_audio())
@@ -224,7 +239,13 @@ async def start_live_stream(
     # bot "plays" without ever being in the channel.
     vc = await ensure_voice(voice_channel, vc)
 
+    old_task = bot.stream_tasks.get(guild.id)
     cancel_live_stream(bot, guild.id)
+    if old_task is not None and not old_task.done():
+        # Let the old stream finish its cleanup (incl. STREAM_DELETE for the
+        # old go-live) before STREAM_CREATE for the new one, so the two can't
+        # arrive out of order and end the new stream.
+        await asyncio.wait({old_task}, timeout=5.0)
     if vc.is_playing():
         vc.stop()
 
@@ -238,6 +259,12 @@ async def start_live_stream(
         await conn.connect(timeout=30.0)
     except Exception as exc:
         log.exception("failed to establish go-live connection: %s", exc)
+        # connect() may have failed part-way (socket open, STREAM_CREATE sent);
+        # disconnect() tolerates partial state and releases what was set up.
+        try:
+            await conn.disconnect()
+        except Exception:
+            log.debug("error cleaning up failed go-live connection", exc_info=True)
         await send(f"go-live connection failed: {exc}", delete_after=10)
         return
 
@@ -257,18 +284,24 @@ async def start_live_stream(
     async def _run_live() -> None:
         log.info("go-live task started for '%s'", title)
         audio_sender: GoLiveAudioSender | None = None
+        fifo_file = None
         try:
-            # Open audio FIFO — blocks in a thread until FFmpeg opens the write end
-            log.info("waiting for audio FIFO from FFmpeg (up to 15 s)...")
+            # Open audio FIFO — blocks in a thread until FFmpeg opens the write end.
+            # Generous timeout: a cold server-side transcode (e.g. Jellyfin 4K
+            # HEVC → H.264) can take a while before FFmpeg finishes probing.
+            log.info(
+                "waiting for audio FIFO from FFmpeg (up to %.0f s)...", _LIVE_FIFO_TIMEOUT
+            )
             try:
                 f = await asyncio.wait_for(
                     asyncio.to_thread(open, video_player.audio_fifo, "rb"),
-                    timeout=15.0,
+                    timeout=_LIVE_FIFO_TIMEOUT,
                 )
             except TimeoutError:
                 log.error("go-live: timed out waiting for audio FIFO")
                 await send("go-live stream failed to start", delete_after=10)
                 return
+            fifo_file = f
             audio_sender = GoLiveAudioSender(
                 file_obj=f,
                 conn=conn,
@@ -290,18 +323,22 @@ async def start_live_stream(
             except Exception:
                 pass
         finally:
-            bot.stream_tasks.pop(guild.id, None)
-            vp = bot.video_players.pop(guild.id, None)
-            if vp is not None:
-                vp.stop()
+            _pop_if_owned(bot.stream_tasks, guild.id, asyncio.current_task())
+            _pop_if_owned(bot.video_players, guild.id, video_player)
+            video_player.stop()
             if audio_sender is not None and audio_sender.is_alive():
                 audio_sender.stop()
-            live_conn = bot.live_connections.pop(guild.id, None)
-            if live_conn is not None:
+                await asyncio.to_thread(audio_sender.join, 2.0)
+            if fifo_file is not None:
                 try:
-                    await live_conn.disconnect()
+                    fifo_file.close()
                 except Exception:
                     pass
+            _pop_if_owned(bot.live_connections, guild.id, conn)
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
             log.debug("go-live cleanup done for guild %s", guild.id)
 
     live_task = asyncio.create_task(_run_live())

@@ -22,6 +22,8 @@ def _parse_xmltv_dt(s: str) -> datetime:
     """Parse an XMLTV datetime string such as '20260519120000 +0000'."""
     s = s.strip()
     parts = s.split(maxsplit=1)
+    if not parts:
+        raise ValueError("empty XMLTV datetime")
     dt = datetime.strptime(parts[0], "%Y%m%d%H%M%S")
     if len(parts) > 1:
         off = parts[1]

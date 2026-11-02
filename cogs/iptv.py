@@ -78,8 +78,10 @@ class IPTVCog(commands.Cog, name="IPTV"):
             want_enabled = action.lower() == "enable"
             query = name.lower()
 
-            # Check TVheadend first (substring match against "tvheadend")
-            if has_tvh and query in "tvheadend":
+            # TVheadend: "tvh", "tvheadend" or a prefix of it (min 3 chars).
+            # A bare substring test would let e.g. "end" or "a" toggle TVheadend
+            # instead of the IPTV source the user meant.
+            if has_tvh and len(query) >= 3 and "tvheadend".startswith(query):
                 self.sm.set_tvh_enabled(want_enabled)
                 label = "enabled" if want_enabled else "disabled"
                 await ctx.send(f"**TVheadend** {label}")

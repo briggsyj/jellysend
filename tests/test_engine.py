@@ -82,6 +82,9 @@ class FakeAudioSender:
     def is_alive(self):
         return self.alive
 
+    def join(self, timeout=None):
+        return None
+
 
 class FakeGoLive:
     instances: list[FakeGoLive] = []
@@ -396,12 +399,6 @@ async def test_stale_stream_cleanup_preserves_newer_stream_when_loop_yields(env)
     await _settle()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG engine.py:179-182 (and 293-301): a cancelled stream's finally "
-    "pops bot.stream_tasks/video_players by guild id unconditionally, so if it "
-    "runs after a newer stream registered it removes and stops the new one",
-)
 async def test_stale_stream_cleanup_does_not_clobber_newer_stream(env):
     # env.send is an AsyncMock: it never yields, so the old task's finally
     # only gets to run after the new stream has registered its entries.
@@ -466,7 +463,7 @@ async def test_start_live_full_lifecycle(env):
     (sender,) = FakeAudioSender.instances
     assert sender.started and sender.conn is conn
     assert sender.is_source_active == vp.is_source_active
-    assert sender.file_obj.read() == b"\x00" * 3840
+    assert sender.file_obj.closed  # FIFO reader released on cleanup
     assert sender.stopped
     assert vp.stopped == 1
     conn.disconnect.assert_awaited_once()
@@ -502,23 +499,12 @@ async def test_start_live_connect_failure(env):
     assert env.bot.stream_tasks == {}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG engine.py:236-241: when conn.connect() fails part-way the "
-    "GoLiveConnection is never disconnected (UDP socket, SocketReader thread "
-    "and STREAM_CREATE'd stream leak)",
-)
 async def test_start_live_connect_failure_disconnects(env):
     FakeGoLive.connect_error = RuntimeError("handshake failed")
     await _start_live(env)
     FakeGoLive.instances[0].disconnect.assert_awaited_once()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG engine.py:283-298 / golive.py GoLiveAudioSender: the audio FIFO "
-    "file object opened for the go-live sender is never closed (fd leak per stream)",
-)
 async def test_start_live_closes_audio_fifo(env):
     await _start_live(env)
     await env.bot.stream_tasks[GID]

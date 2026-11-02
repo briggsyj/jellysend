@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cogs.jellyfin import Jellyfin, _fmt_item, _parse_episode_query
-from services.jellyfin import JellyfinClient
+from services.jellyfin import JellyfinClient, PlaybackStream
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +376,37 @@ async def test_wait_for_number_valid_selection():
     assert result == 2
 
 
+def test_wait_for_number_check_rejects_non_decimal_digits():
+    """'²'.isdigit() is True but int('²') raises — the check must reject it."""
+    import asyncio as _asyncio
+
+    cog = _make_jellyfin_cog()
+    ctx = _make_ctx()
+    captured = {}
+
+    async def _wait_for(event, check, timeout):
+        captured["check"] = check
+        raise TimeoutError
+
+    cog.bot.wait_for = _wait_for
+    _asyncio.run(cog._wait_for_number(ctx, max_val=3))
+    msg = MagicMock()
+    msg.author.id = ctx.author.id
+    msg.channel.id = ctx.channel.id
+    msg.content = "²"
+    assert captured["check"](msg) is False
+    msg.content = "3"
+    assert captured["check"](msg) is True
+
+
+def test_fmt_item_season_zero_special_keeps_code():
+    item = {
+        "Type": "Episode", "Name": "Pilot", "SeriesName": "Show",
+        "ParentIndexNumber": 0, "IndexNumber": 0,
+    }
+    assert _fmt_item(item) == "Show — S00E00 — Pilot"
+
+
 @pytest.mark.asyncio
 async def test_wait_for_number_out_of_range_returns_none():
     cog = _make_jellyfin_cog()
@@ -475,7 +506,14 @@ def _make_client(**overrides) -> MagicMock:
     client.find_episode = AsyncMock(return_value=[])
     client.get_seasons = AsyncMock(return_value=[])
     client.get_episodes = AsyncMock(return_value=[])
-    client.get_stream_url = AsyncMock(return_value=None)
+    client.start_playback = AsyncMock(return_value=None)
+    url_mock = overrides.pop("get_stream_url", None)
+    if url_mock is not None:
+        # Legacy shorthand: a URL with no PlaybackInfo metadata (→ ffprobe path).
+        url = url_mock.return_value
+        client.start_playback = AsyncMock(
+            return_value=PlaybackStream(url, "sess", None, None) if url else None
+        )
     for k, v in overrides.items():
         setattr(client, k, v)
     return client
@@ -755,7 +793,7 @@ async def test_play_item_not_in_voice(play_env):
     ctx = _make_ctx()
     await cog._play_item(ctx, MOVIE)
     assert _sent(ctx) == ["you're not in a voice channel"]
-    client.get_stream_url.assert_not_awaited()
+    client.start_playback.assert_not_awaited()
     play_env["start"].assert_not_awaited()
 
 
@@ -764,7 +802,7 @@ async def test_play_item_no_stream_url(play_env):
     cog = _make_jellyfin_cog(client)
     ctx = _make_ctx()
     await cog._play_item(ctx, MOVIE)
-    client.get_stream_url.assert_awaited_once_with("m1")
+    client.start_playback.assert_awaited_once_with("m1")
     sent = _sent(ctx)
     assert sent[0] == "checking stream…"
     assert "could not start a Jellyfin playback session for **Inception (2010)**" in sent[1]
@@ -870,3 +908,45 @@ async def test_setup_configured(monkeypatch):
     cog = bot.add_cog.call_args[0][0]
     assert isinstance(cog.client, JellyfinClient)
     assert cog.client._api_key == "abc"
+
+
+# ── PlaybackInfo metadata (skips ffprobe) ────────────────────────────────────
+
+
+async def test_play_item_uses_playback_info_metadata_and_skips_probe(play_env):
+    stream = PlaybackStream("http://jf/x", "sess", has_audio=False, video_codec="h264")
+    client = _make_client(start_playback=AsyncMock(return_value=stream))
+    cog = _make_jellyfin_cog(client)
+    await cog._play_item(_make_ctx(), MOVIE)
+    play_env["probe"].assert_not_awaited()
+    assert play_env["start"].call_args.kwargs["audio"] is False
+
+
+async def test_play_item_metadata_unsupported_codec(play_env):
+    stream = PlaybackStream("http://jf/x", "sess", has_audio=True, video_codec="av1")
+    client = _make_client(start_playback=AsyncMock(return_value=stream))
+    cog = _make_jellyfin_cog(client)
+    ctx = _make_ctx()
+    await cog._play_item(ctx, MOVIE)
+    assert "unsupported video codec `av1`" in _sent(ctx)[-1]
+    play_env["start"].assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ({"TranscodingUrl": "/t.m3u8?a=1", "MediaStreams": [{"Type": "Video"}, {"Type": "Audio"}]}, (True, "h264")),
+        ({"TranscodingUrl": "/t.m3u8?a=1", "MediaStreams": [{"Type": "Video", "Codec": "hevc"}]}, (False, "h264")),
+        ({"DirectStreamUrl": "/d?a=1", "MediaStreams": [{"Type": "Video", "Codec": "HEVC"}, {"Type": "Audio"}]}, (True, "hevc")),
+        ({"DirectStreamUrl": "/d?a=1", "MediaStreams": [{"Type": "Audio"}]}, (True, None)),
+        ({"TranscodingUrl": "/t.m3u8?a=1"}, (None, None)),
+        ({"TranscodingUrl": "/t.m3u8?a=1", "MediaStreams": [{"Type": "Audio"}]}, (True, None)),
+    ],
+)
+async def test_start_playback_reports_stream_metadata(client, source, expected):
+    client._user_id = "u"
+    resp = _mock_response({"MediaSources": [source], "PlaySessionId": "ps-9"})
+    with patch("urllib.request.urlopen", return_value=resp):
+        stream = await client.start_playback("item-1")
+    assert (stream.has_audio, stream.video_codec) == expected
+    assert stream.play_session_id == "ps-9"

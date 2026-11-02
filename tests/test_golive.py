@@ -662,3 +662,14 @@ def test_audio_sender_with_real_opus():
     assert len(conn.sent) == 2
     _, payload, _ = _decrypt_lite(conn.sent[0])
     assert 0 < len(payload) < _FRAME  # real Opus is compressed
+
+
+async def test_disconnect_is_idempotent_single_stream_delete():
+    """A second disconnect() must not re-send STREAM_DELETE: the key is reused
+    for the next go-live in the same channel, so a late duplicate would end it."""
+    conn = _make_conn()
+    conn._stream_key = "guild:1:2:42"
+    await conn.disconnect()
+    await conn.disconnect()
+    conn._bot.ws.send_as_json.assert_awaited_once()
+    assert conn._stream_key is None
