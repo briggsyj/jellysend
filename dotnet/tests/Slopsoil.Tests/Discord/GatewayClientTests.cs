@@ -98,7 +98,7 @@ public sealed class GatewayClientTests : IAsyncLifetime
             d.EnumerateObject().Select(p => p.Name));
         Assert.Equal(Token, d.GetProperty("token").GetString());
         Assert.Equal(22525, d.GetProperty("capabilities").GetInt32());
-        Assert.False(d.GetProperty("compress").GetBoolean());
+        Assert.True(d.GetProperty("compress").GetBoolean());
         Assert.Equal("""{"guild_versions":{}}""", d.GetProperty("client_state").GetRawText());
         Assert.Equal("""{"status":"unknown","since":0,"activities":[],"afk":false}""", d.GetProperty("presence").GetRawText());
 
@@ -282,6 +282,25 @@ public sealed class GatewayClientTests : IAsyncLifetime
         Assert.Equal(42, _client.Sequence);
         Assert.Contains(_log, l => l.Contains("InvalidOperationException", StringComparison.Ordinal));
         Assert.Contains(_log, l => l.Contains("op 99", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Binary_frames_are_zlib_inflated()
+    {
+        var ws = await LoginAsync();
+        var messages = new List<string>();
+        _client.Dispatch += (name, d) =>
+        {
+            if (name == "MESSAGE_CREATE")
+            {
+                messages.Add(d.GetProperty("content").GetString()!);
+            }
+        };
+
+        ws.PushZlib("""{"op":0,"t":"MESSAGE_CREATE","d":{"content":"!media play"},"s":43}""");
+        await SyncAsync(ws);
+        Assert.Equal(["!media play"], messages);
+        Assert.Equal(43, _client.Sequence);
     }
 
     [Fact]

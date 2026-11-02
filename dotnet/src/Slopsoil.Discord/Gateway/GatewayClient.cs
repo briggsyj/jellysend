@@ -6,7 +6,7 @@ using Slopsoil.Discord.Transport;
 namespace Slopsoil.Discord.Gateway;
 
 /// <summary>
-/// Discord user-account gateway client (v9, JSON, no compression), modelled on <c>discord.py-self</c>'s
+/// Discord user-account gateway client (v9, JSON, per-payload zlib compression), modelled on <c>discord.py-self</c>'s
 /// <c>DiscordWebSocket</c>: IDENTIFY with client properties/capabilities/presence/client_state,
 /// heartbeat with ACK-based zombie detection, RESUME via <c>resume_gateway_url</c>, RECONNECT and
 /// INVALID_SESSION handling, exponential reconnect backoff and a send rate limit.
@@ -286,9 +286,19 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
         return code is { } r && ReidentifyCloseCodes.Contains(r) ? Outcome.Reidentify : Outcome.Retry;
     }
 
+    /// <summary>Decompress a per-payload zlib frame (sent because IDENTIFY has <c>compress: true</c>).</summary>
+    internal static byte[] Inflate(ReadOnlyMemory<byte> data)
+    {
+        using var input = new MemoryStream(data.ToArray(), writable: false);
+        using var zlib = new System.IO.Compression.ZLibStream(input, System.IO.Compression.CompressionMode.Decompress);
+        using var output = new MemoryStream();
+        zlib.CopyTo(output);
+        return output.ToArray();
+    }
+
     private async Task<Outcome?> HandleAsync(WebSocketFrame frame, Connection connection, bool resume)
     {
-        using var doc = JsonDocument.Parse(frame.Data);
+        using var doc = JsonDocument.Parse(frame.IsText ? frame.Data : Inflate(frame.Data));
         var root = doc.RootElement;
         var op = root.GetProperty("op").GetInt32();
         if (root.TryGetProperty("s", out var s) && s.ValueKind == JsonValueKind.Number)
@@ -438,7 +448,10 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
                     ["activities"] = new JsonArray(),
                     ["afk"] = false,
                 },
-                ["compress"] = false,
+                // Discord requires at least one form of compression for user accounts
+                // (discord.py-self: "We require at least one form of compression"). We use
+                // per-payload zlib: large dispatches arrive as binary zlib frames (Inflate).
+                ["compress"] = true,
                 ["client_state"] = new JsonObject { ["guild_versions"] = new JsonObject() },
             },
         };

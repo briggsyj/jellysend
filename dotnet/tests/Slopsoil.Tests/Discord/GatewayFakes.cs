@@ -161,6 +161,17 @@ internal sealed class FakeSocket : IWebSocketConnection
 
     public void Push(string json) => _inbound.Writer.TryWrite(new WebSocketFrame(true, Encoding.UTF8.GetBytes(json)));
 
+    public void PushZlib(string json)
+    {
+        using var buffer = new MemoryStream();
+        using (var zlib = new System.IO.Compression.ZLibStream(buffer, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        {
+            zlib.Write(Encoding.UTF8.GetBytes(json));
+        }
+
+        _inbound.Writer.TryWrite(new WebSocketFrame(false, buffer.ToArray()));
+    }
+
     public void Op(int op, string data = "null") => Push($$"""{"op":{{op}},"d":{{data}}}""");
 
     public void Hello(int intervalMs = 41250) => Op(10, $$"""{"heartbeat_interval":{{intervalMs}}}""");
