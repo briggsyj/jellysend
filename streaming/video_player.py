@@ -26,6 +26,8 @@ import discord
 import nacl.secret
 import nacl.utils
 
+from redact import redact_text, redact_url  # noqa: F401  (redact_url re-exported)
+
 log = logging.getLogger(__name__)
 
 # RTP constants for H.264 video
@@ -380,27 +382,6 @@ _STREAM_PRESETS: dict[str, tuple[str, float, str]] = {
     "4k": ("3840:2160", 60.0, "24000k"),
 }
 _DEFAULT_QUALITY = "1080p"
-
-
-# Query parameters that carry credentials (Jellyfin uses both api_key= and
-# ApiKey=; matching is case-insensitive).
-_SECRET_QUERY_KEYS = frozenset(
-    {"api_key", "apikey", "token", "access_token", "password", "x-emby-token"}
-)
-
-
-def redact_url(url: str) -> str:
-    """Strip credentials (user:pass and secret query params) for safe logging."""
-    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-
-    p = urlparse(url)
-    netloc = (p.hostname or "") + (f":{p.port}" if p.port else "")
-    query = [
-        (k, v)
-        for k, v in parse_qsl(p.query, keep_blank_values=True)
-        if k.lower() not in _SECRET_QUERY_KEYS
-    ]
-    return urlunparse(p._replace(netloc=netloc, query=urlencode(query)))
 
 
 def _packet_pace_fraction() -> float:
@@ -1175,9 +1156,9 @@ class H264VideoPlayer(threading.Thread):
                 time.monotonic() - t_start < 10.0
                 and any(n in msg for n in self._STARTUP_NOISE)
             ):
-                log.debug("ffmpeg (startup): %s", msg)
+                log.debug("ffmpeg (startup): %s", redact_text(msg))
             else:
-                log.warning("ffmpeg video: %s", msg)
+                log.warning("ffmpeg video: %s", redact_text(msg))
 
     def _stream(self) -> None:
         conn = self._vc._connection

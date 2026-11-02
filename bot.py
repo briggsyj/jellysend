@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 import davey_compat
 import video_compat
+from redact import install_redacting_formatter
 from permissions import Role, get_user_role
 
 if TYPE_CHECKING:
@@ -33,6 +34,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+# Last line of defence: scrub API keys/tokens from every log line, including
+# third-party messages and tracebacks.
+install_redacting_formatter()
 log = logging.getLogger(__name__)
 
 def _load_allowed_ids() -> set[int]:
