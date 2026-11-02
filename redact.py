@@ -8,6 +8,7 @@ here.
 
 from __future__ import annotations
 
+import logging
 import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -40,3 +41,24 @@ def redact_text(text: str) -> str:
     """Mask secrets in any text that may embed URLs (e.g. FFmpeg stderr)."""
     text = _SECRET_PARAM_RE.sub(r"\1***", text)
     return _USERINFO_RE.sub(r"\1***@", text)
+
+
+class RedactingFormatter(logging.Formatter):
+    """Formatter that scrubs credentials from every formatted record.
+
+    A catch-all for anything that reaches the log without going through
+    redact_url(): library messages, exception text and tracebacks.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_text(super().format(record))
+
+
+def install_redacting_formatter(logger: logging.Logger | None = None) -> None:
+    """Wrap the formatter of every handler on ``logger`` (default: root)."""
+    target = logger or logging.getLogger()
+    for handler in target.handlers:
+        current = handler.formatter
+        fmt = current._fmt if current is not None else None
+        datefmt = current.datefmt if current is not None else None
+        handler.setFormatter(RedactingFormatter(fmt, datefmt))

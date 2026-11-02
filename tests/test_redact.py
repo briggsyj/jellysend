@@ -102,3 +102,41 @@ def test_ffmpeg_stderr_lines_are_redacted(caplog):
         vp._drain_stderr()
     assert KEY not in caplog.text
     assert "ffmpeg video" in caplog.text and "ffmpeg (startup)" in caplog.text
+
+
+def test_redacting_formatter_scrubs_messages_and_tracebacks():
+    from redact import RedactingFormatter
+
+    fmt = RedactingFormatter("%(levelname)s %(message)s")
+    try:
+        raise RuntimeError(f"boom {JF_URL}")
+    except RuntimeError:
+        import sys
+
+        exc_info = sys.exc_info()
+    record = logging.LogRecord(
+        "x", logging.ERROR, __file__, 1, "fetch %s failed", (JF_URL,), exc_info
+    )
+    out = fmt.format(record)
+    assert KEY not in out
+    assert "fetch" in out and "Traceback" in out
+
+
+def test_install_redacting_formatter_wraps_existing_handlers():
+    from redact import RedactingFormatter, install_redacting_formatter
+
+    logger = logging.getLogger("test-redact-install")
+    plain = logging.StreamHandler()
+    plain.setFormatter(logging.Formatter("%(message)s", "%H"))
+    bare = logging.StreamHandler()
+    logger.addHandler(plain)
+    logger.addHandler(bare)
+    try:
+        install_redacting_formatter(logger)
+        assert isinstance(plain.formatter, RedactingFormatter)
+        assert plain.formatter._fmt == "%(message)s"
+        assert plain.formatter.datefmt == "%H"
+        assert isinstance(bare.formatter, RedactingFormatter)
+    finally:
+        logger.removeHandler(plain)
+        logger.removeHandler(bare)
