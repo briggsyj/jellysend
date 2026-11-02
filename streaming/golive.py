@@ -348,16 +348,23 @@ class GoLiveConnection:
             pass
 
     async def disconnect(self) -> None:
-        """Stop the go-live stream and release all resources."""
-        if self._stream_key:
+        """Stop the go-live stream and release all resources.
+
+        Idempotent: the stream key is cleared after the first STREAM_DELETE.
+        Several teardown paths (!stop, auto-leave, the stream task's finally)
+        may all call this, and a repeated STREAM_DELETE for the same
+        user/channel key would end a *new* go-live started in the meantime.
+        """
+        stream_key, self._stream_key = self._stream_key, None
+        if stream_key:
             try:
                 await self._bot.ws.send_as_json(
                     {
                         "op": _OP_STREAM_DELETE,
-                        "d": {"stream_key": self._stream_key},
+                        "d": {"stream_key": stream_key},
                     }
                 )
-                log.info("Sent STREAM_DELETE for %s", self._stream_key)
+                log.info("Sent STREAM_DELETE for %s", stream_key)
             except Exception:
                 log.debug("GoLive: could not send STREAM_DELETE", exc_info=True)
 

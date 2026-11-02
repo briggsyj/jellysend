@@ -940,6 +940,7 @@ async def test_play_item_metadata_unsupported_codec(play_env):
         ({"DirectStreamUrl": "/d?a=1", "MediaStreams": [{"Type": "Video", "Codec": "HEVC"}, {"Type": "Audio"}]}, (True, "hevc")),
         ({"DirectStreamUrl": "/d?a=1", "MediaStreams": [{"Type": "Audio"}]}, (True, None)),
         ({"TranscodingUrl": "/t.m3u8?a=1"}, (None, None)),
+        ({"TranscodingUrl": "/t.m3u8?a=1", "MediaStreams": [{"Type": "Audio"}]}, (True, None)),
     ],
 )
 async def test_start_playback_reports_stream_metadata(client, source, expected):

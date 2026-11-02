@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Upper bound on how long a go-live stream waits for FFmpeg to open its outputs.
+_LIVE_FIFO_TIMEOUT = 45.0
+
 
 def _safe_url(url: str) -> str:
     """Strip credentials (user:pass and api_key= query param) for safe logging."""
@@ -283,12 +286,16 @@ async def start_live_stream(
         audio_sender: GoLiveAudioSender | None = None
         fifo_file = None
         try:
-            # Open audio FIFO — blocks in a thread until FFmpeg opens the write end
-            log.info("waiting for audio FIFO from FFmpeg (up to 15 s)...")
+            # Open audio FIFO — blocks in a thread until FFmpeg opens the write end.
+            # Generous timeout: a cold server-side transcode (e.g. Jellyfin 4K
+            # HEVC → H.264) can take a while before FFmpeg finishes probing.
+            log.info(
+                "waiting for audio FIFO from FFmpeg (up to %.0f s)...", _LIVE_FIFO_TIMEOUT
+            )
             try:
                 f = await asyncio.wait_for(
                     asyncio.to_thread(open, video_player.audio_fifo, "rb"),
-                    timeout=15.0,
+                    timeout=_LIVE_FIFO_TIMEOUT,
                 )
             except TimeoutError:
                 log.error("go-live: timed out waiting for audio FIFO")

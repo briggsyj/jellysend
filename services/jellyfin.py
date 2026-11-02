@@ -41,10 +41,12 @@ def _stream_metadata(source: dict, transcoding: bool) -> tuple[bool | None, str 
     if not isinstance(streams, list) or not streams:
         return None, None
     has_audio = any(s.get("Type") == "Audio" for s in streams)
+    video = next((s for s in streams if s.get("Type") == "Video"), None)
+    if video is None:
+        return has_audio, None  # no video track — let ffprobe decide/reject
     if transcoding:
         # We asked Jellyfin to transcode to H.264 (see DeviceProfile).
         return has_audio, "h264"
-    video = next((s for s in streams if s.get("Type") == "Video"), None)
     codec = video.get("Codec") if video else None
     return has_audio, codec.lower() if isinstance(codec, str) else None
 
