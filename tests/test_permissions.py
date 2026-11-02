@@ -146,3 +146,72 @@ def test_multiple_guilds_member_found_in_second():
     bot.guilds = [guild1, guild2]
     bot.relationships = []
     assert get_user_role(bot, 77) == Role.VIEWER
+
+
+# ---------------------------------------------------------------------------
+# require_role() decorator predicate
+# ---------------------------------------------------------------------------
+
+
+def _predicate_for(role: Role):
+    from discord.ext import commands
+
+    from permissions import require_role
+
+    @require_role(role)
+    @commands.command()
+    async def cmd(ctx):  # pragma: no cover - body never invoked
+        pass
+
+    assert len(cmd.checks) == 1
+    return cmd.checks[0]
+
+
+def _ctx(bot, author_id: int, self_id: int | None = 999):
+    ctx = MagicMock()
+    ctx.bot = bot
+    if self_id is None:
+        bot.user = None
+    else:
+        bot.user.id = self_id
+    ctx.author.id = author_id
+    return ctx
+
+
+async def test_require_role_self_always_passes():
+    bot = _make_bot()  # self is not admin/friend/member
+    assert await _predicate_for(Role.ADMIN)(_ctx(bot, 999)) is True
+
+
+@pytest.mark.parametrize(
+    "required, kwargs, expected",
+    [
+        (Role.ADMIN, {"allowed_ids": {5}}, True),
+        (Role.ADMIN, {"friend_ids": {5}}, False),
+        (Role.FRIEND, {"friend_ids": {5}}, True),
+        (Role.FRIEND, {"allowed_ids": {5}}, True),
+        (Role.FRIEND, {"guild_member_ids": {5}}, False),
+        (Role.VIEWER, {"guild_member_ids": {5}}, True),
+        (Role.VIEWER, {}, False),
+    ],
+)
+async def test_require_role_predicate(required, kwargs, expected):
+    bot = _make_bot(**kwargs)
+    assert await _predicate_for(required)(_ctx(bot, 5)) is expected
+
+
+async def test_require_role_without_bot_user():
+    """Before login bot.user is None; the role lookup must still apply."""
+    bot = _make_bot(guild_member_ids={5})
+    pred = _predicate_for(Role.VIEWER)
+    assert await pred(_ctx(bot, 5, self_id=None)) is True
+    assert await pred(_ctx(bot, 6, self_id=None)) is False
+
+
+def test_bot_view_protocol_runtime_check():
+    from types import SimpleNamespace
+
+    from permissions import _BotView
+
+    assert isinstance(SimpleNamespace(allowed_ids=set(), relationships=[], guilds=[]), _BotView)
+    assert not isinstance(SimpleNamespace(allowed_ids=set()), _BotView)
