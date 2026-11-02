@@ -3,7 +3,11 @@ slopsoil
 vendor/
 .env
 .agents/
-.claude/
+# Keep local Claude state ignored, but share the Spec Kit skills.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/speckit-*/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
