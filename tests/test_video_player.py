@@ -173,6 +173,7 @@ def test_pace_non_numeric_falls_back_to_disabled(monkeypatch):
 # ===========================================================================
 
 import io  # noqa: E402
+import shutil  # noqa: E402
 import struct  # noqa: E402
 import subprocess  # noqa: E402
 import threading  # noqa: E402
@@ -583,7 +584,7 @@ def test_detect_encoder_no_ffmpeg(monkeypatch):
 def test_libopenh264_config_uses_profile_env(monkeypatch):
     monkeypatch.setenv("STREAM_QUALITY", "720p")
     cfg = vpmod._libopenh264_config()
-    assert cfg.vf == "scale=1280:720"
+    assert cfg.vf == vpmod._fit_scale("1280:720")
     assert cfg.post_codec[cfg.post_codec.index("-b:v") + 1] == "10000k"
 
 
@@ -1487,3 +1488,39 @@ def test_hardware_encoders_disable_b_frames(monkeypatch, name):
     i = enc.post_codec.index("-bf")
     assert enc.post_codec[i + 1] == "0"
 
+
+
+def test_fit_scale_uses_requested_scaler():
+    vf = vpmod._fit_scale("960:540", "scale_vaapi")
+    assert vf.startswith("scale_vaapi=w='if(gt(dar,960/540),960,")
+    assert vf.endswith(",setsar=1")
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+@pytest.mark.parametrize(
+    "src,sar,expected",
+    [
+        ("1920x1080", "1", (960, 540)),  # 16:9 fills the box
+        ("1440x1080", "1", (720, 540)),  # 4:3 → pillarbox-sized, not stretched
+        ("1920x800", "1", (960, 400)),  # 2.4:1 → letterbox-sized
+        ("720x480", "32/27", (960, 540)),  # anamorphic 16:9 DVD
+    ],
+)
+def test_fit_scale_preserves_aspect_ratio_with_real_ffmpeg(
+    tmp_path, src, sar, expected
+):
+    out = tmp_path / "f.png"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", f"testsrc=size={src}:duration=0.1,setsar={sar}",
+            "-vf", vpmod._fit_scale("960:540"), "-frames:v", "1", "-y", str(out),
+        ],
+        check=True,
+    )
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+         "-of", "csv=p=0", str(out)],
+        check=True, capture_output=True, text=True,
+    )
+    assert tuple(int(x) for x in probe.stdout.strip().split(",")) == expected

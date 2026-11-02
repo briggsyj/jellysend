@@ -423,6 +423,22 @@ def _stream_resolution() -> str:
     return _stream_preset()[0]
 
 
+def _fit_scale(res: str, scaler: str = "scale") -> str:
+    """Scaler filter that fits the source *inside* ``res`` ('W:H').
+
+    Scaling straight to W:H stretches anything that isn't exactly that aspect
+    ratio (4:3 TV, 2.39:1 films, anamorphic DVDs). This keeps the display
+    aspect ratio (``dar`` includes non-square pixels), uses even dimensions
+    for the encoder and marks the output as square-pixel.
+    """
+    w, h = res.split(":")
+    box = f"{w}/{h}"
+    return (
+        f"{scaler}=w='if(gt(dar,{box}),{w},2*trunc({h}*dar/2))'"
+        f":h='if(gt(dar,{box}),2*trunc({w}/dar/2),{h})',setsar=1"
+    )
+
+
 def _stream_bitrate() -> str:
     """Target video bitrate for -b:v/-maxrate/-bufsize (e.g. '2500k').
     STREAM_VIDEO_BITRATE overrides the STREAM_QUALITY preset."""
@@ -506,7 +522,7 @@ def _detect_encoder() -> _EncoderConfig | None:
     vaapi_pre = ["-vaapi_device", "/dev/dri/renderD128"]
     res = _stream_resolution()
     br = _stream_bitrate()
-    vaapi_vf = f"format=nv12,hwupload,scale_vaapi={res}"
+    vaapi_vf = "format=nv12,hwupload," + _fit_scale(res, "scale_vaapi")
 
     # Hardware encoders are preferred over software, so a working GPU is always
     # used when present.  Each is gated on an actual probe, so a compiled-in but
@@ -539,7 +555,7 @@ def _detect_encoder() -> _EncoderConfig | None:
                     "-bufsize",
                     br,
                 ],
-                vf=f"scale={res}",
+                vf=_fit_scale(res),
             )
         log.info(
             "h264_nvenc is compiled in but unavailable (no usable NVIDIA GPU/driver) "
@@ -603,7 +619,7 @@ def _detect_encoder() -> _EncoderConfig | None:
                 "-bufsize",
                 br,
             ],
-            vf=f"scale={res}",
+            vf=_fit_scale(res),
         )
 
     if "libopenh264" in available and _test_encoder("libopenh264", []):
@@ -634,7 +650,7 @@ def _libopenh264_config() -> _EncoderConfig:
             "-maxrate", br,
             "-bufsize", br,
         ],
-        vf=f"scale={res}",
+        vf=_fit_scale(res),
     )
 
 
