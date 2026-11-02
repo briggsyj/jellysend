@@ -43,7 +43,9 @@ def _fmt_item(item: dict) -> str:
         series = item.get("SeriesName", "")
         season = item.get("ParentIndexNumber")
         ep = item.get("IndexNumber")
-        ep_str = f"S{season:02d}E{ep:02d}" if season and ep else ""
+        ep_str = (
+            f"S{season:02d}E{ep:02d}" if season is not None and ep is not None else ""
+        )
         return f"{series} — {ep_str} — {name}" if ep_str else f"{series} — {name}"
 
     return f"{name} ({year})" if year else name
@@ -66,7 +68,10 @@ class Jellyfin(commands.Cog):
             return (
                 msg.author.id == ctx.author.id
                 and msg.channel.id == ctx.channel.id
-                and (msg.content.strip().isdigit() or msg.content.strip().startswith("!"))
+                and (
+                    msg.content.strip().isdecimal()
+                    or msg.content.strip().startswith("!")
+                )
             )
 
         try:
@@ -102,14 +107,15 @@ class Jellyfin(commands.Cog):
         await ctx.send("checking stream…")
 
         # Ask Jellyfin to start a transcoding session and give us the HLS URL.
-        stream_url = await self.client.get_stream_url(item_id)
-        if stream_url is None:
+        stream = await self.client.start_playback(item_id)
+        if stream is None:
             await ctx.send(
                 f"could not start a Jellyfin playback session for **{label}** "
                 "— check that the server is reachable and the API key is valid"
             )
             return
 
+        stream_url = stream.url
         safe_url = stream_url.replace(self.client._api_key, "***")
         log.info("Jellyfin: stream URL: %s", safe_url)
 
@@ -121,20 +127,30 @@ class Jellyfin(commands.Cog):
         else:
             log.info("Jellyfin: using URL as-is (no HLS variants): %s", safe_resolved)
 
-        info = await _probe_stream(resolved_url)
-        if info is None:
-            await ctx.send(
-                f"could not probe the Jellyfin stream for **{label}** "
-                "— transcoding may have failed on the server"
+        if stream.has_audio is not None and stream.video_codec is not None:
+            # PlaybackInfo already told us what we need — skip ffprobe, which
+            # costs several seconds and makes Jellyfin spin up the transcode
+            # twice (once for the probe, once for FFmpeg).
+            codec = stream.video_codec
+            has_audio = stream.has_audio
+            log.info(
+                "Jellyfin metadata: '%s' → codec=%s audio=%s", label, codec, has_audio
             )
-            return
+        else:
+            info = await _probe_stream(resolved_url)
+            if info is None:
+                await ctx.send(
+                    f"could not probe the Jellyfin stream for **{label}** "
+                    "— transcoding may have failed on the server"
+                )
+                return
 
-        codec = info["codec"]
-        has_audio = info.get("has_audio", True)
-        log.info(
-            "Jellyfin probe: '%s' → codec=%s fps=%.3f audio=%s",
-            label, codec, info["fps"], has_audio,
-        )
+            codec = info["codec"]
+            has_audio = info.get("has_audio", True)
+            log.info(
+                "Jellyfin probe: '%s' → codec=%s fps=%.3f audio=%s",
+                label, codec, info["fps"], has_audio,
+            )
 
         if codec not in ("h264", "hevc", "mpeg2video", "mpeg4", "mjpeg"):
             await ctx.send(
@@ -178,7 +194,7 @@ class Jellyfin(commands.Cog):
         for i, ep in enumerate(episodes, 1):
             ep_num = ep.get("IndexNumber")
             ep_name = ep.get("Name", "Unknown")
-            ep_str = f"E{ep_num:02d} — {ep_name}" if ep_num else ep_name
+            ep_str = f"E{ep_num:02d} — {ep_name}" if ep_num is not None else ep_name
             lines.append(f"  `{i}` {ep_str}")
         await ctx.send("\n".join(lines))
 

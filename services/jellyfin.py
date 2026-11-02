@@ -14,10 +14,39 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
 _DEVICE_ID = "slopsoil-discord-bot"
+
+
+@dataclass(frozen=True)
+class PlaybackStream:
+    """A started Jellyfin playback session.
+
+    ``has_audio`` / ``video_codec`` come from PlaybackInfo's MediaStreams so the
+    caller can skip a separate ffprobe pass; they are None when Jellyfin did
+    not report stream metadata.
+    """
+
+    url: str
+    play_session_id: str | None
+    has_audio: bool | None
+    video_codec: str | None
+
+
+def _stream_metadata(source: dict, transcoding: bool) -> tuple[bool | None, str | None]:
+    streams = source.get("MediaStreams")
+    if not isinstance(streams, list) or not streams:
+        return None, None
+    has_audio = any(s.get("Type") == "Audio" for s in streams)
+    if transcoding:
+        # We asked Jellyfin to transcode to H.264 (see DeviceProfile).
+        return has_audio, "h264"
+    video = next((s for s in streams if s.get("Type") == "Video"), None)
+    codec = video.get("Codec") if video else None
+    return has_audio, codec.lower() if isinstance(codec, str) else None
 
 
 class JellyfinClient:
@@ -58,6 +87,11 @@ class JellyfinClient:
         return None
 
     async def get_stream_url(self, item_id: str) -> str | None:
+        """Start a playback session and return just the stream URL."""
+        stream = await self.start_playback(item_id)
+        return stream.url if stream else None
+
+    async def start_playback(self, item_id: str) -> PlaybackStream | None:
         """Start a Jellyfin playback session and return the HLS stream URL.
 
         Uses POST /Items/{id}/PlaybackInfo with a DeviceProfile that requests
@@ -122,7 +156,9 @@ class JellyfinClient:
 
         # Prefer the HLS transcoding URL — Jellyfin outputs H.264/AAC.
         # Fall back to direct stream if transcoding is unavailable.
-        raw = sources[0].get("TranscodingUrl") or sources[0].get("DirectStreamUrl")
+        source = sources[0]
+        transcoding = bool(source.get("TranscodingUrl"))
+        raw = source.get("TranscodingUrl") or source.get("DirectStreamUrl")
         if not raw:
             log.warning("No stream URL in PlaybackInfo for item %s", item_id)
             return None
@@ -140,7 +176,13 @@ class JellyfinClient:
         full = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(qp)))
 
         # Append api_key so FFmpeg/ffprobe can authenticate for HLS segment fetches.
-        return f"{full}&api_key={self._api_key}"
+        has_audio, codec = _stream_metadata(source, transcoding)
+        return PlaybackStream(
+            url=f"{full}&api_key={self._api_key}",
+            play_session_id=result.get("PlaySessionId") or qp.get("PlaySessionId"),
+            has_audio=has_audio,
+            video_codec=codec,
+        )
 
     async def search(self, query: str, limit: int = 25) -> list[dict]:
         """Search Jellyfin for movies, series, and episodes matching query."""
