@@ -320,6 +320,7 @@ async def start_live_stream(
                 conn=conn,
                 is_source_active=video_player.is_source_active,
                 pause_gate=video_player.pause_gate,
+                sync_source=video_player,
             )
             audio_sender.start()
             log.info("go-live audio sender started for '%s'", title)

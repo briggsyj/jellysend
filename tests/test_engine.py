@@ -76,7 +76,10 @@ class FakePlayer:
 class FakeAudioSender:
     instances: list[FakeAudioSender] = []
 
-    def __init__(self, file_obj, conn, is_source_active, pause_gate=None):
+    def __init__(
+        self, file_obj, conn, is_source_active, pause_gate=None, sync_source=None
+    ):
+        self.sync_source = sync_source
         self.pause_gate = pause_gate
         self.file_obj = file_obj
         self.conn = conn
@@ -669,3 +672,9 @@ async def test_start_live_passes_forced_aspect(env):
     await _start_live(env, aspect=4 / 3)
     await env.bot.stream_tasks[GID]
     assert FakePlayer.instances[-1].aspect == 4 / 3
+
+
+async def test_start_live_audio_follows_video_clock(env):
+    await _start_live(env)
+    await env.bot.stream_tasks[GID]
+    assert FakeAudioSender.instances[-1].sync_source is FakePlayer.instances[-1]

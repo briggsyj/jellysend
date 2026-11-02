@@ -1583,3 +1583,80 @@ def test_forced_aspect_with_real_ffmpeg(tmp_path, src, aspect, expected):
         check=True, capture_output=True, text=True,
     )
     assert tuple(int(x) for x in probe.stdout.strip().split(",")) == expected
+
+
+def test_restart_seq_and_segment_offset_track_seeks(make_player):
+    p, _ = make_player(start_offset=5.0)
+    assert (p.restart_seq, p.segment_offset) == (0, 5.0)
+    p._seek_to = 42.0
+    assert p._apply_pending_seek() is True
+    assert (p.restart_seq, p.segment_offset) == (1, 42.0)
+    assert p._apply_pending_seek() is False
+    assert p.restart_seq == 1
+
+
+def test_output_rate_is_exact_for_fractional_fps(make_player):
+    p, _ = make_player(fps=29.97)
+    cmd = p._ffmpeg_cmd()
+    assert cmd[cmd.index("-r") + 1] == "29.97"
+    assert cmd[cmd.index("-g") + 1] == "30"
+
+
+def test_signal_restart_waits_for_audio_follower(make_player):
+    p, _ = make_player()
+    p._signal_restart()  # no follower registered: just bumps
+    assert p.restart_seq == 1
+    ev = p.register_audio_follower()
+    ev.set()
+    waited = []
+    ev.wait = lambda timeout=None: waited.append(timeout) or True
+    p._signal_restart()
+    assert p.restart_seq == 2
+    assert waited == [0.5]
+    assert not threading.Event.is_set(ev)  # cleared before the bump
+
+
+def test_sync_properties(make_player):
+    p, _ = make_player(fps=25.0)
+    assert p.fps == 25.0 and p.segment_frames == 0 and p.seek_pending is False
+    p._seek_to = 3.0
+    assert p.seek_pending is True
+
+
+def test_kill_proc_closes_stdout_first():
+    from unittest.mock import MagicMock
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    order = []
+    proc.stdout.close.side_effect = lambda: order.append("close")
+    proc.terminate.side_effect = lambda: order.append("term")
+    H264VideoPlayer._kill_proc(proc)
+    assert order == ["close", "term"]
+
+
+def test_seek_pending_covers_restart_window(make_player):
+    p, _ = make_player()
+    p._restarting = True
+    assert p.seek_pending is True
+    p._restarting = False
+    assert p.seek_pending is False
+
+
+def test_apply_pending_seek_clears_restarting_flag(make_player):
+    p, _ = make_player()
+    seen = []
+    p._signal_restart = lambda: seen.append(p.seek_pending)
+    p._seek_to = 12.0
+    assert p._apply_pending_seek() is True
+    assert seen == [True]  # still "pending" while the restart is applied
+    assert p.seek_pending is False and p.segment_offset == 12.0
+
+
+def test_unregister_audio_follower_only_removes_own_event(make_player):
+    p, _ = make_player()
+    ev = p.register_audio_follower()
+    p.unregister_audio_follower(threading.Event())
+    assert p._audio_drained is ev
+    p.unregister_audio_follower(ev)
+    assert p._audio_drained is None
