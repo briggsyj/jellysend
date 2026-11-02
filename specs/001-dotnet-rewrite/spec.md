@@ -10,6 +10,12 @@
 gateway/voice/go-live/E2EE layer in-house; .NET 10 LTS, developed side-by-side with the Python bot, which
 remains the shipping application until the rewrite reaches parity for this subset."
 
+## Clarifications
+
+### Session 2026-11-02
+
+- Q: What container image should the .NET edition publish under, and when does it take over `latest`? → A: Same image (`ghcr.io/briggsyj/slopsoil`); builds publish as `dotnet` / `dotnet-sha-<commit>` until the parity checklist passes, then the .NET edition replaces the Python bot on `latest`. This drops TV/IPTV/yt-dlp from `latest` and is recorded as a maintainer-approved breaking change; the Python bot stays available via version/sha tags.
+
 ## User Scenarios & Testing *(mandatory)*
 
 The people involved are the same as today:
@@ -124,8 +130,9 @@ confirm the other follows within 2 seconds.
 
 ### User Story 5 - Drop-in deployment (Priority: P5)
 
-An operator runs the new bot with their existing `.env` and Docker setup, chosen by image tag, and can switch
-back to the Python bot at any time.
+An operator runs the new bot with their existing `.env` and Docker setup, chosen by image tag
+(`dotnet` while in development; `latest` once the parity checklist passes), and can switch back to the
+Python bot at any time via its version/sha tag.
 
 **Why this priority**: Required for the switch-over decision, but only meaningful once Stories 1–4 work.
 
@@ -197,7 +204,9 @@ Jellyfin-subset commands work; stop it and start the Python image again with no 
 
 - **FR-040**: Configuration via the same environment variable names, meanings and defaults (subset).
 - **FR-041**: Credentials MUST be redacted from all log output.
-- **FR-042**: Published as a separate container image tag; the Python image remains the default.
+- **FR-042**: Published to the same image (`ghcr.io/briggsyj/slopsoil`) as `dotnet` and `dotnet-sha-<commit>`
+  while in development; after the parity checklist (SC-004) passes, the .NET build is published as
+  `latest`, replacing the Python bot there. The last Python build MUST remain pullable by version/sha tag.
 - **FR-043**: An automated test suite MUST run in CI on every PR alongside the Python suite, with a
   coverage gate.
 - **FR-044**: Non-subset commands MUST answer that they are not available in this edition.
@@ -223,7 +232,8 @@ Jellyfin-subset commands work; stop it and start the Python image again with no 
   never dropping.
 - **SC-004**: 100% of the subset's commands produce the same user-visible replies as the Python bot for the
   same inputs (verified by a parity checklist).
-- **SC-005**: An operator can switch between the Python and .NET images using only an image-tag change.
+- **SC-005**: An operator can switch between the Python and .NET builds using only an image-tag change,
+  both before and after the `latest` cut-over.
 - **SC-006**: Zero credentials found when scanning a full day of logs.
 - **SC-007**: The .NET suite runs in under 2 minutes in CI with ≥ 90% line coverage of non-protocol code.
 
@@ -232,7 +242,10 @@ Jellyfin-subset commands work; stop it and start the Python image again with no 
 - **Scope**: TV (TVheadend), IPTV/M3U/EPG sources and yt-dlp `!play` are out of scope for this edition and
   remain Python-only; they may follow in a later feature.
 - **Coexistence**: Only one bot (Python or .NET) runs on a given Discord account at a time; both live in this
-  repository, and the Python bot remains the shipping default until the parity checklist passes.
+  repository, and the Python bot remains on `latest` until the parity checklist passes.
+- **Breaking change (approved)**: After cut-over, `latest` no longer includes TV/IPTV/yt-dlp. The maintainer
+  approved this on 2026-11-02 (Clarifications); the plan must record it per constitution Principle I with an
+  upgrade path (pin the last Python tag).
 - **Discord layer**: Built in-house (no third-party library supports user-account voice + go-live + E2EE).
   The protocol knowledge in `STREAMING.md` and the Python implementation is the reference.
 - **Media encryption**: Discord's E2EE uses the official libdave library, called from .NET as a native
