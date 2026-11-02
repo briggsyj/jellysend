@@ -349,6 +349,23 @@ async def test_sources_disable_tvheadend_by_substring(tmp_path):
     assert cog.sm.tvh_enabled is True
 
 
+async def test_sources_short_fragment_targets_iptv_not_tvheadend(tmp_path):
+    # "end" is a substring of "tvheadend" but was meant for the "Weekend" source.
+    cog = _make_cog(tmp_path, has_tv=True)
+    cog.sm.add_source("Weekend", "u", _CHS)
+    ctx = _make_ctx()
+    await cog.set_source.callback(cog, ctx, "disable", name="end")
+    assert _sent(ctx) == ["**Weekend** disabled"]
+    assert cog.sm.tvh_enabled is True
+
+
+async def test_sources_tvheadend_prefix_match(tmp_path):
+    cog = _make_cog(tmp_path, has_tv=True)
+    ctx = _make_ctx()
+    await cog.set_source.callback(cog, ctx, "disable", name="tvhead")
+    assert cog.sm.tvh_enabled is False
+
+
 async def test_sources_tvheadend_name_ignored_without_tv_cog(tmp_path):
     cog = _make_cog(tmp_path, has_tv=False)
     ctx = _make_ctx()

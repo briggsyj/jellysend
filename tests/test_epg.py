@@ -66,8 +66,7 @@ def test_parse_dt_no_offset_defaults_utc():
 
 
 def test_parse_dt_invalid_raises():
-    # Empty strings surface as IndexError (no parts); callers catch Exception.
-    with pytest.raises((ValueError, IndexError)):
+    with pytest.raises(ValueError):
         _parse_xmltv_dt("")
     with pytest.raises(ValueError):
         _parse_xmltv_dt("garbage")
