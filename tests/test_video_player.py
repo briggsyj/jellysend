@@ -1464,3 +1464,26 @@ def test_stream_seek_pending_at_popen_kills_fresh_ffmpeg(make_player, popen):
     assert proc.terminated == 1
     assert conn.sent == []
     assert p._seek_to == 40.0  # left for run() to apply
+
+
+def test_redact_url_strips_jellyfin_apikey_variants():
+    url = (
+        "http://jellyfin:8096/videos/x/main.m3u8?DeviceId=d&ApiKey=SECRET1"
+        "&PlaySessionId=p&api_key=SECRET1&X-Emby-Token=SECRET2"
+    )
+    out = vpmod.redact_url(url)
+    assert "SECRET" not in out
+    assert "DeviceId=d" in out and "PlaySessionId=p" in out
+
+
+@pytest.mark.parametrize("name", ["h264_vaapi", "h264_nvenc"])
+def test_hardware_encoders_disable_b_frames(monkeypatch, name):
+    """B-frames are sent in decode order with evenly spaced RTP timestamps,
+    which makes receivers judder — hardware encoders must emit none."""
+    monkeypatch.setattr(vpmod.subprocess, "run", lambda *a, **k: _Run(stdout=name))
+    monkeypatch.setattr(vpmod, "_test_encoder", lambda n, pre, vf="": n == name)
+    enc = vpmod._detect_encoder()
+    assert enc is not None and enc.name == name
+    i = enc.post_codec.index("-bf")
+    assert enc.post_codec[i + 1] == "0"
+
