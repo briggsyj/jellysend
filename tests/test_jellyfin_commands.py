@@ -73,6 +73,9 @@ class FakePlayer:
     aspect = None
     aspect_sets: list = []
 
+    def is_source_active(self) -> bool:
+        return getattr(self, "active", True)
+
     def set_aspect(self, ratio) -> None:
         self.aspect = ratio
         self.aspect_sets = [*self.aspect_sets, ratio]
@@ -1649,7 +1652,7 @@ async def test_aspect_marks_current_choice(env):
     assert env.cog._aspect[GID] == 2.39
 
 
-@pytest.mark.parametrize("bad", ["0", "6", "wide", "-1"])
+@pytest.mark.parametrize("bad", ["0", "6", "-1", "2x"])
 async def test_aspect_rejects_bad_choice(env, bad):
     ctx = _make_ctx(env.guild)
     await Jellyfin.media_aspect.callback(env.cog, ctx, choice=bad)
@@ -1681,3 +1684,34 @@ async def test_aspect_is_passed_to_new_streams_and_survives_teardown(env):
     assert env.start.call_args.kwargs["aspect"] == 1.85
     await env.cog._teardown(GID)
     assert env.cog._aspect[GID] == 1.85
+
+
+
+async def test_aspect_with_title_text_searches_instead(env):
+    env.cog.media = MagicMock()
+    env.cog.media.callback = AsyncMock()
+    ctx = _make_ctx(env.guild)
+    ctx.invoked_with = "ar"
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="rahman")
+    env.cog.media.callback.assert_awaited_once_with(env.cog, ctx, query="ar rahman")
+    assert GID not in env.cog._aspect
+
+
+async def test_aspect_does_not_restart_non_jellyfin_stream(env):
+    """A TV/IPTV player in video_players must not be restarted (live -ss stall)."""
+    player = FakePlayer()
+    env.bot.video_players[GID] = player  # no Jellyfin state.now
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="2")
+    assert player.aspect_sets == []
+    assert env.cog._aspect[GID] == 16 / 9
+    assert _sent(ctx)[-1].endswith("applies to the next Jellyfin item")
+
+
+async def test_aspect_finished_player_not_restarted(env):
+    _, player = _playing(env)
+    player.active = False
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="3")
+    assert player.aspect_sets == []
+    assert _sent(ctx)[-1] == "📐 aspect ratio set to **4:3**"

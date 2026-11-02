@@ -986,6 +986,11 @@ class Jellyfin(commands.Cog):
         current = self._aspect.get(guild.id)
 
         if choice.strip():
+            if not any(c.isdigit() for c in choice):
+                # `!media ar rahman` / `!media aspect of …` — a title, not a pick.
+                word = ctx.invoked_with if isinstance(ctx.invoked_with, str) else ""
+                if await self._title_fallthrough(ctx, word or "aspect-ratio", choice):
+                    return
             if not choice.strip().isdecimal() or not (
                 1 <= int(choice) <= len(ASPECT_OPTIONS)
             ):
@@ -1012,12 +1017,26 @@ class Jellyfin(commands.Cog):
         else:
             self._aspect[guild.id] = ratio
         name = label.split(" — ")[0]
+        # Only restart a Jellyfin stream: TV/IPTV/yt-dlp share video_players,
+        # and an in-place restart with -ss on a live input would stall it.
+        state = self._states.get(guild.id)
         player = self._player(guild.id)
-        if player is not None and getattr(player, "aspect", None) != ratio:
+        if (
+            player is not None
+            and state is not None
+            and state.now is not None
+            and player.is_source_active()
+            and player.aspect != ratio
+        ):
             player.set_aspect(ratio)
             await ctx.send(f"📐 aspect ratio set to **{name}** — applying now")
         else:
-            await ctx.send(f"📐 aspect ratio set to **{name}**")
+            await ctx.send(
+                f"📐 aspect ratio set to **{name}** — applies to the next "
+                "Jellyfin item"
+                if player is not None and (state is None or state.now is None)
+                else f"📐 aspect ratio set to **{name}**"
+            )
 
     @require_role(Role.FRIEND)
     @media.command(name="playlist")
