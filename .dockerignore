@@ -5,3 +5,8 @@ __pycache__/
 *.pyo
 .git/
 *.pcap
+# Not needed in the Python image
+.claude/
+.specify/
+specs/
+dotnet/

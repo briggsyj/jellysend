@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Slopsoil.Commands\Slopsoil.Commands.csproj" />
+    <ProjectReference Include="..\Slopsoil.Services\Slopsoil.Services.csproj" />
+    <ProjectReference Include="..\Slopsoil.Streaming\Slopsoil.Streaming.csproj" />
+    <ProjectReference Include="..\Slopsoil.Discord\Slopsoil.Discord.csproj" />
+    <ProjectReference Include="..\Slopsoil.Common\Slopsoil.Common.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>
