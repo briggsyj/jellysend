@@ -1250,14 +1250,17 @@ class H264VideoPlayer(threading.Thread):
                 break
             buf = bytearray(parts[-1])  # incomplete tail, carry forward
 
-        # Flush any remaining NAL units
-        if buf:
-            nal = bytes(buf).rstrip(b"\x00")
-            if nal:
-                if _nal_type(nal) == 7:
-                    nal = rewrite_sps_vui(nal)
-                frame.append(nal)
-        _emit(frame)
+        # Flush any remaining NAL units — only on a natural end of stream. When
+        # stopped mid-chunk, `frame` was already sent and `buf` still holds the
+        # whole un-split chunk, so flushing would re-send stale data.
+        if not self._end.is_set():
+            if buf:
+                nal = bytes(buf).rstrip(b"\x00")
+                if nal:
+                    if _nal_type(nal) == 7:
+                        nal = rewrite_sps_vui(nal)
+                    frame.append(nal)
+            _emit(frame)
         _flush_stats(time.monotonic())
 
         # Reap the process; SIGKILL if it's still alive after a short grace period.

@@ -1032,11 +1032,6 @@ def test_stream_stop_requested_before_popen_returns(make_player, popen):
     assert conn.sent == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG video_player.py:1231-1260: on stop the un-split buf and the "
-    "already-sent frame are flushed and re-sent after the loop",
-)
 def test_stream_stop_mid_stream_sends_nothing_more(make_player, popen):
     proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD, _P2, _AUD), running=True)
     popen(proc)
