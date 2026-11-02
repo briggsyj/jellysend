@@ -435,7 +435,12 @@ _SYNC_SLACK = 0.04
 # and (b) corrects drift that is large *and* persistent, gently.
 _SYNC_SETTLE_SECONDS = 1.0  # settling window after a segment's first frame
 _SYNC_MAX_SETTLE_STEPS = 15  # ≤ 300 ms of correction while settling
-_SYNC_MAX_EPISODE_STEPS = 15  # ≤ 300 ms per persistent-drift episode (FIFO ~0.34 s)
+_SYNC_MAX_EPISODE_STEPS = 15  # corrections per persistent-drift episode
+# Silence (audio sent without consuming PCM) makes FFmpeg's audio pile up in
+# the ~0.34 s FIFO; past that FFmpeg blocks and video starves. So all silence
+# in a segment — waiting for the first frame, settling, drift — shares one
+# net budget (silence minus skips).
+_SYNC_MAX_NET_SILENCE = 15  # 300 ms
 _SYNC_DRIFT_ENTER = 0.12
 _SYNC_DRIFT_EXIT = 0.03
 _SYNC_DRIFT_PERSIST = 1.0
@@ -482,6 +487,7 @@ class GoLiveAudioSender(threading.Thread):
         self._seg_frames: int = 0  # 20 ms frames consumed since the restart
         self._settle_steps: int = 0  # corrections made in this segment's settling window
         self._episode_steps: int = 0  # corrections in the current drift episode
+        self._net_silence: int = 0  # silence minus skipped frames this segment
         # Persistent-drift tracking (see _SYNC_DRIFT_*).
         self._drift_since: float | None = None
         self._correcting = False
@@ -518,6 +524,7 @@ class GoLiveAudioSender(threading.Thread):
         self._seg_frames = 0
         self._settle_steps = 0
         self._episode_steps = 0
+        self._net_silence = 0
         self._drift_since = None
         self._correcting = False
         if self._drained is not None:
@@ -531,11 +538,16 @@ class GoLiveAudioSender(threading.Thread):
     def _follow_video(self, sync, target: float) -> bytes | None:
         """Decide this tick's audio: None = read & play normally, bytes =
         silence to send instead (PCM not consumed). May skip one PCM frame."""
-        drift = self._audio_position() - sync.position - target
+        fps = getattr(sync, "fps", None)
+        video_pos = sync.position
+        if isinstance(fps, (int, float)) and fps > 0:
+            # position steps at each sent frame, so it leads wall time by
+            # ~half a frame on average; remove that bias.
+            video_pos -= 0.5 / fps
+        drift = self._audio_position() - video_pos - target
 
         # (a) Settling window: align quickly after the segment's first frame.
         frames = getattr(sync, "segment_frames", None)
-        fps = getattr(sync, "fps", None)
         if (
             isinstance(frames, int)
             and isinstance(fps, (int, float))
@@ -561,11 +573,16 @@ class GoLiveAudioSender(threading.Thread):
                 self._correcting = True
         elif not self._correcting:
             self._drift_since = None
-        if (
-            not self._correcting
-            or self._episode_steps >= _SYNC_MAX_EPISODE_STEPS
-            or now - self._last_correction < _SYNC_CORRECTION_INTERVAL
-        ):
+        if not self._correcting or now - self._last_correction < _SYNC_CORRECTION_INTERVAL:
+            return None
+        if self._episode_steps >= _SYNC_MAX_EPISODE_STEPS:
+            # End this episode; a new one may start after fresh persistence.
+            log.warning(
+                "GoLiveAudio: %d ms drift left after a correction episode", drift * 1000
+            )
+            self._drift_since = None
+            self._correcting = False
+            self._episode_steps = 0
             return None
         self._last_correction = now
         self._episode_steps += 1
@@ -574,10 +591,14 @@ class GoLiveAudioSender(threading.Thread):
     def _correct(self, drift: float) -> bytes | None:
         """One 20 ms step: silence if audio is ahead, skip a frame if behind."""
         if drift > 0:
+            if self._net_silence >= _SYNC_MAX_NET_SILENCE:
+                return None  # FIFO budget spent: leave the remainder
+            self._net_silence += 1
             self.corrections["silence"] += 1
             return bytes(self._FRAME_SIZE)
         if len(self._f.read(self._FRAME_SIZE)) == self._FRAME_SIZE:
             self._seg_frames += 1
+            self._net_silence = max(0, self._net_silence - 1)
             self.corrections["dropped"] += 1
         return None
 
@@ -659,6 +680,9 @@ class GoLiveAudioSender(threading.Thread):
                     # A seek/aspect change while paused restarts FFmpeg now;
                     # drain the old audio before the new process fills the FIFO.
                     self._check_restart()
+                # Persistence must be observed while playing, not across a pause.
+                self._drift_since = None
+                self._correcting = False
                 t0 = time.perf_counter()  # restart pacing after the pause
                 loops = 0
                 continue
@@ -680,6 +704,12 @@ class GoLiveAudioSender(threading.Thread):
                 pcm = bytes(self._FRAME_SIZE)
             elif sync is not None and self._video_flowing(sync):
                 pcm = self._follow_video(sync, target)
+            elif sync is not None and self._net_silence < _SYNC_MAX_NET_SILENCE:
+                # New segment's video hasn't produced a frame yet: wait in
+                # silence (bounded) so its audio starts with the picture
+                # instead of ahead of it.
+                self._net_silence += 1
+                pcm = bytes(self._FRAME_SIZE)
             if pcm is None:
                 pcm = self._f.read(self._FRAME_SIZE)
                 if len(pcm) == self._FRAME_SIZE:

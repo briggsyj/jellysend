@@ -777,11 +777,15 @@ def test_audio_in_step_with_video_is_untouched(fake_opus):
     assert s.corrections == {"silence": 0, "dropped": 0}
 
 
-def test_no_correction_before_first_video_frame(fake_opus):
+def test_audio_waits_silently_for_first_video_frame(fake_opus):
+    """Before the segment's first frame, audio waits (bounded) instead of
+    running ahead of the picture — no correction gap afterwards."""
     conn = _AudioConn()
     s = _sender(_pcm(4), conn, sync_source=_Clock(position=5.0, started=False))
     s._send_audio()
-    assert _payload_ids(conn) == [0, 1, 2, 3]
+    assert len(conn.sent) == golive._SYNC_MAX_NET_SILENCE + 4
+    assert s._seg_frames == 4  # every real frame still played after the wait
+    assert s._net_silence == golive._SYNC_MAX_NET_SILENCE
 
 
 def test_target_offset_from_av_sync_ms_is_kept(fake_opus, monkeypatch):
@@ -858,13 +862,13 @@ def test_pending_seek_sends_silence_without_reading(fake_opus):
     assert s.corrections == {"silence": 0, "dropped": 0}
 
 
-def test_no_hold_until_new_segment_emits_video(fake_opus):
+def test_wait_for_first_frame_is_budgeted(fake_opus):
     conn = _AudioConn()
     clock = _Clock(position=0.0)
     clock.segment_frames = 0  # new FFmpeg hasn't produced a frame yet
     s = _sender(_pcm(5), conn, sync_source=clock)
     s._send_audio()
-    assert _payload_ids(conn) == [0, 1, 2, 3, 4]
+    assert len(conn.sent) == golive._SYNC_MAX_NET_SILENCE + 5
 
 
 def test_restart_while_paused_drains_and_signals_player(fake_opus):
@@ -1075,3 +1079,63 @@ def test_restart_resets_settle_and_episode_counts():
     clock.restart_seq = 1
     assert s._check_restart() is True
     assert (s._settle_steps, s._episode_steps) == (0, 0)
+
+
+
+def test_episode_cap_ends_episode_instead_of_disabling(fake_opus):
+    s = GoLiveAudioSender(io.BytesIO(bytes(_FRAME * 100)), _AudioConn())
+    clock = _Clock(position=0.0)
+    s._seg_base = -2.0  # audio 2 s behind: skips (FIFO-safe), never converges here
+    t = [0.0]
+    s._now = lambda: t[0]
+    for _ in range(400):
+        t[0] += 0.3
+        s._follow_video(clock, 0.0)
+    # several episodes ran (each capped), rather than stopping after the first
+    assert s.corrections["dropped"] > golive._SYNC_MAX_EPISODE_STEPS
+
+
+def test_silence_respects_net_budget():
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn())
+    s._net_silence = golive._SYNC_MAX_NET_SILENCE
+    assert s._correct(0.5) is None  # audio ahead but budget spent
+    assert s.corrections["silence"] == 0
+
+
+def test_skips_refund_the_silence_budget():
+    s = GoLiveAudioSender(io.BytesIO(bytes(_FRAME)), _AudioConn())
+    s._net_silence = 3
+    assert s._correct(-0.5) is None
+    assert s._net_silence == 2 and s.corrections["dropped"] == 1
+
+
+def test_pause_resets_drift_persistence(fake_opus):
+    conn = _AudioConn()
+    gate = threading.Event()
+    s = _sender(_pcm(1), conn, pause_gate=gate)
+    s._drift_since = 1.0
+    s._correcting = True
+    calls = []
+
+    def fake_wait(timeout=None):
+        calls.append(1)
+        if len(calls) > 1:
+            gate.set()
+        return gate.is_set()
+
+    gate.wait = fake_wait
+    s._send_audio()
+    assert s._drift_since is None and s._correcting is False
+
+
+def test_position_quantization_bias_removed():
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn())
+    clock = _Clock(position=1.0)
+    clock.fps = 10.0  # position leads wall time by ~50 ms on average
+    clock.segment_frames = 100
+    s._seg_base = 0.95  # in step with the de-biased video clock
+    t = [0.0]
+    s._now = lambda: t[0]
+    for _ in range(20):
+        t[0] += 0.3
+        assert s._follow_video(clock, 0.0) is None
