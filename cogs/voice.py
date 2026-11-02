@@ -66,7 +66,8 @@ class Voice(commands.Cog):
             return
 
         log.info("disconnecting from voice in guild '%s'", guild)
-        cancel_stream(self.bot, guild.id)
+        # Stop the stream (incl. the go-live screenshare) before leaving voice.
+        await self._stop_streams(guild, vc, "leave")
         await vc.disconnect(force=False)
         await ctx.send("left!")
 
@@ -86,21 +87,26 @@ class Voice(commands.Cog):
             return
 
         log.info("stopping stream in guild '%s'", guild)
-        cancel_stream(self.bot, guild.id)
-        if vc.is_playing():
-            vc.stop()
+        await self._stop_streams(guild, vc, "stop")
+        await ctx.send("stopped")
 
-        # Explicitly disconnect any active go-live stream. The task's finally
-        # block also does this, but the task may have already finished (e.g.
-        # the video player died early) leaving the GoLiveConnection open.
+    async def _stop_streams(self, guild, vc, reason: str) -> None:
+        """Stop everything streaming in ``guild``: the stream task/player, any
+        plain voice audio, and the go-live (screenshare) connection.
+
+        The go-live is disconnected explicitly: the task's finally block also
+        does it, but the task may have already finished (e.g. the video player
+        died early) leaving the GoLiveConnection — and the screenshare — open.
+        """
+        cancel_stream(self.bot, guild.id)
+        if vc is not None and vc.is_playing():
+            vc.stop()
         live_conn = self.bot.live_connections.pop(guild.id, None)
         if live_conn is not None:
             try:
                 await live_conn.disconnect()
             except Exception:
-                log.warning("error disconnecting go-live on stop", exc_info=True)
-
-        await ctx.send("stopped")
+                log.warning("error disconnecting go-live on %s", reason, exc_info=True)
 
     @commands.Cog.listener()
     async def on_voice_state_update(
@@ -128,13 +134,7 @@ class Voice(commands.Cog):
             vc.channel,
             member.guild,
         )
-        cancel_stream(self.bot, member.guild.id)
-        live_conn = self.bot.live_connections.pop(member.guild.id, None)
-        if live_conn is not None:
-            try:
-                await live_conn.disconnect()
-            except Exception:
-                log.warning("error disconnecting go-live on auto-leave", exc_info=True)
+        await self._stop_streams(member.guild, vc, "auto-leave")
         await vc.disconnect(force=False)
 
 
