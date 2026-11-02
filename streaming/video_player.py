@@ -789,6 +789,7 @@ class H264VideoPlayer(threading.Thread):
         live: bool | None = True,
         audio: bool = True,
         probe_size: int = 2_000_000,
+        start_offset: float = 0.0,
     ) -> None:
         super().__init__(name="H264VideoPlayer", daemon=True)
         self._url = url
@@ -796,6 +797,16 @@ class H264VideoPlayer(threading.Thread):
         self._fps = fps
         self._end = threading.Event()
         self._proc: subprocess.Popen | None = None
+
+        # Playback control. The gate is *set* while playing; clearing it holds
+        # the pacing loop (and, via GoLiveAudioSender, audio) so FFmpeg is
+        # back-pressured instead of racing ahead. A seek restarts FFmpeg with
+        # -ss inside this same thread so the go-live session stays up.
+        self.pause_gate: threading.Event = threading.Event()
+        self.pause_gate.set()
+        self._offset: float = max(0.0, start_offset)
+        self._seek_to: float | None = None
+        self._ctl_lock = threading.Lock()
 
         self._live = live
         self._audio = audio
@@ -833,6 +844,34 @@ class H264VideoPlayer(threading.Thread):
         if proc is not None and proc.poll() is None:
             proc.terminate()
 
+    @property
+    def stop_requested(self) -> bool:
+        """True once stop() was called (vs. the stream ending on its own)."""
+        return self._end.is_set()
+
+    @property
+    def paused(self) -> bool:
+        return not self.pause_gate.is_set()
+
+    @property
+    def position(self) -> float:
+        """Current playback position in seconds of the source media."""
+        return self._offset + self._frames_emitted / self._fps
+
+    def pause(self) -> None:
+        self.pause_gate.clear()
+
+    def resume(self) -> None:
+        self.pause_gate.set()
+
+    def seek(self, seconds: float) -> None:
+        """Restart decoding from ``seconds`` without tearing down the stream."""
+        with self._ctl_lock:
+            self._seek_to = max(0.0, seconds)
+            proc = self._proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
     def is_source_active(self) -> bool:
         """True while the player may still produce output, including the brief
         FIFO gap between a failed hardware attempt and the software-fallback
@@ -855,24 +894,37 @@ class H264VideoPlayer(threading.Thread):
 
     def run(self) -> None:
         try:
-            self._stream()
-            # If a hardware encoder produced no frames at all (e.g. VA-API
-            # "Access unit too large" on large MPEG-2 keyframes), retry once on
-            # the software encoder so the stream still plays.
-            if (
-                not self._end.is_set()
-                and self._frames_emitted == 0
-                and _SW_ENCODER is not None
-                and self._enc is not _SW_ENCODER
-            ):
-                log.warning(
-                    "video encoder %s produced no output — retrying with software "
-                    "encoder %s",
-                    self._enc.name if self._enc else "?", _SW_ENCODER.name,
-                )
-                self._enc = _SW_ENCODER
-                self._proc = None
+            while True:
                 self._stream()
+                if self._end.is_set():
+                    break
+                with self._ctl_lock:
+                    seek_to, self._seek_to = self._seek_to, None
+                if seek_to is not None:
+                    log.info("seeking to %.1fs", seek_to)
+                    if self._proc is not None:
+                        self._kill_proc(self._proc)
+                    self._offset = seek_to
+                    self._frames_emitted = 0
+                    self._proc = None
+                    continue
+                # If a hardware encoder produced no frames at all (e.g. VA-API
+                # "Access unit too large" on large MPEG-2 keyframes), retry once
+                # on the software encoder so the stream still plays.
+                if (
+                    self._frames_emitted == 0
+                    and _SW_ENCODER is not None
+                    and self._enc is not _SW_ENCODER
+                ):
+                    log.warning(
+                        "video encoder %s produced no output — retrying with "
+                        "software encoder %s",
+                        self._enc.name if self._enc else "?", _SW_ENCODER.name,
+                    )
+                    self._enc = _SW_ENCODER
+                    self._proc = None
+                    continue
+                break
         except Exception:
             log.exception("H264VideoPlayer error")
         finally:
@@ -913,6 +965,8 @@ class H264VideoPlayer(threading.Thread):
         # A/V sync and smoother delivery. Live inputs / URLs are already
         # real-time, so -re would only stall them.
         rate_args: list[str] = [] if (self._live or is_url) else ["-re"]
+        # Input seek: fast, segment-accurate on HLS VOD playlists (Jellyfin).
+        seek_args = ["-ss", f"{self._offset:.3f}"] if self._offset > 0 else []
         fflags = "+discardcorrupt"
         # -reconnect flags are HTTP-only; FFmpeg rejects them for local files.
         reconnect_args = (
@@ -947,6 +1001,7 @@ class H264VideoPlayer(threading.Thread):
             fflags,
             *rate_args,
             *reconnect_args,
+            *seek_args,
             "-i",
             self._url,
             *video_out_args,
@@ -1183,6 +1238,16 @@ class H264VideoPlayer(threading.Thread):
             nonlocal _stats_late_total, _stats_late_max
             if not f:
                 return False
+            if not self.pause_gate.is_set():
+                paused_at = time.monotonic()
+                while not self.pause_gate.wait(timeout=0.1):
+                    if self._end.is_set() or self._seek_to is not None:
+                        return True
+                if _t0 is not None:
+                    # Shift the pacing clock so we don't burst to "catch up".
+                    _t0 += time.monotonic() - paused_at
+            if self._seek_to is not None:
+                return True
             if _t0 is None:
                 _t0 = time.monotonic()
             self._send_frame(f)
@@ -1253,7 +1318,7 @@ class H264VideoPlayer(threading.Thread):
         # Flush any remaining NAL units — only on a natural end of stream. When
         # stopped mid-chunk, `frame` was already sent and `buf` still holds the
         # whole un-split chunk, so flushing would re-send stale data.
-        if not self._end.is_set():
+        if not self._end.is_set() and self._seek_to is None:
             if buf:
                 nal = bytes(buf).rstrip(b"\x00")
                 if nal:
@@ -1264,7 +1329,8 @@ class H264VideoPlayer(threading.Thread):
         _flush_stats(time.monotonic())
 
         # Reap the process; SIGKILL if it's still alive after a short grace period.
-        if self._end.is_set() and self._proc.poll() is None:
+        stopping = self._end.is_set() or self._seek_to is not None
+        if stopping and self._proc.poll() is None:
             self._kill_proc(self._proc)
         try:
             rc = self._proc.wait(timeout=5)

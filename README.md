@@ -258,9 +258,12 @@ TVHEADEND_PASS=yourpassword
 # If unset, the system timezone of the machine running the bot is used.
 TIMEZONE=
 
-# Optional - Jellyfin server (both must be set to enable Jellyfin commands)
+# Optional - Jellyfin server (URL plus an API key and/or a user login)
 JELLYFIN_URL=http://192.168.1.100:8096
 JELLYFIN_API_KEY=your_api_key_here
+# Optional - sign in as a Jellyfin user; required for SyncPlay group watch
+JELLYFIN_USERNAME=
+JELLYFIN_PASSWORD=
 
 # Optional - yt-dlp format selector for downloaded !play <URL> VODs.
 # Defaults to "bestvideo+bestaudio/best". On hardware that can't decode AV1/4K
@@ -302,7 +305,9 @@ STREAM_AV_SYNC_MS=
 | `TVHEADEND_PASS` | No | TVheadend password |
 | `TIMEZONE` | No | [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for `!search` showtimes (e.g. `America/Chicago`). Defaults to the system timezone. |
 | `JELLYFIN_URL` | No | Base URL of your Jellyfin server |
-| `JELLYFIN_API_KEY` | No | Jellyfin API key (generate in Dashboard → API Keys) |
+| `JELLYFIN_API_KEY` | No | Jellyfin API key (generate in Dashboard → API Keys). Not needed if a username/password is set |
+| `JELLYFIN_USERNAME` | No | Jellyfin user to sign in as. Enables **SyncPlay** (see below) |
+| `JELLYFIN_PASSWORD` | No | Password for `JELLYFIN_USERNAME` |
 | `YTDLP_FORMAT` | No | [yt-dlp format selector](https://github.com/yt-dlp/yt-dlp#format-selection) for downloaded `!play <URL>` VODs. Defaults to `bestvideo+bestaudio/best`. Pin a codec/resolution (e.g. `bv*[vcodec^=avc1][height<=1080]+ba/b[height<=1080]`) on hardware that can't decode AV1/4K in real time. |
 | `STREAM_QUALITY` | No | Output quality preset (default `1080p`): `720p`→1280×720/30/2500k, `1080p`→1920×1080/60/6000k, `4k`→3840×2160/60/12000k (resolution/fps/bitrate set together). Discord enforces per-account resolution/fps caps, so pick a tier your account supports. |
 | `STREAM_RESOLUTION` | No | Override the preset resolution as `W:H` (or `WxH`), e.g. `1280:720`. |
@@ -350,6 +355,29 @@ TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, 
 | Command | Role | Description |
 |---|---|---|
 | `!media <title>` | Friend | Search Jellyfin for a movie or series and stream it into your voice channel. A single movie match plays immediately. For series, the bot walks you through season → episode selection. Accepts an optional `sXXeYY` suffix (e.g. `!media breaking bad s03e05`) to jump directly to a specific episode. Transcoding is handled server-side by Jellyfin; subtitles are always suppressed. |
+| `!media help` | Friend | List every `!media` command, with examples of playing a movie vs. a TV episode |
+| `!media search <title>` | Friend | Same as `!media <title>` — use it when a title starts with a command word (e.g. `!media search stop making sense`) |
+| `!media pause` | Friend | Pause the stream (the screenshare stays up, frozen on the current frame) |
+| `!media play` | Friend | Carry on after a pause; if nothing is playing, starts the playlist |
+| `!media resume <time>` | Friend | Jump to a time and play. Hours first, seconds optional, `:` or `.` separators: `1:23:45`, `1.23.45`, `1:23` (1 h 23 m), `0:05`; also `45m`, `90s`, `1h30m`. A bare number is minutes |
+| `!media stop` | Friend | Stop the stream, clear the playlist and leave the voice channel |
+| `!media skip` | Friend | Skip to the next playlist item (stops if the playlist is empty) |
+| `!media queue <title>` | Friend | Add a movie, or an episode (`!media queue <show> sXXeYY`, or pick season → episode), to the playlist. Plays immediately if nothing is on. Max 10 items |
+| `!media playlist` | Friend | Show what's playing (with position) and the numbered playlist |
+| `!media order <# or title> <position>` | Friend | Move a playlist item, e.g. `!media order 3 1` or `!media order pilot 2` |
+| `!media remove <# or title>` | Friend | Remove a playlist item |
+
+Playlist items play in order automatically when the current one finishes. Seeking happens in place, so viewers stay in the same screenshare.
+
+#### Jellyfin SyncPlay (group watch)
+
+Set `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` (a Jellyfin user that has SyncPlay access to your libraries) and the bot opens a SyncPlay group named **slopsoil · &lt;Discord server&gt;** when it starts playing. Anyone watching in a Jellyfin app can join that group from the SyncPlay menu:
+
+- pausing, playing or seeking in Jellyfin pauses, plays or seeks the Discord stream too;
+- `!media pause` / `play` / `resume <time>` in Discord control the Jellyfin group;
+- choosing a different item in the group switches the Discord stream to it.
+
+The group is closed when the bot leaves the voice channel.
 
 ### IPTV Source Management
 
