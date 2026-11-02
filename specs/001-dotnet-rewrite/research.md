@@ -59,7 +59,7 @@ protocol detail is the Python bot (`streaming/`, `davey_compat.py`, `video_compa
 - **Decision**: FFmpeg child process exactly as `H264VideoPlayer._ffmpeg_cmd` builds it (H.264 Annex-B on
   stdout, s16le PCM to a named FIFO), encoder detection NVENC → VA-API → libx264 → libopenh264 with `-bf 0`,
   fit-to-box `scale`/`scale_vaapi` expression with forced-aspect substitution, exact `-r`. Video pacing on a
-  dedicated thread; audio sender follows the video clock (40 ms slack, ≤300 ms hold, restart handshake,
+  dedicated thread; audio sender follows the video clock (FR-054: per-segment settling ≤300 ms, persistent-drift only, restart handshake,
   stale-audio drain) as in `golive.py`.
 - **Rationale**: These behaviours were debugged in PRs #4–#8; the rewrite must not regress them.
 - **Alternatives**: FFmpeg.AutoGen in-process (complex native interop, no benefit).

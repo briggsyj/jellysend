@@ -45,7 +45,7 @@ All state is in memory; nothing is persisted (no database — constitution Princ
 | VoiceConnection | main voice channel connection (DAVE session, UDP, SSRC) |
 | GoLiveConnection | separate stream connection (ops 18–20), own SSRCs, idempotent disconnect |
 | VideoPlayer | FFmpeg process + pacing thread; `Position`, `Paused`, `SeekPending`, `RestartSeq`, `SegmentOffset`, `SegmentFrames`, `Fps`, `Aspect` |
-| AudioSender | reads PCM FIFO; follows `VideoPlayer` clock (slack max(40 ms, 0.5/fps+20 ms), hold ≤15 frames, drain on restart) |
+| AudioSender | reads PCM FIFO; follows `VideoPlayer` clock (slack max(40 ms, 0.5/fps+20 ms), settling ≤15 steps per segment, persistent drift ≤15 steps per episode, drain on restart) |
 | OnEnd | invoked only on natural end (not stop/replace) |
 
 ## StreamDiagnostics
@@ -56,7 +56,7 @@ Rolling 10 s window maintained by VideoPlayer + AudioSender + transport; snapsho
 |---|---|
 | FpsSent / FpsTarget, LateFrames, MaxLatenessMs, ReadStallMs | VideoPlayer pacing loop |
 | PacketsPerSec, SendDrops, SendErrors | transport (UDP send) |
-| DriftMs, Holds, Skips, Releases | AudioSender follower |
+| DriftMs, SilenceSteps, SkipSteps | AudioSender follower |
 | Encoder, Resolution, Bitrate, SourceCodec, Position, Runtime | FFmpeg command / PlaybackStream / VideoPlayer |
 
 Overlay: FFmpeg `drawtext` reading a small text file (`textfile=…:reload=1`) that the player rewrites once
