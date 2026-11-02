@@ -162,7 +162,17 @@ class SyncPlayGroup:
         except Exception:
             log.warning("SyncPlay: websocket reader ended", exc_info=True)
         if not self.closed:
+            # Connection lost (server restart, network blip): mark the group
+            # dead so the next play opens a fresh one instead of reusing it.
             log.warning("SyncPlay: websocket closed for group %r", self.group_name)
+            self.closed = True
+            if self._keepalive is not None and not self._keepalive.done():
+                self._keepalive.cancel()
+            if self._session is not None:
+                try:
+                    await self._session.close()
+                except Exception:
+                    pass
 
     async def handle_message(self, msg: dict) -> None:
         kind = msg.get("MessageType")

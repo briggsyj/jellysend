@@ -6,7 +6,9 @@ the real engine does, and ``cancel_stream`` removes it.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -48,6 +50,8 @@ def _movie(i: int, name: str | None = None) -> dict:
 
 class FakePlayer:
     def __init__(self, position: float = 0.0, paused: bool = False) -> None:
+        self.first_frame_sent = threading.Event()
+        self.first_frame_sent.set()
         self.position = position
         self.paused = paused
         self.seeks: list[float] = []
@@ -98,6 +102,12 @@ def _make_ctx(guild=None) -> MagicMock:
 
 def _sent(ctx) -> list[str]:
     return [c.args[0] for c in ctx.send.await_args_list]
+
+
+async def _drain(cog) -> None:
+    """Wait for background tasks (SyncPlay queue sync) spawned by the cog."""
+    while cog._tasks:
+        await asyncio.gather(*list(cog._tasks))
 
 
 def _reply(content: str) -> MagicMock:
@@ -366,6 +376,7 @@ def syncplay(env, monkeypatch):
 async def test_play_creates_syncplay_group_and_sets_queue(env, syncplay):
     ctx = _make_ctx()
     await env.cog._play_item(ctx, MOVIE, start=60.0)
+    await _drain(env.cog)
     args, kwargs = syncplay.cls.call_args
     assert args == (env.client,)
     assert kwargs["device_id"] == f"slopsoil-{GID}"
@@ -381,6 +392,7 @@ async def test_play_creates_syncplay_group_and_sets_queue(env, syncplay):
 
     # A second item reuses the open group.
     await env.cog._play_item(ctx, MOVIE2)
+    await _drain(env.cog)
     assert syncplay.cls.call_count == 1
     syncplay.group.set_queue.assert_awaited_with("m2", 0.0)
 
@@ -389,6 +401,7 @@ async def test_closed_syncplay_group_is_recreated(env, syncplay):
     state = env.cog._state(GID, AsyncMock())
     state.syncplay = _group(closed=True)
     await env.cog._play_item(_make_ctx(), MOVIE)
+    await _drain(env.cog)
     assert state.syncplay is syncplay.group
 
 
@@ -396,6 +409,7 @@ async def test_syncplay_open_failure_is_tolerated(env, syncplay, caplog):
     syncplay.group.open.side_effect = RuntimeError("403")
     with caplog.at_level(logging.WARNING, logger="cogs.jellyfin"):
         assert await env.cog._play_item(_make_ctx(), MOVIE) is True
+        await _drain(env.cog)
     syncplay.group.close.assert_awaited_once()
     syncplay.group.set_queue.assert_not_awaited()
     assert env.cog._states[GID].syncplay is None
@@ -406,6 +420,7 @@ async def test_syncplay_set_queue_failure_is_logged(env, syncplay, caplog):
     syncplay.group.set_queue.side_effect = RuntimeError("500")
     with caplog.at_level(logging.WARNING, logger="cogs.jellyfin"):
         assert await env.cog._play_item(_make_ctx(), MOVIE) is True
+        await _drain(env.cog)
     assert "set queue failed" in caplog.text
 
 
@@ -513,12 +528,27 @@ async def test_resume_without_time_acts_as_play(env):
     assert _sent(ctx)[0].startswith("▶ resumed")
 
 
-async def test_resume_invalid_time(env):
+@pytest.mark.parametrize("text", ["1:75", "12x", "1:2:3:4", "5 minutes"])
+async def test_resume_invalid_time(env, text):
     _, player = _playing(env)
     ctx = _make_ctx()
-    await Jellyfin.media_resume.callback(env.cog, ctx, time_text="soon")
-    assert _sent(ctx)[0].startswith("`soon` isn't a time")
+    await Jellyfin.media_resume.callback(env.cog, ctx, time_text=text)
+    assert _sent(ctx) == [
+        f"`{text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), "
+        "`45m` or `90s`"
+    ]
     assert player.seeks == []
+    env.client.search.assert_not_awaited()
+
+
+async def test_resume_without_digits_searches_title(env):
+    _, player = _playing(env)
+    env.client.search.return_value = [MOVIE2]
+    ctx = _make_ctx()
+    await Jellyfin.media_resume.callback(env.cog, ctx, time_text=" the movie ")
+    env.client.search.assert_awaited_once_with("resume the movie")
+    assert player.seeks == []
+    assert env.cog._states[GID].now.item is MOVIE2
 
 
 async def test_resume_nothing_playing(env):
@@ -713,12 +743,36 @@ async def test_queue_appends_while_playing(env):
     env.start.assert_not_awaited()
 
 
-async def test_queue_appends_when_idle_but_playlist_nonempty(env):
+async def test_queue_when_idle_with_playlist_starts_head(env):
     state = env.cog._state(GID)
     state.queue = [MOVIE3]
     env.client.search.return_value = [MOVIE2]
+    ctx = _make_ctx()
+    await Jellyfin.media_queue.callback(env.cog, ctx, query="interstellar")
+    assert "➕ queued **Interstellar (2014)** at #1" in _sent(ctx)
+    assert state.now.item is MOVIE3  # playlist head plays first
+    assert state.queue == [MOVIE2]
+    env.start.assert_awaited_once()
+
+
+async def test_queue_when_idle_with_playlist_head_failure_requeues(env):
+    state = env.cog._state(GID)
+    state.queue = [MOVIE3]
+    env.client.search.return_value = [MOVIE2]
+    env.client.start_playback = AsyncMock(return_value=None)
     await Jellyfin.media_queue.callback(env.cog, _make_ctx(), query="interstellar")
     assert state.queue == [MOVIE3, MOVIE2]
+    assert state.now is None
+
+
+async def test_queue_appends_while_a_start_is_in_progress(env):
+    state = env.cog._state(GID)
+    env.client.search.return_value = [MOVIE2]
+    async with state.start_lock:  # e.g. auto-advance still probing
+        await Jellyfin.media_queue.callback(
+            env.cog, _make_ctx(), query="interstellar"
+        )
+    assert state.queue == [MOVIE2]
     env.start.assert_not_awaited()
 
 
@@ -1205,6 +1259,7 @@ async def test_sync_queue_echo_window(env, monkeypatch):
 async def test_sync_queue_records_send_time(env, syncplay, monkeypatch):
     monkeypatch.setattr(jf.time, "monotonic", lambda: 42.0)
     await env.cog._play_item(_make_ctx(), MOVIE)
+    await _drain(env.cog)
     assert env.cog._states[GID].sync_sent == {"m1": 42.0}
 
 
@@ -1337,3 +1392,211 @@ async def test_sync_unpause_echo_of_own_play_does_not_seek():
     await cog._on_sync_command(7, "Unpause", 590.0)  # 10 s "drift"
     player.seek.assert_not_called()
     player.resume.assert_called_once()
+
+
+# ── review fixes: start serialisation, generation restore, background sync ───
+
+
+async def test_starts_are_serialised_per_guild(env):
+    release = asyncio.Event()
+    order: list[str] = []
+
+    async def slow_start(bot_, send, g, ch, vc_, **kw):
+        order.append(f"start {kw['url']}")
+        if kw["url"].endswith("m1.m3u8"):
+            await release.wait()
+        bot_.video_players[g.id] = FakePlayer(position=kw["start_offset"])
+
+    env.start.side_effect = slow_start
+    orig_playback = env.client.start_playback.side_effect
+
+    def playback(item_id):
+        order.append(f"playback {item_id}")
+        return orig_playback(item_id)
+
+    env.client.start_playback.side_effect = playback
+    ctx = _make_ctx()
+    first = asyncio.create_task(env.cog._play_item(ctx, MOVIE))
+    second = asyncio.create_task(env.cog._play_item(ctx, MOVIE2))
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert order == ["playback m1", "start http://jf/m1.m3u8"]  # second waits
+    assert env.cog._states[GID].start_lock.locked()
+    release.set()
+    assert await asyncio.gather(first, second) == [True, True]
+    assert order[2:] == ["playback m2", "start http://jf/m2.m3u8"]
+    state = env.cog._states[GID]
+    assert state.now.item is MOVIE2 and state.generation == 2
+
+
+async def test_failed_start_restores_generation_for_running_stream(env):
+    ctx = _make_ctx()
+    await env.cog._play_item(ctx, MOVIE)
+    on_end = env.start.call_args.kwargs["on_end"]
+    state = env.cog._states[GID]
+    state.queue = [MOVIE3]
+    env.client.start_playback = AsyncMock(side_effect=[None, _stream_for("m3")])
+    assert await env.cog._play_item(ctx, MOVIE2) is False  # MOVIE keeps playing
+    assert state.generation == 1 and state.now.item is MOVIE
+    await on_end()  # so MOVIE's natural end still auto-advances
+    assert state.now.item is MOVIE3
+
+
+async def test_failed_start_without_running_stream_keeps_generation(env):
+    env.client.start_playback = AsyncMock(return_value=None)
+    await env.cog._play_item(_make_ctx(), MOVIE)
+    assert env.cog._states[GID].generation == 1
+
+
+async def test_failed_go_live_after_replacing_stream_keeps_generation(env):
+    ctx = _make_ctx()
+    await env.cog._play_item(ctx, MOVIE)
+
+    async def replace_then_fail(bot_, send, g, *a, **kw):
+        bot_.video_players.pop(g.id, None)  # old stream cancelled, new failed
+
+    env.start.side_effect = replace_then_fail
+    assert await env.cog._play_item(ctx, MOVIE2) is False
+    assert env.cog._states[GID].generation == 2
+
+
+async def test_natural_end_during_start_does_not_advance(env):
+    ctx = _make_ctx()
+    await env.cog._play_item(ctx, MOVIE)
+    on_end = env.start.call_args.kwargs["on_end"]
+    state = env.cog._states[GID]
+    state.queue = [MOVIE3]
+    probing = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def slow_playback(item_id):
+        probing.set()
+        await finish.wait()
+        return _stream_for(item_id)
+
+    env.client.start_playback = AsyncMock(side_effect=slow_playback)
+    task = asyncio.create_task(env.cog._play_item(ctx, MOVIE2))
+    await probing.wait()
+    await on_end()  # MOVIE ends while MOVIE2 is still starting
+    assert state.queue == [MOVIE3]
+    finish.set()
+    assert await task is True
+    assert state.now.item is MOVIE2 and state.queue == [MOVIE3]
+
+
+async def test_no_background_sync_without_user_credentials(env):
+    await env.cog._play_item(_make_ctx(), MOVIE)
+    assert env.cog._tasks == set()
+
+
+class _FrameEvent:
+    def __init__(self, shown: bool) -> None:
+        self.shown = shown
+        self.timeouts: list[float] = []
+
+    def wait(self, timeout=None):
+        self.timeouts.append(timeout)
+        return self.shown
+
+
+async def test_sync_queue_uses_position_once_first_frame_shown(env, syncplay):
+    player = FakePlayer(position=63.5)
+    player.first_frame_sent = _FrameEvent(shown=True)
+    env.bot.video_players[GID] = player
+    await env.cog._sync_queue(env.guild, "m1", 60.0, player)
+    assert player.first_frame_sent.timeouts == [60.0]
+    syncplay.group.set_queue.assert_awaited_once_with("m1", 63.5)
+
+
+async def test_sync_queue_keeps_start_when_no_frame_yet(env, syncplay):
+    player = FakePlayer(position=99.0)
+    player.first_frame_sent = _FrameEvent(shown=False)
+    env.bot.video_players[GID] = player
+    await env.cog._sync_queue(env.guild, "m1", 60.0, player)
+    syncplay.group.set_queue.assert_awaited_once_with("m1", 60.0)
+
+
+async def test_sync_queue_skipped_when_player_replaced(env, syncplay):
+    player = FakePlayer()
+    env.bot.video_players[GID] = FakePlayer()  # a newer stream
+    await env.cog._sync_queue(env.guild, "m1", 0.0, player)
+    syncplay.cls.assert_not_called()
+    syncplay.group.set_queue.assert_not_awaited()
+
+
+async def test_sync_queue_without_player(env, syncplay):
+    await env.cog._sync_queue(env.guild, "m1", 5.0)
+    syncplay.group.set_queue.assert_awaited_once_with("m1", 5.0)
+
+
+async def test_concurrent_syncs_create_one_group(env, syncplay):
+    gate = asyncio.Event()
+
+    async def slow_open(name):
+        await gate.wait()
+
+    syncplay.group.open.side_effect = slow_open
+    tasks = [
+        asyncio.create_task(env.cog._sync_queue(env.guild, i, 0.0)) for i in ("a", "b")
+    ]
+    for _ in range(10):
+        await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(*tasks)
+    assert syncplay.cls.call_count == 1
+    assert syncplay.group.set_queue.await_count == 2
+
+
+async def test_spawned_task_is_tracked_until_done(env):
+    done = asyncio.Event()
+
+    async def job():
+        await done.wait()
+
+    env.cog._spawn(job())
+    assert len(env.cog._tasks) == 1
+    done.set()
+    await _drain(env.cog)
+    assert env.cog._tasks == set()
+
+
+# ── review fixes: title fall-through for command words ───────────────────────
+
+
+@pytest.mark.parametrize(
+    "command, word",
+    [
+        (Jellyfin.media_help, "help"),
+        (Jellyfin.media_pause, "pause"),
+        (Jellyfin.media_play, "play"),
+        (Jellyfin.media_stop, "stop"),
+        (Jellyfin.media_skip, "skip"),
+        (Jellyfin.media_playlist, "playlist"),
+    ],
+)
+async def test_command_word_with_text_searches_title(env, command, word):
+    env.client.search.return_value = [MOVIE]
+    ctx = _make_ctx()
+    await command.callback(env.cog, ctx, rest="  making sense ")
+    env.client.search.assert_awaited_once_with(f"{word} making sense")
+    assert env.cog._states[GID].now.item is MOVIE
+    env.vc.disconnect.assert_not_awaited()
+
+
+async def test_title_fallthrough_ignores_blank_rest(env):
+    ctx = _make_ctx()
+    assert await env.cog._title_fallthrough(ctx, "stop", "   ") is False
+    env.client.search.assert_not_awaited()
+
+
+# ── review fixes: teardown skipped while a start holds the lock ──────────────
+
+
+async def test_voice_leave_during_start_keeps_state(env):
+    state, _ = _playing(env)
+    member = SimpleNamespace(id=999, guild=env.guild)
+    async with state.start_lock:  # ensure_voice dropping a stale client
+        await env.cog.on_voice_state_update(member, _vs(env.channel), _vs(None))
+    assert env.cog._states[GID] is state
+    await env.cog.on_voice_state_update(member, _vs(env.channel), _vs(None))
+    assert GID not in env.cog._states

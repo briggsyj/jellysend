@@ -1390,3 +1390,77 @@ def test_position_reports_pending_seek_target(make_player):
     assert p.position == pytest.approx(20.0)
     p.seek(300.0)  # restart not processed by run() yet
     assert p.position == 300.0
+
+
+# ── seek / natural-end races ─────────────────────────────────────────────────
+
+
+def test_seek_ignored_once_finished(make_player):
+    p, _ = make_player()
+    proc = _FakeProc(running=True)
+    p._proc = proc
+    p._finished = True
+    p.seek(30.0)
+    assert p._seek_to is None and proc.terminated == 0
+
+
+def test_run_marks_finished_so_later_seeks_are_ignored(hw_player):
+    p = hw_player
+
+    def fake_stream():
+        p._frames_emitted = 1
+
+    p._stream = fake_stream
+    p.run()
+    assert p._finished and p._seek_to is None
+    p.seek(10.0)
+    assert p._seek_to is None
+
+
+def test_run_honours_seek_that_lands_at_natural_end(hw_player):
+    p = hw_player
+    offsets = []
+
+    def fake_stream():
+        offsets.append(p._offset)
+        p._frames_emitted = 1
+
+    real_apply = p._apply_pending_seek
+    calls = []
+
+    def apply_then_race():
+        applied = real_apply()
+        calls.append(applied)
+        if len(calls) == 1:
+            p.seek(20.0)  # arrives just after the pending-seek check
+        return applied
+
+    p._stream = fake_stream
+    p._apply_pending_seek = apply_then_race
+    p.run()
+    assert offsets == [0.0, 20.0]
+    assert p._finished and p._seek_to is None
+
+
+def test_run_finally_clears_pending_seek_on_error(hw_player, caplog):
+    p = hw_player
+
+    def boom():
+        p._seek_to = 5.0
+        raise RuntimeError("kaboom")
+
+    p._stream = boom
+    with caplog.at_level("ERROR", logger="streaming.video_player"):
+        p.run()
+    assert p._finished and p._seek_to is None
+
+
+def test_stream_seek_pending_at_popen_kills_fresh_ffmpeg(make_player, popen):
+    proc = _FakeProc(stdout=_annexb(_IDR, _AUD, _P1, _AUD), running=True)
+    popen(proc)
+    p, conn = make_player()
+    p._seek_to = 40.0
+    p._stream()
+    assert proc.terminated == 1
+    assert conn.sent == []
+    assert p._seek_to == 40.0  # left for run() to apply

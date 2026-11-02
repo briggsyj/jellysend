@@ -356,7 +356,7 @@ TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, 
 |---|---|---|
 | `!media <title>` | Friend | Search Jellyfin for a movie or series and stream it into your voice channel. A single movie match plays immediately. For series, the bot walks you through season → episode selection. Accepts an optional `sXXeYY` suffix (e.g. `!media breaking bad s03e05`) to jump directly to a specific episode. Transcoding is handled server-side by Jellyfin; subtitles are always suppressed. |
 | `!media help` | Friend | List every `!media` command, with examples of playing a movie vs. a TV episode |
-| `!media search <title>` | Friend | Same as `!media <title>` — use it when a title starts with a command word (e.g. `!media search stop making sense`) |
+| `!media search <title>` | Friend | Same as `!media <title>`. Titles that start with a command word mostly just work (`!media stop making sense` searches rather than stopping); `search` is only needed for titles starting with `queue`, `order`, `remove` or `search` |
 | `!media pause` | Friend | Pause the stream (the screenshare stays up, frozen on the current frame) |
 | `!media play` | Friend | Carry on after a pause; if nothing is playing, starts the playlist |
 | `!media resume <time>` | Friend | Jump to a time and play. Hours first, seconds optional, `:` or `.` separators: `1:23:45`, `1.23.45`, `1:23` (1 h 23 m), `0:05`; also `45m`, `90s`, `1h30m`. A bare number is minutes |

@@ -806,6 +806,7 @@ class H264VideoPlayer(threading.Thread):
         self.pause_gate.set()
         self._offset: float = max(0.0, start_offset)
         self._seek_to: float | None = None
+        self._finished = False  # set under _ctl_lock once run() won't restart
         self._ctl_lock = threading.Lock()
 
         self._live = live
@@ -870,6 +871,8 @@ class H264VideoPlayer(threading.Thread):
     def seek(self, seconds: float) -> None:
         """Restart decoding from ``seconds`` without tearing down the stream."""
         with self._ctl_lock:
+            if self._finished:
+                return  # stream already ended; nothing left to restart
             self._seek_to = max(0.0, seconds)
             proc = self._proc
         if proc is not None and proc.poll() is None:
@@ -901,15 +904,7 @@ class H264VideoPlayer(threading.Thread):
                 self._stream()
                 if self._end.is_set():
                     break
-                with self._ctl_lock:
-                    seek_to, self._seek_to = self._seek_to, None
-                if seek_to is not None:
-                    log.info("seeking to %.1fs", seek_to)
-                    if self._proc is not None:
-                        self._kill_proc(self._proc)
-                    self._offset = seek_to
-                    self._frames_emitted = 0
-                    self._proc = None
+                if self._apply_pending_seek():
                     continue
                 # If a hardware encoder produced no frames at all (e.g. VA-API
                 # "Access unit too large" on large MPEG-2 keyframes), retry once
@@ -927,14 +922,37 @@ class H264VideoPlayer(threading.Thread):
                     self._enc = _SW_ENCODER
                     self._proc = None
                     continue
-                break
+                # Natural end — unless a seek slipped in since the check above.
+                with self._ctl_lock:
+                    if self._seek_to is None:
+                        self._finished = True
+                if self._finished:
+                    break
+                self._apply_pending_seek()
         except Exception:
             log.exception("H264VideoPlayer error")
         finally:
+            with self._ctl_lock:
+                self._finished = True
+                self._seek_to = None
             if self._proc is not None:
                 self._kill_proc(self._proc)
             self._cleanup_fifo()
         log.info("H264VideoPlayer stopped")
+
+    def _apply_pending_seek(self) -> bool:
+        """Consume a pending seek: reset offset/counters for the next attempt."""
+        with self._ctl_lock:
+            seek_to, self._seek_to = self._seek_to, None
+        if seek_to is None:
+            return False
+        log.info("seeking to %.1fs", seek_to)
+        if self._proc is not None:
+            self._kill_proc(self._proc)
+        self._offset = seek_to
+        self._frames_emitted = 0
+        self._proc = None
+        return True
 
     # ── FIFO helpers ──────────────────────────────────────────────────────────
 
@@ -1173,8 +1191,9 @@ class H264VideoPlayer(threading.Thread):
             stderr=subprocess.PIPE,
             bufsize=0,
         )
-        # If stop() was called before Popen completed, terminate immediately.
-        if self._end.is_set():
+        # If stop() or seek() was called before Popen completed, terminate
+        # immediately rather than waiting for the first frame.
+        if self._end.is_set() or self._seek_to is not None:
             self._kill_proc(self._proc)
             return
         threading.Thread(

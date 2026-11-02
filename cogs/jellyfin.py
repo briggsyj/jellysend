@@ -113,8 +113,8 @@ __Play something__
 `!media <movie>` — search and play a movie, e.g. `!media inception`
 `!media <show> sXXeYY` — play one episode directly, e.g. `!media breaking bad s03e05`
 `!media <show>` — pick a season, then an episode, from numbered lists
-`!media search <title>` — same as `!media <title>`; use it when a title starts \
-with a command word (e.g. `!media search stop making sense`)
+`!media search <title>` — same as `!media <title>`; only needed for titles \
+starting with queue/order/remove/search (e.g. `!media search queue`)
 
 __Playback__
 `!media pause` / `!media play` — pause and carry on
@@ -153,6 +153,10 @@ class _GuildState:
     sync_sent: dict[str, float] = field(default_factory=dict)
     # monotonic time of our last pause/unpause/seek sent to the group
     sync_own_command_at: float = float("-inf")
+    # Serialises stream starts (commands, auto-advance, SyncPlay switches) and
+    # SyncPlay group creation so concurrent callers can't race each other.
+    start_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class Jellyfin(commands.Cog):
@@ -160,6 +164,12 @@ class Jellyfin(commands.Cog):
         self.bot = cast("SlopSoil", bot)
         self.client = client
         self._states: dict[int, _GuildState] = {}
+        self._tasks: set[asyncio.Task] = set()  # keep background tasks alive
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -361,7 +371,41 @@ class Jellyfin(commands.Cog):
         start: float = 0.0,
         sync: bool = True,
     ) -> bool:
-        """Start a Jellyfin playback session for ``item`` and stream it."""
+        """Start a Jellyfin playback session for ``item`` and stream it.
+
+        Serialised per guild. The generation is bumped up front so a stream
+        that ends naturally while this start is still resolving/probing can't
+        auto-advance the playlist underneath it.
+        """
+        state = self._state(guild.id)
+        async with state.start_lock:
+            state.generation += 1
+            generation = state.generation
+            had_player = self._player(guild.id) is not None
+            started = await self._start_item_locked(
+                guild, voice_channel, vc, item, start, sync, generation
+            )
+            if (
+                not started
+                and had_player
+                and state.generation == generation
+                and self._player(guild.id) is not None
+            ):
+                # Failed before replacing the current stream: let it keep
+                # auto-advancing when it ends.
+                state.generation = generation - 1
+            return started
+
+    async def _start_item_locked(
+        self,
+        guild: discord.Guild,
+        voice_channel: discord.VoiceChannel | discord.StageChannel,
+        vc: discord.VoiceClient | None,
+        item: dict,
+        start: float,
+        sync: bool,
+        generation: int,
+    ) -> bool:
         assert self.client is not None
         state = self._state(guild.id)
         send = state.send
@@ -429,8 +473,6 @@ class Jellyfin(commands.Cog):
             log.info("Jellyfin stream '%s' has no audio — injecting silence", label)
 
         previous = state.now
-        state.generation += 1
-        generation = state.generation
         state.now = _NowPlaying(item=item, stream=stream)
 
         await start_live_stream(
@@ -458,8 +500,10 @@ class Jellyfin(commands.Cog):
             await self.client.stop_encoding(stream.play_session_id)
             return False
 
-        if sync:
-            await self._sync_queue(guild, item_id, start)
+        if sync and self.client.has_user_credentials:
+            # In the background: waits for the first frame so the group's
+            # clock starts when Discord viewers actually see the item.
+            self._spawn(self._sync_queue(guild, item_id, start, self._player(guild.id)))
         return True
 
     async def _on_stream_end(self, guild_id: int, generation: int) -> None:
@@ -542,11 +586,26 @@ class Jellyfin(commands.Cog):
         )
         return group
 
-    async def _sync_queue(self, guild: discord.Guild, item_id: str, start: float) -> None:
-        group = await self._ensure_syncplay(guild)
+    async def _sync_queue(
+        self,
+        guild: discord.Guild,
+        item_id: str,
+        start: float,
+        player: H264VideoPlayer | None = None,
+    ) -> None:
+        if player is not None:
+            # Start the group's clock from what Discord viewers actually see,
+            # not from before the (possibly cold) transcode produced a frame.
+            shown = await asyncio.to_thread(player.first_frame_sent.wait, 60.0)
+            if self._player(guild.id) is not player:
+                return  # replaced or stopped meanwhile
+            if shown:
+                start = player.position
+        state = self._state(guild.id)
+        async with state.sync_lock:
+            group = await self._ensure_syncplay(guild)
         if group is None:
             return
-        state = self._state(guild.id)
         state.sync_sent[item_id] = time.monotonic()
         try:
             await group.set_queue(item_id, start)
@@ -639,6 +698,10 @@ class Jellyfin(commands.Cog):
         if bot_user is None or member.id != bot_user.id:
             return
         if before.channel is not None and after.channel is None:
+            state = self._states.get(member.guild.id)
+            if state is not None and state.start_lock.locked():
+                # ensure_voice() dropping a stale client mid-start — not a leave.
+                return
             await self._teardown(member.guild.id)
 
     # ── Commands ──────────────────────────────────────────────────────────────
@@ -660,6 +723,15 @@ class Jellyfin(commands.Cog):
         if item is not None:
             await self._play_item(ctx, item)
 
+    async def _title_fallthrough(
+        self, ctx: commands.Context, word: str, rest: str
+    ) -> bool:
+        """`!media stop making sense` is a title, not `stop` + junk: search it."""
+        if not rest.strip():
+            return False
+        await self.media.callback(self, ctx, query=f"{word} {rest.strip()}")
+        return True
+
     @require_role(Role.FRIEND)
     @media.command(name="search")
     async def media_search(self, ctx: commands.Context, *, query: str) -> None:
@@ -667,7 +739,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="help")
-    async def media_help(self, ctx: commands.Context) -> None:
+    async def media_help(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "help", rest):
+            return
         await self._send_help(ctx)
 
     async def _send_help(self, ctx: commands.Context) -> None:
@@ -680,7 +754,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="pause")
-    async def media_pause(self, ctx: commands.Context) -> None:
+    async def media_pause(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "pause", rest):
+            return
         guild = await self._context_guild(ctx)
         player = self._player(guild.id) if guild else None
         if guild is None or player is None:
@@ -695,7 +771,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="play")
-    async def media_play(self, ctx: commands.Context) -> None:
+    async def media_play(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "play", rest):
+            return
         guild = await self._context_guild(ctx)
         player = self._player(guild.id) if guild else None
         if guild is not None and player is not None:
@@ -722,6 +800,10 @@ class Jellyfin(commands.Cog):
             await self.media_play.callback(self, ctx)
             return
         seconds = parse_timestamp(time_text)
+        if seconds is None and not any(c.isdigit() for c in time_text):
+            # e.g. `!media resume the movie` — a title, not a time.
+            await self._title_fallthrough(ctx, "resume", time_text)
+            return
         if seconds is None:
             await ctx.send(
                 f"`{time_text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), "
@@ -751,7 +833,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="stop")
-    async def media_stop(self, ctx: commands.Context) -> None:
+    async def media_stop(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "stop", rest):
+            return
         guild = await self._context_guild(ctx)
         vc = guild.voice_client if guild else None
         if guild is None or vc is None:
@@ -764,7 +848,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="skip")
-    async def media_skip(self, ctx: commands.Context) -> None:
+    async def media_skip(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "skip", rest):
+            return
         guild = await self._context_guild(ctx)
         state = self._states.get(guild.id) if guild else None
         if guild is None or state is None or (not state.queue and state.now is None):
@@ -804,8 +890,17 @@ class Jellyfin(commands.Cog):
         item = await self._resolve(ctx, query)
         if item is None:
             return
-        if self._player(guild.id) is None and not state.queue:
-            await self._play_item(ctx, item)
+        if self._player(guild.id) is None and not state.start_lock.locked():
+            # Idle: play now — or, if a playlist is waiting, queue this and
+            # start the playlist from its head.
+            if not state.queue:
+                await self._play_item(ctx, item)
+                return
+            state.queue.append(item)
+            head = state.queue.pop(0)
+            await ctx.send(f"➕ queued **{_fmt_item(item)}** at #{len(state.queue)}")
+            if not await self._play_item(ctx, head):
+                state.queue.insert(0, head)
             return
         if len(state.queue) >= PLAYLIST_MAX:  # filled while the user was picking
             await ctx.send(f"the playlist is full ({PLAYLIST_MAX} items)")
@@ -872,7 +967,9 @@ class Jellyfin(commands.Cog):
 
     @require_role(Role.FRIEND)
     @media.command(name="playlist")
-    async def media_playlist(self, ctx: commands.Context) -> None:
+    async def media_playlist(self, ctx: commands.Context, *, rest: str = "") -> None:
+        if await self._title_fallthrough(ctx, "playlist", rest):
+            return
         guild = await self._context_guild(ctx)
         state = self._states.get(guild.id) if guild else None
         player = self._player(guild.id) if guild else None

@@ -485,3 +485,55 @@ async def test_keepalive_loop_stops_on_send_failure(monkeypatch):
 
 async def test_keepalive_loop_without_ws():
     await _group()._keepalive_loop(1.0)  # no socket → returns immediately
+
+
+# ── dead socket marks the group closed ───────────────────────────────────────
+
+
+async def test_read_loop_end_marks_group_dead_and_releases_resources():
+    group = _group()
+    session = _open_session(group)
+    keepalive = asyncio.create_task(asyncio.sleep(3600))
+    group._keepalive = keepalive
+    await group._read_loop()  # server went away: iterator just ends
+    await _drain()
+    assert group.closed
+    assert keepalive.cancelled()
+    assert session.closed
+
+
+async def test_read_loop_end_tolerates_session_close_error():
+    group = _group()
+    session = _open_session(group)
+    session.close = AsyncMock(side_effect=RuntimeError("already closed"))
+    done = asyncio.create_task(asyncio.sleep(0))
+    await done
+    group._keepalive = done  # finished keepalive is left alone
+    await group._read_loop()
+    assert group.closed
+    session.close.assert_awaited_once()
+
+
+async def test_read_loop_end_without_session():
+    group = _group()
+    group._ws = FakeWS()
+    await group._read_loop()
+    assert group.closed
+
+
+async def test_read_loop_end_after_close_leaves_session_alone():
+    group = _group()
+    session = _open_session(group)
+    session.close = AsyncMock()
+    group.closed = True
+    await group._read_loop()
+    session.close.assert_not_awaited()
+
+
+async def test_close_after_dead_socket_is_noop():
+    group = _group()
+    session = _open_session(group)
+    await group._read_loop()
+    posts = len(session.posts)
+    await group.close()  # already marked closed by the reader
+    assert len(session.posts) == posts
