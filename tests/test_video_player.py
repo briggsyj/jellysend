@@ -1621,3 +1621,42 @@ def test_sync_properties(make_player):
     assert p.fps == 25.0 and p.segment_frames == 0 and p.seek_pending is False
     p._seek_to = 3.0
     assert p.seek_pending is True
+
+
+def test_kill_proc_closes_stdout_first():
+    from unittest.mock import MagicMock
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    order = []
+    proc.stdout.close.side_effect = lambda: order.append("close")
+    proc.terminate.side_effect = lambda: order.append("term")
+    H264VideoPlayer._kill_proc(proc)
+    assert order == ["close", "term"]
+
+
+def test_seek_pending_covers_restart_window(make_player):
+    p, _ = make_player()
+    p._restarting = True
+    assert p.seek_pending is True
+    p._restarting = False
+    assert p.seek_pending is False
+
+
+def test_apply_pending_seek_clears_restarting_flag(make_player):
+    p, _ = make_player()
+    seen = []
+    p._signal_restart = lambda: seen.append(p.seek_pending)
+    p._seek_to = 12.0
+    assert p._apply_pending_seek() is True
+    assert seen == [True]  # still "pending" while the restart is applied
+    assert p.seek_pending is False and p.segment_offset == 12.0
+
+
+def test_unregister_audio_follower_only_removes_own_event(make_player):
+    p, _ = make_player()
+    ev = p.register_audio_follower()
+    p.unregister_audio_follower(threading.Event())
+    assert p._audio_drained is ev
+    p.unregister_audio_follower(ev)
+    assert p._audio_drained is None

@@ -952,3 +952,44 @@ def test_hold_rearms_once_video_moves_again(fake_opus):
     s._send_audio()
     assert s._released_at is None
     assert s.corrections["silence"] == 2
+
+
+def test_pending_seek_keeps_draining_so_ffmpeg_never_blocks(fake_opus, monkeypatch):
+    conn = _AudioConn()
+    clock = _Clock(position=0.0)
+    clock.seek_pending = True
+    s = _sender(_pcm(1), conn, sync_source=clock)
+    drains = []
+    monkeypatch.setattr(s, "_drain_stale", lambda: drains.append(1) or 0)
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 3:
+            s._end.set()
+
+    conn.send_packet = send
+    s._send_audio()
+    assert len(drains) == 3
+
+
+def test_restart_clears_release_suppression(fake_opus):
+    clock = _Clock(position=60.0, seq=0, offset=0.0)
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn(), sync_source=clock)
+    s._released_at = 600.0  # released late in the old segment
+    clock.restart_seq = 1
+    clock.segment_offset = 60.0  # seek back to 1:00
+    assert s._check_restart() is True
+    assert s._released_at is None
+
+
+def test_sender_exit_unregisters_follower():
+    clock = _Clock()
+    ev = threading.Event()
+    unregistered = []
+    clock.register_audio_follower = lambda: ev
+    clock.unregister_audio_follower = unregistered.append
+    s = GoLiveAudioSender(io.BytesIO(b""), _AudioConn(), sync_source=clock)
+    s.run()  # EOF straight away → thread body ends
+    assert ev.is_set()
+    assert unregistered == [ev]

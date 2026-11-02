@@ -849,6 +849,9 @@ class H264VideoPlayer(threading.Thread):
         self._offset: float = max(0.0, start_offset)
         self._aspect: float | None = aspect  # None = keep source aspect ratio
         self._seek_to: float | None = None
+        # True while a consumed seek is being applied (old FFmpeg being killed,
+        # offset/counters reset) so seek_pending covers that window too.
+        self._restarting = False
         # Bumped each time FFmpeg is restarted mid-stream (seek, aspect change,
         # encoder fallback) so the audio sender can drop stale FIFO audio and
         # re-anchor; segment_offset is the media time the new process starts at.
@@ -912,7 +915,7 @@ class H264VideoPlayer(threading.Thread):
 
     @property
     def seek_pending(self) -> bool:
-        return self._seek_to is not None
+        return self._seek_to is not None or self._restarting
 
     @property
     def fps(self) -> float:
@@ -922,6 +925,11 @@ class H264VideoPlayer(threading.Thread):
         """Called by the audio sender; see _audio_drained."""
         self._audio_drained = threading.Event()
         return self._audio_drained
+
+    def unregister_audio_follower(self, event: threading.Event) -> None:
+        """Called when the audio sender exits, so restarts stop waiting on it."""
+        if self._audio_drained is event:
+            self._audio_drained = None
 
     def _signal_restart(self) -> None:
         """Bump restart_seq and give the audio follower a moment to drain the
@@ -983,6 +991,14 @@ class H264VideoPlayer(threading.Thread):
         """SIGTERM then SIGKILL if needed, then reap."""
         if proc.poll() is not None:
             return
+        # FFmpeg ignores SIGTERM while blocked writing to a full pipe; closing
+        # our read end gives it EPIPE so it exits at once instead of after the
+        # 3 s SIGKILL fallback.
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+        except Exception:
+            pass
         proc.terminate()
         try:
             proc.wait(timeout=3)
@@ -1039,15 +1055,20 @@ class H264VideoPlayer(threading.Thread):
         """Consume a pending seek: reset offset/counters for the next attempt."""
         with self._ctl_lock:
             seek_to, self._seek_to = self._seek_to, None
+            if seek_to is not None:
+                self._restarting = True
         if seek_to is None:
             return False
-        log.info("seeking to %.1fs", seek_to)
-        if self._proc is not None:
-            self._kill_proc(self._proc)
-        self._offset = seek_to
-        self._frames_emitted = 0
-        self._proc = None
-        self._signal_restart()
+        try:
+            log.info("seeking to %.1fs", seek_to)
+            if self._proc is not None:
+                self._kill_proc(self._proc)
+            self._frames_emitted = 0
+            self._offset = seek_to
+            self._proc = None
+            self._signal_restart()
+        finally:
+            self._restarting = False
         return True
 
     # ── FIFO helpers ──────────────────────────────────────────────────────────

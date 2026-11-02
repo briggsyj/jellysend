@@ -503,6 +503,7 @@ class GoLiveAudioSender(threading.Thread):
         self._seg_base = sync.segment_offset
         self._seg_frames = 0
         self._hold_frames = 0
+        self._released_at = None
         if self._drained is not None:
             self._drained.set()
         log.info(
@@ -552,6 +553,13 @@ class GoLiveAudioSender(threading.Thread):
             self._send_audio()
         except Exception:
             log.exception("GoLiveAudioSender error")
+        finally:
+            # Don't leave the player waiting on a follower that's gone.
+            if self._drained is not None:
+                self._drained.set()
+                unregister = getattr(self._sync, "unregister_audio_follower", None)
+                if callable(unregister):
+                    unregister(self._drained)
         log.info("GoLiveAudioSender stopped")
 
     def _send_audio(self) -> None:
@@ -582,6 +590,7 @@ class GoLiveAudioSender(threading.Thread):
                     # A seek/aspect change while paused restarts FFmpeg now;
                     # drain the old audio before the new process fills the FIFO.
                     self._check_restart()
+                self._hold_frames = 0
                 t0 = time.perf_counter()  # restart pacing after the pause
                 loops = 0
                 continue
@@ -596,7 +605,10 @@ class GoLiveAudioSender(threading.Thread):
             pcm: bytes | None = None
             if sync is not None and getattr(sync, "seek_pending", False) is True:
                 # Seek requested but the old FFmpeg isn't gone yet: its audio
-                # is stale, so neither play it nor "catch up" through it.
+                # is stale, so play silence — but keep draining it without
+                # blocking, or FFmpeg stalls on the full FIFO and the seek
+                # never completes.
+                self._drain_stale()
                 pcm = bytes(self._FRAME_SIZE)
             elif sync is not None and self._video_flowing(sync):
                 video_pos = sync.position
