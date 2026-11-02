@@ -738,8 +738,9 @@ def test_audio_sender_stop_while_paused(fake_opus):
 class _Clock:
     """Stand-in for H264VideoPlayer as the sender's sync source."""
 
-    def __init__(self, position=0.0, started=True, seq=0, offset=0.0):
+    def __init__(self, position=0.0, started=True, seq=0, offset=0.0, age=0.0):
         self._position = position
+        self.last_frame_age = age  # 0 = video flowing; > 0.15 = stalled
         self.restart_seq = seq
         self.segment_offset = offset
         self.first_frame_sent = threading.Event()
@@ -759,7 +760,7 @@ def test_audio_ahead_of_stalled_video_inserts_silence(fake_opus):
     """Video stuck at 0 s: audio may run 2 frames ahead, then sends silence
     without consuming PCM, so it resumes in step once video moves."""
     conn = _AudioConn()
-    clock = _Clock(position=0.0)
+    clock = _Clock(position=0.0, age=1.0)  # video stalled
     s = _sender(_pcm(6, extra=0), conn, sync_source=clock)
     real_send = conn.send_packet
 
@@ -778,10 +779,14 @@ def test_audio_ahead_of_stalled_video_inserts_silence(fake_opus):
 
 def test_audio_behind_video_drops_frames_to_catch_up(fake_opus):
     conn = _AudioConn()
-    clock = _Clock(position=1.0)  # video already 1 s in
+    clock = _Clock(position=1.0)  # video already 1 s in, flowing
     s = _sender(_pcm(6), conn, sync_source=clock)
+    ticks = iter([0.0, 1.1, 1.4, 1.7, 2.0, 2.3, 2.6, 2.9])
+    s._now = lambda: next(ticks)
     s._send_audio()
-    assert _payload_ids(conn) == [1, 3, 5]
+    # tick 1 starts the persistence timer; from tick 2 one frame is skipped
+    # per correction interval
+    assert _payload_ids(conn) == [0, 2, 4]
     assert s.corrections["dropped"] == 3
 
 
@@ -860,7 +865,7 @@ def test_audio_hold_is_capped_then_released_and_reanchored(fake_opus):
     """A long video stall must not hold audio indefinitely: the FIFO would fill,
     block FFmpeg's audio write and freeze the video for good."""
     conn = _AudioConn()
-    clock = _Clock(position=0.0)
+    clock = _Clock(position=0.0, age=1.0)  # video stalled
     s = _sender(_pcm(40), conn, sync_source=clock)
     real_send = conn.send_packet
 
@@ -938,7 +943,7 @@ def test_slack_widens_for_low_frame_rates(fps, expected):
 
 def test_hold_rearms_once_video_moves_again(fake_opus):
     conn = _AudioConn()
-    s = _sender(_pcm(5), conn, sync_source=_Clock(position=1.0))
+    s = _sender(_pcm(5), conn, sync_source=_Clock(position=1.0, age=1.0))
     s._released_at = 0.5  # released earlier at 0.5 s; video now at 1.0 s
     s._seg_base = 2.0  # audio well ahead → would hold
     real_send = conn.send_packet
@@ -993,3 +998,80 @@ def test_sender_exit_unregisters_follower():
     s.run()  # EOF straight away → thread body ends
     assert ev.is_set()
     assert unregistered == [ev]
+
+
+
+# ── persistent-drift follower (anti rubber-banding) ──────────────────────────
+
+
+def _ticking(s, step):
+    t = [0.0]
+
+    def now():
+        t[0] += step
+        return t[0]
+
+    s._now = now
+
+
+def test_transient_lag_is_not_corrected(fake_opus):
+    """Video a few frames behind while still flowing: both sides self-correct
+    to the wall clock, so the follower must leave the audio alone."""
+    conn = _AudioConn()
+    s = _sender(_pcm(10), conn)
+    s._sync = _Clock(position=lambda: s._audio_position() - 0.1)  # 100 ms behind
+    _ticking(s, 0.02)
+    s._send_audio()
+    assert _payload_ids(conn) == list(range(10))
+    assert s.corrections == {"silence": 0, "dropped": 0, "released": 0}
+
+
+def test_large_drift_must_persist_before_correcting(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(10), conn)
+    s._sync = _Clock(position=lambda: s._audio_position() - 0.5)  # 500 ms ahead
+    _ticking(s, 0.02)  # 10 ticks = 0.2 s < persistence window
+    s._send_audio()
+    assert s.corrections["silence"] == 0
+
+
+def test_persistent_drift_corrected_gently_with_rate_limit(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(30), conn)
+    s._sync = _Clock(position=lambda: s._audio_position() - 0.5)
+    _ticking(s, 0.1)  # 100 ms per tick
+    times = []
+    real = s._follow_video
+
+    def spy(sync, target):
+        before = s.corrections["silence"]
+        out = real(sync, target)
+        if s.corrections["silence"] > before:
+            times.append(s._last_correction)
+        return out
+
+    s._follow_video = spy
+    s._send_audio()
+    assert times, "persistent drift should eventually be corrected"
+    assert times[0] >= 1.0  # only after the persistence window
+    assert all(b - a >= 0.25 - 1e-9 for a, b in zip(times, times[1:]))
+
+
+def test_drift_inside_exit_band_resets_tracking(fake_opus):
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn())
+    s._drift_since = 5.0
+    s._correcting = True
+    clock = _Clock(position=0.0)
+    s._seg_base = 0.01  # 10 ms drift
+    assert s._follow_video(clock, 0.0) is None
+    assert s._drift_since is None and s._correcting is False
+
+
+def test_restart_resets_drift_tracking():
+    clock = _Clock(seq=0)
+    s = GoLiveAudioSender(io.BytesIO(), _AudioConn(), sync_source=clock)
+    s._drift_since = 1.0
+    s._correcting = True
+    clock.restart_seq = 1
+    assert s._check_restart() is True
+    assert s._drift_since is None and s._correcting is False

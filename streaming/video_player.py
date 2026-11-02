@@ -856,6 +856,7 @@ class H264VideoPlayer(threading.Thread):
         # encoder fallback) so the audio sender can drop stale FIFO audio and
         # re-anchor; segment_offset is the media time the new process starts at.
         self.restart_seq: int = 0
+        self._last_frame_at: float | None = None
         # Set by the audio sender once it has drained the old process's FIFO
         # audio after a restart; the new FFmpeg waits for it (bounded) so its
         # fresh audio isn't drained too. None until a follower registers.
@@ -912,6 +913,12 @@ class H264VideoPlayer(threading.Thread):
     def segment_frames(self) -> int:
         """Frames emitted since the current FFmpeg process started."""
         return self._frames_emitted
+
+    @property
+    def last_frame_age(self) -> float:
+        """Seconds since a video frame was last sent (inf before the first)."""
+        at = self._last_frame_at
+        return float("inf") if at is None else time.monotonic() - at
 
     @property
     def seek_pending(self) -> bool:
@@ -1391,6 +1398,7 @@ class H264VideoPlayer(threading.Thread):
                 self.first_frame_sent.set()
             _n += 1
             self._frames_emitted = _n
+            self._last_frame_at = time.monotonic()
             _stats_frames += 1
             now = time.monotonic()
             due = _t0 + _n / self._fps
