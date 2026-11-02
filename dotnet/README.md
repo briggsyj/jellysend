@@ -51,8 +51,14 @@ Project references enforce the constitution's layer rules: `Services` depends on
 The test-pattern spike checks the whole send path against real Discord: gateway, voice, go-live,
 RTP, transport crypto and DAVE. It streams FFmpeg `testsrc2` (1280×720, 30 fps) with a 440 Hz tone.
 
+No .NET image is published yet (`latest` stays Python until the parity checklist passes), so build it from the repo root:
+
 ```bash
-docker run --rm -e SLOPSOIL_SPIKE=testpattern -e DISCORD_TOKEN=... -e ALLOWED_USER_IDS=<your id> ghcr.io/<owner>/slopsoil:<dotnet tag>
+docker build -f dotnet/Dockerfile -t slopsoil-dotnet .
+```
+
+```bash
+docker run --rm -e SLOPSOIL_SPIKE=testpattern -e DISCORD_TOKEN=... -e ALLOWED_USER_IDS=<your id> slopsoil-dotnet
 ```
 
 1. Join a voice channel (ideally one with DAVE E2EE enabled).
