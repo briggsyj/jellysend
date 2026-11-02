@@ -41,5 +41,26 @@ Project references enforce the constitution's layer rules: `Services` depends on
 | Setup (T001–T005) | done |
 | Spike: RTP / FU-A / SPS rewrite / transport crypto / Opus (T007, T009–T011) | done — byte-exact vs Python |
 | Spike: libdave bindings + `IDaveSession` (T008) | done — unit-tested against a fake; native smoke test runs when `libdave.so` is present |
-| Spike: libdave build, gateway/voice/go-live, test-pattern run (T006, T012, T013) | not started |
+| Spike: libdave Docker build (T006) | done — `build-check-dotnet` CI job |
+| Spike: gateway / voice / go-live (T012) | done — unit-tested against fakes |
+| Spike: test-pattern harness (T013) | implemented — **awaiting manual run in a DAVE channel** |
 | US1–US5 | not started |
+
+## Running the go-live spike (T013)
+
+The test-pattern spike checks the whole send path against real Discord: gateway, voice, go-live,
+RTP, transport crypto and DAVE. It streams FFmpeg `testsrc2` (1280×720, 30 fps) with a 440 Hz tone.
+
+```bash
+docker run --rm -e SLOPSOIL_SPIKE=testpattern -e DISCORD_TOKEN=... -e ALLOWED_USER_IDS=<your id> ghcr.io/<owner>/slopsoil:<dotnet tag>
+```
+
+1. Join a voice channel (ideally one with DAVE E2EE enabled).
+2. Type `!join` in a text channel of that server. The bot joins and goes live.
+3. Watch the stream. You should see a moving test card and hear a steady tone, with no stutter.
+4. Type `!leave` to stop.
+
+Every 10 s the log prints packets sent/dropped and `dave_ready`. Optional settings:
+
+- `SLOPSOIL_SPIKE_VCODEC` picks the H.264 encoder (default `libopenh264`, e.g. `h264_vaapi` needs a VA-API device).
+- `ALLOWED_USER_IDS` limits who can control the bot. When unset, anyone can.
