@@ -1583,3 +1583,13 @@ def test_forced_aspect_with_real_ffmpeg(tmp_path, src, aspect, expected):
         check=True, capture_output=True, text=True,
     )
     assert tuple(int(x) for x in probe.stdout.strip().split(",")) == expected
+
+
+def test_restart_seq_and_segment_offset_track_seeks(make_player):
+    p, _ = make_player(start_offset=5.0)
+    assert (p.restart_seq, p.segment_offset) == (0, 5.0)
+    p._seek_to = 42.0
+    assert p._apply_pending_seek() is True
+    assert (p.restart_seq, p.segment_offset) == (1, 42.0)
+    assert p._apply_pending_seek() is False
+    assert p.restart_seq == 1

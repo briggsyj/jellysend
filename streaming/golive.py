@@ -18,6 +18,8 @@ Protocol flow:
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import io
 import logging
 import os
 import socket
@@ -419,6 +421,13 @@ class _GoLiveVCProxy:
 # ── GoLiveAudioSender ─────────────────────────────────────────────────────────
 
 
+# Audio/video clock follower: how far (s) the audio's media position may drift
+# from the video's before the sender corrects by inserting silence (audio
+# ahead) or dropping a 20 ms frame (audio behind). Two frames of slack keeps
+# it from chattering on normal jitter.
+_SYNC_SLACK = 0.04
+
+
 class GoLiveAudioSender(threading.Thread):
     """
     Reads raw PCM S16LE stereo 48 kHz from an open FIFO file object, encodes
@@ -437,6 +446,7 @@ class GoLiveAudioSender(threading.Thread):
         conn: GoLiveConnection,
         is_source_active: Callable[[], bool] | None = None,
         pause_gate: threading.Event | None = None,
+        sync_source=None,
     ) -> None:
         super().__init__(name="GoLiveAudio", daemon=True)
         self._f = file_obj
@@ -448,6 +458,15 @@ class GoLiveAudioSender(threading.Thread):
         self._is_source_active = is_source_active
         # Shared with H264VideoPlayer: cleared while playback is paused.
         self._pause_gate = pause_gate
+        # The H264VideoPlayer (or None): its ``position`` is the master clock,
+        # ``restart_seq`` / ``segment_offset`` mark FFmpeg restarts (seek,
+        # aspect change, encoder fallback) and ``first_frame_sent`` says video
+        # is flowing. Audio follows it instead of free-running on its own timer.
+        self._sync = sync_source
+        self._seen_seq: int = getattr(sync_source, "restart_seq", 0)
+        self._seg_base: float = getattr(sync_source, "segment_offset", 0.0)
+        self._seg_frames: int = 0  # 20 ms frames consumed since the restart
+        self.corrections = {"silence": 0, "dropped": 0}
 
         self._seq: int = 0
         self._ts: int = 0
@@ -455,6 +474,32 @@ class GoLiveAudioSender(threading.Thread):
 
     def stop(self) -> None:
         self._end.set()
+
+    def _audio_position(self) -> float:
+        return self._seg_base + self._seg_frames * self._FRAME_DURATION
+
+    def _drain_stale(self) -> int:
+        """Discard audio the previous FFmpeg left in the FIFO (up to ~0.3 s),
+        so it isn't played after a seek/restart. Returns bytes discarded."""
+        try:
+            fd = self._f.fileno()
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        except (OSError, ValueError, io.UnsupportedOperation):
+            return 0
+        dropped = 0
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            while True:
+                try:
+                    chunk = self._f.read(65536)
+                except BlockingIOError:
+                    break
+                if not chunk:
+                    break
+                dropped += len(chunk)
+        finally:
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+        return dropped
 
     def run(self) -> None:
         try:
@@ -470,10 +515,12 @@ class GoLiveAudioSender(threading.Thread):
         # discarding backlogged initial audio (fixes "audio behind"); negative
         # holds audio start (fixes "audio ahead").
         offset_ms = _av_sync_ms()
+        target = offset_ms / 1000.0  # desired audio-minus-video position
         if offset_ms > 0:
             for _ in range(int(offset_ms / (self._FRAME_DURATION * 1000))):
                 if self._end.is_set() or len(self._f.read(self._FRAME_SIZE)) < self._FRAME_SIZE:
                     break
+                self._seg_frames += 1
         elif offset_ms < 0:
             self._end.wait(timeout=(-offset_ms) / 1000.0)
 
@@ -489,7 +536,40 @@ class GoLiveAudioSender(threading.Thread):
                 t0 = time.perf_counter()  # restart pacing after the pause
                 loops = 0
                 continue
-            pcm = self._f.read(self._FRAME_SIZE)
+
+            sync = self._sync
+            if sync is not None and sync.restart_seq != self._seen_seq:
+                # FFmpeg restarted: drop the old process's leftover audio and
+                # re-anchor our media position to the new segment.
+                self._seen_seq = sync.restart_seq
+                dropped = self._drain_stale()
+                self._seg_base = sync.segment_offset
+                self._seg_frames = 0
+                log.info(
+                    "GoLiveAudio: source restarted at %.1fs — dropped %d stale "
+                    "bytes", self._seg_base, dropped,
+                )
+                t0 = time.perf_counter()
+                loops = 0
+                continue
+
+            pcm: bytes | None = None
+            if sync is not None and sync.first_frame_sent.is_set():
+                drift = self._audio_position() - sync.position - target
+                if drift > _SYNC_SLACK:
+                    # Audio ahead (video stalled/late): hold the audio by
+                    # sending 20 ms of silence without consuming any PCM.
+                    pcm = bytes(self._FRAME_SIZE)
+                    self.corrections["silence"] += 1
+                elif drift < -_SYNC_SLACK:
+                    # Audio behind: skip one 20 ms frame to catch up.
+                    if len(self._f.read(self._FRAME_SIZE)) == self._FRAME_SIZE:
+                        self._seg_frames += 1
+                        self.corrections["dropped"] += 1
+            if pcm is None:
+                pcm = self._f.read(self._FRAME_SIZE)
+                if len(pcm) == self._FRAME_SIZE:
+                    self._seg_frames += 1
             if len(pcm) < self._FRAME_SIZE:
                 # Short read = current FFmpeg closed the FIFO write end.  If the
                 # player is mid-fallback (restarting FFmpeg), wait for the new

@@ -730,3 +730,127 @@ def test_audio_sender_stop_while_paused(fake_opus):
     s._send_audio()
     assert conn.sent == []
     assert len(s._pause_gate.waits) == 1
+
+
+# ── A/V clock follower and stale-audio drain ─────────────────────────────────
+
+
+class _Clock:
+    """Stand-in for H264VideoPlayer as the sender's sync source."""
+
+    def __init__(self, position=0.0, started=True, seq=0, offset=0.0):
+        self._position = position
+        self.restart_seq = seq
+        self.segment_offset = offset
+        self.first_frame_sent = threading.Event()
+        if started:
+            self.first_frame_sent.set()
+
+    @property
+    def position(self):
+        return self._position() if callable(self._position) else self._position
+
+
+def _payload_ids(conn):
+    return [_decrypt_lite(p)[1][-1] for p in conn.sent]
+
+
+def test_audio_ahead_of_stalled_video_inserts_silence(fake_opus):
+    """Video stuck at 0 s: audio may run 2 frames ahead, then sends silence
+    without consuming PCM, so it resumes in step once video moves."""
+    conn = _AudioConn()
+    clock = _Clock(position=0.0)
+    s = _sender(_pcm(6, extra=0), conn, sync_source=clock)
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 6:
+            s._end.set()
+
+    conn.send_packet = send
+    s._send_audio()
+    # frames 1..3 (ids 1,2 are within slack), then silence (pcm of zeros)
+    assert _payload_ids(conn)[:3] == [0, 1, 2]
+    assert s.corrections["silence"] == 3
+    assert s._seg_frames == 3  # silence did not consume PCM
+
+
+def test_audio_behind_video_drops_frames_to_catch_up(fake_opus):
+    conn = _AudioConn()
+    clock = _Clock(position=1.0)  # video already 1 s in
+    s = _sender(_pcm(6), conn, sync_source=clock)
+    s._send_audio()
+    assert _payload_ids(conn) == [1, 3, 5]
+    assert s.corrections["dropped"] == 3
+
+
+def test_audio_in_step_with_video_is_untouched(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(4), conn)
+    s._sync = _Clock(position=lambda: s._audio_position())
+    s._send_audio()
+    assert _payload_ids(conn) == [0, 1, 2, 3]
+    assert s.corrections == {"silence": 0, "dropped": 0}
+
+
+def test_no_correction_before_first_video_frame(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(4), conn, sync_source=_Clock(position=5.0, started=False))
+    s._send_audio()
+    assert _payload_ids(conn) == [0, 1, 2, 3]
+
+
+def test_target_offset_from_av_sync_ms_is_kept(fake_opus, monkeypatch):
+    """STREAM_AV_SYNC_MS=+40 discards 2 frames up front and the follower keeps
+    audio 40 ms ahead instead of 'correcting' it back."""
+    monkeypatch.setenv("STREAM_AV_SYNC_MS", "40")
+    conn = _AudioConn()
+    s = _sender(_pcm(5), conn)
+    s._sync = _Clock(position=lambda: s._audio_position() - 0.04)
+    s._send_audio()
+    assert _payload_ids(conn) == [2, 3, 4]
+    assert s.corrections == {"silence": 0, "dropped": 0}
+
+
+def test_restart_rebases_audio_position_and_drains(fake_opus, monkeypatch):
+    conn = _AudioConn()
+    clock = _Clock(position=lambda: s._audio_position(), seq=0)
+    s = _sender(_pcm(4), conn, sync_source=clock)
+    drained = []
+    monkeypatch.setattr(s, "_drain_stale", lambda: drained.append(1) or 7)
+    real_send = conn.send_packet
+
+    def send(pkt):
+        real_send(pkt)
+        if len(conn.sent) == 1:  # FFmpeg restarted at 120 s after the 1st frame
+            clock.restart_seq = 1
+            clock.segment_offset = 120.0
+
+    conn.send_packet = send
+    s._send_audio()
+    assert drained == [1]
+    assert s._seg_base == 120.0
+    assert s._seen_seq == 1
+    assert len(conn.sent) == 4
+
+
+def test_drain_stale_empties_fifo_without_blocking():
+    import os
+
+    r, w = os.pipe()
+    os.write(w, b"x" * 5000)
+    f = os.fdopen(r, "rb")
+    try:
+        s = GoLiveAudioSender(f, _AudioConn())
+        assert s._drain_stale() == 5000
+        assert s._drain_stale() == 0  # empty, writer still open → no block
+        os.write(w, b"y" * 10)
+        os.close(w)
+        assert s._drain_stale() == 10  # then EOF
+    finally:
+        f.close()
+
+
+def test_drain_stale_ignores_non_fd_sources():
+    assert GoLiveAudioSender(io.BytesIO(b"abc"), _AudioConn())._drain_stale() == 0

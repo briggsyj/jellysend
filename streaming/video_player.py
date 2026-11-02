@@ -849,6 +849,10 @@ class H264VideoPlayer(threading.Thread):
         self._offset: float = max(0.0, start_offset)
         self._aspect: float | None = aspect  # None = keep source aspect ratio
         self._seek_to: float | None = None
+        # Bumped each time FFmpeg is restarted mid-stream (seek, aspect change,
+        # encoder fallback) so the audio sender can drop stale FIFO audio and
+        # re-anchor; segment_offset is the media time the new process starts at.
+        self.restart_seq: int = 0
         self._finished = False  # set under _ctl_lock once run() won't restart
         self._ctl_lock = threading.Lock()
 
@@ -892,6 +896,10 @@ class H264VideoPlayer(threading.Thread):
     def stop_requested(self) -> bool:
         """True once stop() was called (vs. the stream ending on its own)."""
         return self._end.is_set()
+
+    @property
+    def segment_offset(self) -> float:
+        return self._offset
 
     @property
     def paused(self) -> bool:
@@ -974,6 +982,8 @@ class H264VideoPlayer(threading.Thread):
                     )
                     self._enc = _SW_ENCODER
                     self._proc = None
+                    self._frames_emitted = 0
+                    self.restart_seq += 1
                     continue
                 # Natural end — unless a seek slipped in since the check above.
                 with self._ctl_lock:
@@ -1005,6 +1015,7 @@ class H264VideoPlayer(threading.Thread):
         self._offset = seek_to
         self._frames_emitted = 0
         self._proc = None
+        self.restart_seq += 1
         return True
 
     # ── FIFO helpers ──────────────────────────────────────────────────────────

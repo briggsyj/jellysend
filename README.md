@@ -314,7 +314,7 @@ STREAM_AV_SYNC_MS=
 | `STREAM_FPS` | No | Override the preset frame rate, 1–60. Matching the source fps avoids wasteful frame duplication. |
 | `STREAM_VIDEO_BITRATE` | No | Override the preset video bitrate (used for `-b:v`/`-maxrate`/`-bufsize`, CBR), e.g. `2500k`. |
 | `STREAM_PACKET_PACE` | No | Spread each frame's RTP packets across this fraction of the frame interval instead of bursting them (default `0.0` = off; e.g. `0.75`). Can reduce freezes caused by dropped packet bursts on some networks. Clamped to 0.0–0.95. |
-| `STREAM_AV_SYNC_MS` | No | Lip-sync correction in ms (default `0`). Audio and video send on independent threads, so a constant offset can appear. **Positive** advances audio (fixes "audio behind"); **negative** delays audio (fixes "audio ahead"). Dial in by testing; clamped to ±5000. |
+| `STREAM_AV_SYNC_MS` | No | Lip-sync offset in ms (default `0`). Audio now follows the video clock automatically: after a pause, seek, aspect change or encoder restart, leftover audio is discarded, and if video stalls or runs ahead the audio is held (20 ms of silence) or skipped (one 20 ms frame) to stay within ±40 ms. This setting is the constant offset that tracking aims for, for any delay Discord's players add. **Positive** plays audio earlier (fixes "audio behind"); **negative** plays it later (fixes "audio ahead"). Clamped to ±5000. |
 
 TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, the `!channels`, `!search`, and TVheadend-backed `!play` commands are not loaded.
 
