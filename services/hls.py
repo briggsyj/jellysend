@@ -12,6 +12,8 @@ import logging
 import re
 import urllib.request
 
+from redact import redact_url
+
 log = logging.getLogger(__name__)
 
 
@@ -62,7 +64,7 @@ async def extract_hls_variant_url(master_url: str) -> str:
                             best = abs_url
 
         if best and best != master_url:
-            log.info("HLS master → variant: %s", best)
+            log.info("HLS master → variant: %s", redact_url(best))
             return best
         return master_url
 

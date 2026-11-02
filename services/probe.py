@@ -12,6 +12,8 @@ import json
 import logging
 import subprocess
 
+from redact import redact_text, redact_url
+
 log = logging.getLogger(__name__)
 
 
@@ -43,17 +45,21 @@ async def probe_stream(url: str) -> dict | None:
                 timeout=30,
             )
             if r.returncode != 0:
-                log.warning("ffprobe failed (exit %d) for %s", r.returncode, url)
+                log.warning(
+                    "ffprobe failed (exit %d) for %s", r.returncode, redact_url(url)
+                )
                 if r.stderr:
                     for line in r.stderr.splitlines():
-                        log.warning("ffprobe stderr: %s", line)
+                        log.warning("ffprobe stderr: %s", redact_text(line))
                 return None
             return r.stdout
         except subprocess.TimeoutExpired:
-            log.warning("ffprobe timed out for %s", url)
+            log.warning("ffprobe timed out for %s", redact_url(url))
             return None
         except Exception as exc:
-            log.warning("ffprobe error for %s: %s", url, exc)
+            log.warning(
+                "ffprobe error for %s: %s", redact_url(url), redact_text(str(exc))
+            )
             return None
 
     raw = await asyncio.to_thread(_run)
