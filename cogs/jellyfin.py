@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PLAYLIST_MAX = 10
+
+# (label, forced display aspect ratio). None = keep the media's own ratio.
+ASPECT_OPTIONS: list[tuple[str, float | None]] = [
+    ("Original (default) — keep the media's own shape", None),
+    ("16:9 — widescreen", 16 / 9),
+    ("4:3 — classic TV", 4 / 3),
+    ("2.39:1 — cinema scope (21:9)", 2.39),
+    ("1.85:1 — theatrical widescreen", 1.85),
+]
 _SUPPORTED_CODECS = ("h264", "hevc", "mpeg2video", "mpeg4", "mjpeg")
 # How far (seconds) a SyncPlay position may drift from ours before we seek.
 _SYNC_DRIFT_TOLERANCE = 3.0
@@ -119,6 +128,7 @@ HELP_TEXT = """\
 `!media pause` · `!media play`
 `!media resume 1:23:45` — jump to a time (`1:23` = 1h 23m; also `45m`, `90s`)
 `!media skip` · `!media stop` (stops and leaves voice)
+`!media aspect-ratio` — change the picture shape
 
 **Playlist** (max 10, plays in order)
 `!media queue <movie>` or `!media queue <show> s01e02`
@@ -161,6 +171,8 @@ class Jellyfin(commands.Cog):
         self.bot = cast("SlopSoil", bot)
         self.client = client
         self._states: dict[int, _GuildState] = {}
+        # guild id → forced aspect ratio; survives leaving voice (a preference)
+        self._aspect: dict[int, float] = {}
         self._tasks: set[asyncio.Task] = set()  # keep background tasks alive
 
     def _spawn(self, coro) -> None:
@@ -485,6 +497,7 @@ class Jellyfin(commands.Cog):
             probe_size=10_000_000,
             start_offset=start,
             on_end=functools.partial(self._on_stream_end, guild.id, generation),
+            aspect=self._aspect.get(guild.id),
         )
 
         if previous is not None and previous.stream is not stream:
@@ -961,6 +974,50 @@ class Jellyfin(commands.Cog):
             return
         item = state.queue.pop(found)
         await ctx.send(f"removed **{_fmt_item(item)}** from the playlist")
+
+    @require_role(Role.FRIEND)
+    @media.command(name="aspect-ratio", aliases=["aspect", "ar"])
+    async def media_aspect(self, ctx: commands.Context, *, choice: str = "") -> None:
+        """Pick a picture shape from a numbered list (or `!media aspect-ratio 2`)."""
+        guild = await self._context_guild(ctx)
+        if guild is None:
+            await ctx.send("you're not in a voice channel")
+            return
+        current = self._aspect.get(guild.id)
+
+        if choice.strip():
+            if not choice.strip().isdecimal() or not (
+                1 <= int(choice) <= len(ASPECT_OPTIONS)
+            ):
+                await ctx.send(
+                    f"pick a number between 1 and {len(ASPECT_OPTIONS)} — "
+                    "see `!media aspect-ratio`"
+                )
+                return
+            index = int(choice) - 1
+        else:
+            lines = ["**Aspect ratio** — reply with a number:"]
+            for i, (label, ratio) in enumerate(ASPECT_OPTIONS, 1):
+                mark = "  ← current" if ratio == current else ""
+                lines.append(f"`{i}` {label}{mark}")
+            await ctx.send("\n".join(lines))
+            picked = await self._wait_for_number(ctx, len(ASPECT_OPTIONS))
+            if picked is None:
+                return
+            index = picked - 1
+
+        label, ratio = ASPECT_OPTIONS[index]
+        if ratio is None:
+            self._aspect.pop(guild.id, None)
+        else:
+            self._aspect[guild.id] = ratio
+        name = label.split(" — ")[0]
+        player = self._player(guild.id)
+        if player is not None and getattr(player, "aspect", None) != ratio:
+            player.set_aspect(ratio)
+            await ctx.send(f"📐 aspect ratio set to **{name}** — applying now")
+        else:
+            await ctx.send(f"📐 aspect ratio set to **{name}**")
 
     @require_role(Role.FRIEND)
     @media.command(name="playlist")

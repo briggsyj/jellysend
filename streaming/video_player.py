@@ -423,6 +423,21 @@ def _stream_resolution() -> str:
     return _stream_preset()[0]
 
 
+_DAR_RE = re.compile(r"\bdar\b")
+
+
+def _with_aspect(vf: str, aspect: float | None) -> str:
+    """Force a display aspect ratio in a _fit_scale() filter chain.
+
+    ``None`` keeps the source's own ratio. Otherwise the scaler sizes the
+    frame as if the source were ``aspect`` wide — i.e. the picture is
+    stretched to that shape (like a TV's aspect button).
+    """
+    if aspect is None:
+        return vf
+    return _DAR_RE.sub(f"{aspect:.10f}", vf)
+
+
 def _fit_scale(res: str, scaler: str = "scale") -> str:
     """Scaler filter that fits the source *inside* ``res`` ('W:H').
 
@@ -434,8 +449,8 @@ def _fit_scale(res: str, scaler: str = "scale") -> str:
     w, h = res.split(":")
     box = f"{w}/{h}"
     return (
-        f"{scaler}=w='if(gt(dar,{box}),{w},2*trunc({h}*dar/2))'"
-        f":h='if(gt(dar,{box}),2*trunc({w}/dar/2),{h})',setsar=1"
+        f"{scaler}=w='if(gt(dar,{box}),{w},2*round({h}*dar/2))'"
+        f":h='if(gt(dar,{box}),2*round({w}/dar/2),{h})',setsar=1"
     )
 
 
@@ -816,6 +831,7 @@ class H264VideoPlayer(threading.Thread):
         audio: bool = True,
         probe_size: int = 2_000_000,
         start_offset: float = 0.0,
+        aspect: float | None = None,
     ) -> None:
         super().__init__(name="H264VideoPlayer", daemon=True)
         self._url = url
@@ -831,6 +847,7 @@ class H264VideoPlayer(threading.Thread):
         self.pause_gate: threading.Event = threading.Event()
         self.pause_gate.set()
         self._offset: float = max(0.0, start_offset)
+        self._aspect: float | None = aspect  # None = keep source aspect ratio
         self._seek_to: float | None = None
         self._finished = False  # set under _ctl_lock once run() won't restart
         self._ctl_lock = threading.Lock()
@@ -893,6 +910,16 @@ class H264VideoPlayer(threading.Thread):
 
     def resume(self) -> None:
         self.pause_gate.set()
+
+    @property
+    def aspect(self) -> float | None:
+        return self._aspect
+
+    def set_aspect(self, aspect: float | None) -> None:
+        """Change the forced aspect ratio; restarts FFmpeg in place (like a
+        seek to the current position) so viewers stay in the screenshare."""
+        self._aspect = aspect
+        self.seek(self.position)
 
     def seek(self, seconds: float) -> None:
         """Restart decoding from ``seconds`` without tearing down the stream."""
@@ -1023,7 +1050,7 @@ class H264VideoPlayer(threading.Thread):
         )
         video_out_args = [
             "-map", "0:v:0",
-            "-vf", enc.vf,
+            "-vf", _with_aspect(enc.vf, self._aspect),
             "-c:v", enc.name,
             *enc.post_codec,
             "-r", str(int(self._fps)),

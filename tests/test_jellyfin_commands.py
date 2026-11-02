@@ -70,6 +70,13 @@ class FakePlayer:
         self.seeks.append(seconds)
         self.position = seconds
 
+    aspect = None
+    aspect_sets: list = []
+
+    def set_aspect(self, ratio) -> None:
+        self.aspect = ratio
+        self.aspect_sets = [*self.aspect_sets, ratio]
+
 
 def _stream_for(item_id: str) -> PlaybackStream:
     return PlaybackStream(f"http://jf/{item_id}.m3u8", f"ps-{item_id}", True, "h264")
@@ -1600,3 +1607,77 @@ async def test_voice_leave_during_start_keeps_state(env):
     assert env.cog._states[GID] is state
     await env.cog.on_voice_state_update(member, _vs(env.channel), _vs(None))
     assert GID not in env.cog._states
+
+
+
+# ── !media aspect-ratio ──────────────────────────────────────────────────────
+
+
+async def test_aspect_lists_options_and_applies_choice_live(env):
+    _, player = _playing(env)
+    env.bot.wait_for = AsyncMock(return_value=_reply("3"))
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx)
+    listing = _sent(ctx)[0]
+    assert "reply with a number" in listing
+    assert "`1` Original (default)" in listing and "← current" in listing
+    assert "`5` 1.85:1" in listing
+    assert player.aspect_sets == [4 / 3]
+    assert env.cog._aspect[GID] == 4 / 3
+    assert _sent(ctx)[-1] == "📐 aspect ratio set to **4:3** — applying now"
+
+
+async def test_aspect_direct_number_and_original_resets(env):
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="2")
+    assert env.cog._aspect[GID] == 16 / 9
+    assert _sent(ctx)[-1] == "📐 aspect ratio set to **16:9**"  # nothing playing
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="1")
+    assert GID not in env.cog._aspect
+    assert _sent(ctx)[-1] == "📐 aspect ratio set to **Original (default)**"
+
+
+async def test_aspect_marks_current_choice(env):
+    env.cog._aspect[GID] = 2.39
+    env.bot.wait_for = AsyncMock(side_effect=TimeoutError)
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx)
+    listing = _sent(ctx)[0]
+    assert "`4` 2.39:1 — cinema scope (21:9)  ← current" in listing
+    assert "`1` Original (default) — keep the media's own shape\n" in listing + "\n"
+    assert _sent(ctx)[-1] == "timed out — cancelled"
+    assert env.cog._aspect[GID] == 2.39
+
+
+@pytest.mark.parametrize("bad", ["0", "6", "wide", "-1"])
+async def test_aspect_rejects_bad_choice(env, bad):
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice=bad)
+    assert "pick a number between 1 and 5" in _sent(ctx)[0]
+    assert GID not in env.cog._aspect
+
+
+async def test_aspect_same_as_player_does_not_restart(env):
+    _, player = _playing(env)
+    player.aspect = 16 / 9
+    ctx = _make_ctx(env.guild)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="2")
+    assert player.aspect_sets == []
+    assert _sent(ctx)[-1] == "📐 aspect ratio set to **16:9**"
+
+
+async def test_aspect_no_guild(env):
+    env.resolve.return_value = (None, None, None)
+    env.bot.guilds = []
+    ctx = _make_ctx(None)
+    await Jellyfin.media_aspect.callback(env.cog, ctx, choice="2")
+    assert _sent(ctx) == ["you're not in a voice channel"]
+
+
+async def test_aspect_is_passed_to_new_streams_and_survives_teardown(env):
+    env.cog._aspect[GID] = 1.85
+    ctx = _make_ctx(env.guild)
+    await env.cog._play_item(ctx, MOVIE)
+    assert env.start.call_args.kwargs["aspect"] == 1.85
+    await env.cog._teardown(GID)
+    assert env.cog._aspect[GID] == 1.85

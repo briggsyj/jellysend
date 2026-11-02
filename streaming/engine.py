@@ -219,6 +219,7 @@ async def start_live_stream(
     probe_size: int = 2_000_000,
     start_offset: float = 0.0,
     on_end: Callable[[], Awaitable[None]] | None = None,
+    aspect: float | None = None,
 ) -> None:
     """
     Connect to voice and begin a go-live screenshare stream.
@@ -234,6 +235,7 @@ async def start_live_stream(
     subtitle — optional secondary label (channel number, etc.)
     live     — True for live/MPEG-2 sources, False for VOD/H.264 copy sources
     start_offset — seconds into the source to start from (FFmpeg -ss)
+    aspect   — force this display aspect ratio (stretch); None keeps the source's
     on_end   — awaited (as a new task) when the stream finishes on its own,
                i.e. not stopped or replaced; used for playlist auto-advance
     """
@@ -284,6 +286,7 @@ async def start_live_stream(
     video_player = H264VideoPlayer(
         url=url, voice_client=proxy_vc, fps=_stream_fps(),  # type: ignore[arg-type]
         live=live, audio=audio, probe_size=probe_size, start_offset=start_offset,
+        **({"aspect": aspect} if aspect is not None else {}),
     )
     bot.video_players[guild.id] = video_player
     video_player.start()

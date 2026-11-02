@@ -889,6 +889,7 @@ async def test_play_item_success_uses_resolved_variant(play_env, caplog):
         probe_size=10_000_000,
         start_offset=0.0,
         on_end=ANY,
+        aspect=None,
     )
     on_end = play_env["start"].call_args.kwargs["on_end"]
     assert on_end.func == cog._on_stream_end
