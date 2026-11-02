@@ -34,6 +34,9 @@ _SUPPORTED_CODECS = ("h264", "hevc", "mpeg2video", "mpeg4", "mjpeg")
 _SYNC_DRIFT_TOLERANCE = 3.0
 # Ignore SyncPlay PlayQueue echoes for items we queued ourselves this recently.
 _SYNC_ECHO_WINDOW = 10.0
+# After we send pause/unpause/seek, don't drift-correct on the echoed command:
+# the server's position estimate lags ours by our stream start-up time.
+_SYNC_OWN_COMMAND_WINDOW = 5.0
 
 _EPISODE_RE = re.compile(r"\bs(\d+)e(\d+)\b", re.IGNORECASE)
 _UNIT_TS_RE = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?")
@@ -148,6 +151,8 @@ class _GuildState:
     generation: int = 0
     # item id → monotonic time we last set it as the SyncPlay queue
     sync_sent: dict[str, float] = field(default_factory=dict)
+    # monotonic time of our last pause/unpause/seek sent to the group
+    sync_own_command_at: float = float("-inf")
 
 
 class Jellyfin(commands.Cog):
@@ -554,6 +559,7 @@ class Jellyfin(commands.Cog):
         group = state.syncplay if state else None
         if group is None or group.closed:
             return
+        state.sync_own_command_at = time.monotonic()
         try:
             await getattr(group, action)(*args)
         except Exception as exc:
@@ -572,6 +578,8 @@ class Jellyfin(commands.Cog):
         if player is None or state is None:
             return
         drift = abs(position - player.position) if position is not None else 0.0
+        if time.monotonic() - state.sync_own_command_at < _SYNC_OWN_COMMAND_WINDOW:
+            drift = 0.0  # echo of our own request: trust our position
         log.info(
             "SyncPlay %s at %s (local %.1fs)", command,
             "?" if position is None else f"{position:.1f}s", player.position,

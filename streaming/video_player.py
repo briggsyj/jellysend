@@ -856,6 +856,9 @@ class H264VideoPlayer(threading.Thread):
     @property
     def position(self) -> float:
         """Current playback position in seconds of the source media."""
+        seek_to = self._seek_to
+        if seek_to is not None:
+            return seek_to  # seek pending: report its target, not the old spot
         return self._offset + self._frames_emitted / self._fps
 
     def pause(self) -> None:

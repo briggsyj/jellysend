@@ -673,3 +673,60 @@ async def test_disconnect_is_idempotent_single_stream_delete():
     await conn.disconnect()
     conn._bot.ws.send_as_json.assert_awaited_once()
     assert conn._stream_key is None
+
+
+# ── GoLiveAudioSender pause gate ─────────────────────────────────────────────
+
+
+class _Gate(threading.Event):
+    """Non-blocking pause gate: re-opens after ``opens_after`` waits."""
+
+    def __init__(self, opens_after: int, on_wait=None) -> None:
+        super().__init__()
+        self.waits: list[float | None] = []
+        self.opens_after = opens_after
+        self.on_wait = on_wait
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        if self.on_wait:
+            self.on_wait()
+        if len(self.waits) >= self.opens_after:
+            self.set()
+        return self.is_set()
+
+
+def test_audio_sender_holds_while_paused_then_resumes(fake_opus):
+    conn = _AudioConn()
+    gate = _Gate(opens_after=3)
+    s = _sender(_pcm(2), conn, pause_gate=gate)
+    s._send_audio()
+    assert gate.waits == [0.1, 0.1, 0.1]
+    assert [_decrypt_lite(p)[1] for p in conn.sent] == [b"OPUS\x00", b"OPUS\x01"]
+
+
+def test_audio_sender_pause_mid_stream(fake_opus):
+    conn = _AudioConn()
+    gate = _Gate(opens_after=2)
+    gate.set()
+    s = _sender(_pcm(3), conn, pause_gate=gate)
+    orig = conn.send_packet
+
+    def send_then_pause(pkt):
+        orig(pkt)
+        if len(conn.sent) == 1:
+            gate.clear()
+
+    conn.send_packet = send_then_pause
+    s._send_audio()
+    assert len(gate.waits) == 2
+    assert len(conn.sent) == 3
+
+
+def test_audio_sender_stop_while_paused(fake_opus):
+    conn = _AudioConn()
+    s = _sender(_pcm(3), conn)
+    s._pause_gate = _Gate(opens_after=99, on_wait=s.stop)
+    s._send_audio()
+    assert conn.sent == []
+    assert len(s._pause_gate.waits) == 1
