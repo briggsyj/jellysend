@@ -5,7 +5,7 @@ namespace Slopsoil.Discord.Native;
 /// <summary>libopus encoder for Discord voice: 48 kHz stereo, 20 ms (960-sample) frames.</summary>
 internal sealed partial class OpusEncoder : IDisposable
 {
-    private const string Lib = "libopus.so.0";
+    private const string Lib = "opus";
     private const int OpusApplicationAudio = 2049;
 
     public const int SampleRate = 48_000;

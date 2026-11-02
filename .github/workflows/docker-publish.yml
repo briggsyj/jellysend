@@ -47,6 +47,37 @@ jobs:
           # Read-only: PR checks must not race the publish job for cache slots.
           cache-from: type=gha
 
+  # PR check for the .NET edition image (specs/001-dotnet-rewrite T006): builds
+  # libdave + the self-contained host. Build-only; publishing is task T039.
+  build-check-dotnet:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Skip unless the .NET edition exists on this branch
+        id: has
+        run: |
+          if [ -f dotnet/Dockerfile ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Set up Docker Buildx
+        if: steps.has.outputs.yes == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build .NET image (no push)
+        if: steps.has.outputs.yes == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: dotnet/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: false
+          cache-from: type=gha,scope=dotnet
+          cache-to: type=gha,scope=dotnet,mode=max,ignore-error=true
+
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
   # A closed-but-unmerged PR must never publish, so gate on merged == true.

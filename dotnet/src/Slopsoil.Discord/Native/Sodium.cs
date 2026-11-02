@@ -5,7 +5,7 @@ namespace Slopsoil.Discord.Native;
 /// <summary>Minimal libsodium bindings: the two AEAD/secretbox primitives Discord voice needs.</summary>
 internal static partial class Sodium
 {
-    private const string Lib = "libsodium.so.23";
+    private const string Lib = "sodium";
 
     public const int XChaChaKeyBytes = 32;
     public const int XChaChaNonceBytes = 24;
