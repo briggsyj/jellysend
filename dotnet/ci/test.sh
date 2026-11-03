@@ -20,13 +20,13 @@ dotnet test --solution Slopsoil.slnx --results-directory "${PWD}/${results}" -- 
     --coverlet-exclude '[Slopsoil.Host]*' \
     --coverlet-exclude-by-attribute ExcludeFromCodeCoverage
 
-report="$(find "${results}" -name "coverage*.xml" | head -n1)"
+report="$(find "${results}" -name "coverage*.xml" -print -quit)"
 if [[ -z "${report}" ]]; then
     echo "no coverage report produced" >&2
     exit 1
 fi
 
-rate="$(grep -o 'line-rate="[0-9.]*"' "${report}" | head -n1 | grep -o '[0-9.]*')"
+rate="$(grep -m1 -o 'line-rate="[0-9.]*"' "${report}" | grep -o '[0-9.]*')"
 pct="$(awk -v r="${rate}" 'BEGIN { printf "%.2f", r * 100 }')"
 echo "line coverage: ${pct}% (minimum ${min}%)"
 awk -v p="${pct}" -v m="${min}" 'BEGIN { exit (p + 0 >= m + 0) ? 0 : 1 }' || {

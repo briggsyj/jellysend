@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Slopsoil.Services\Slopsoil.Services.csproj" />
@@ -7,7 +7,8 @@
     <ProjectReference Include="..\Slopsoil.Common\Slopsoil.Common.csproj" />
   </ItemGroup>
 
-  <PropertyGroup>
-  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Slopsoil.Tests" />
+  </ItemGroup>
 
 </Project>
