@@ -52,15 +52,21 @@ Project references enforce the constitution's layer rules: `Services` depends on
 The test-pattern spike checks the whole send path against real Discord: gateway, voice, go-live,
 RTP, transport crypto and DAVE. It streams FFmpeg `testsrc2` (1280×720, 30 fps) with a 440 Hz tone.
 
-No .NET image is published yet (`latest` stays Python until the parity checklist passes), so build it from the repo root:
+CI publishes the .NET image next to the Python one on every push to `001-dotnet-rewrite` (and on merges into
+`develop`): `ghcr.io/briggsyj/slopsoil:dotnet` (moving) and `:dotnet-sha-<short sha>` (pinned). `latest` stays
+Python until the parity checklist passes. With the repo's `docker-compose.yml`, add to `.env`:
 
-```bash
-docker build -f dotnet/Dockerfile -t slopsoil-dotnet .
+```
+SLOPSOIL_IMAGE=ghcr.io/briggsyj/slopsoil:dotnet
+SLOPSOIL_SPIKE=testpattern
 ```
 
 ```bash
-docker run --rm -e SLOPSOIL_SPIKE=testpattern -e DISCORD_TOKEN=... -e ALLOWED_USER_IDS=<your id> slopsoil-dotnet
+docker compose pull && docker compose up -d
 ```
+
+Remove `SLOPSOIL_IMAGE` to go back to Python. Remove `SLOPSOIL_SPIKE` to run the .NET bot proper
+(currently `!ping` / `!help` only). To build locally instead: `docker build -f dotnet/Dockerfile -t slopsoil-dotnet .`
 
 1. Join a voice channel (ideally one with DAVE E2EE enabled).
 2. Type `!join` in a text channel of that server. The bot joins and goes live.

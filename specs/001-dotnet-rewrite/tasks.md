@@ -137,7 +137,7 @@ targets hold; `off` removes it without a screenshare drop.
 
 **Independent Test**: quickstart.md scenario 6.
 
-- [ ] T039 [US5] Extend `.github/workflows/docker-publish.yml` with a .NET image job building `dotnet/Dockerfile`: PR build-check (no push, cache read-only) and on merge to develop push `ghcr.io/<owner>/slopsoil:dotnet` and `:dotnet-sha-<short sha>` (`latest` untouched)
+- [X] T039 [US5] Extend `.github/workflows/docker-publish.yml` with a .NET image job building `dotnet/Dockerfile`: PR build-check (no push, cache read-only) and on merge to develop push `ghcr.io/<owner>/slopsoil:dotnet` and `:dotnet-sha-<short sha>` (`latest` untouched)
 - [ ] T040 [US5] Parity checklist `specs/001-dotnet-rewrite/checklists/parity.md` generated from contracts/commands.md rows (input → expected reply) for manual sign-off before cut-over
 - [ ] T041 [US5] README section "Running the .NET edition" (tag, env compatibility, what's not included) in `README.md`
 
