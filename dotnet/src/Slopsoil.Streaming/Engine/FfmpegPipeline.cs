@@ -50,6 +50,7 @@ internal sealed class FfmpegPipeline : IPipeline
     private readonly ILogger _log;
     private readonly CancellationTokenSource _stop = new();
     private readonly TaskCompletionSource<PipelineEnd> _end = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _audioLock = new();
     private AudioSender? _audio;
     private StreamPcmSource? _pcm;
     private int _started;
@@ -118,14 +119,22 @@ internal sealed class FfmpegPipeline : IPipeline
     {
         await _stop.CancelAsync().ConfigureAwait(false);
         _player.Stop();
-        _audio?.Stop();
-        if (_audio is { } audio)
+        AudioSender? running;
+        lock (_audioLock)
+        {
+            running = _audio; // RunAsync will not create one after _stop is cancelled
+        }
+
+        running?.Stop();
+        if (running is { } audio)
         {
             await audio.Completion.WaitAsync(TimeSpan.FromSeconds(2)).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
         }
 
-        await _player.Completion.WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+        // Close our read end before waiting for FFmpeg (Python: join audio, then fifo_file.close()): with nobody
+        // draining, FFmpeg blocks writing the full FIFO and ignores SIGTERM until killed 3 s later.
         _pcm?.Dispose();
+        await _player.Completion.WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
         RemoveHold();
         _end.TrySetResult(new PipelineEnd(PipelineEndReason.Stopped));
     }
@@ -149,8 +158,18 @@ internal sealed class FfmpegPipeline : IPipeline
                 return;
             }
 
-            _audio = new AudioSender(_pcm, _player, _diagnostics, _sender, _options.AvSyncMs, _loggers.CreateLogger<AudioSender>());
-            _audio.Start();
+            lock (_audioLock)
+            {
+                if (_stop.IsCancellationRequested)
+                {
+                    // Stopped while the FIFO was opening: StopAsync handles the rest.
+                    _pcm.Dispose();
+                    return;
+                }
+
+                _audio = new AudioSender(_pcm, _player, _diagnostics, _sender, _options.AvSyncMs, _loggers.CreateLogger<AudioSender>());
+                _audio.Start();
+            }
             var end = await _player.Completion.ConfigureAwait(false);
             _audio.Stop();
             await _audio.Completion.WaitAsync(TimeSpan.FromSeconds(2)).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
@@ -177,7 +196,8 @@ internal sealed class FfmpegPipeline : IPipeline
     private async Task<StreamPcmSource?> OpenFifoAsync(string path)
     {
         var open = Task.Run(() => StreamPcmSource.OpenFifo(path));
-        var winner = await Task.WhenAny(open, Task.Delay(_fifoTimeout, _stop.Token)).ConfigureAwait(false);
+        // Give up early when the player already finished (FFmpeg failed before opening its outputs).
+        var winner = await Task.WhenAny(open, Task.Delay(_fifoTimeout, _stop.Token), _player.Completion).ConfigureAwait(false);
         if (winner == open)
         {
             return await open.ConfigureAwait(false);

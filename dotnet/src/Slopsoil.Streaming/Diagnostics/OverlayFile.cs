@@ -6,11 +6,31 @@ namespace Slopsoil.Streaming.Diagnostics;
 /// </summary>
 public static class OverlayFile
 {
+    /// <summary>Atomic replace. A unique temp name per write: the 1 s timer and a restart may write concurrently.</summary>
     public static void Write(string path, string text)
     {
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, text);
-        File.Move(tmp, path, overwrite: true);
+        var tmp = $"{path}.{Environment.CurrentManagedThreadId}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(tmp, text);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch
+        {
+            TryDelete(tmp);
+            throw;
+        }
+    }
+
+    private static void TryDelete(string file)
+    {
+        try
+        {
+            File.Delete(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     public static void Delete(string path)
@@ -18,7 +38,6 @@ public static class OverlayFile
         try
         {
             File.Delete(path);
-            File.Delete(path + ".tmp");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

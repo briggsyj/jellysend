@@ -115,7 +115,7 @@ public sealed class DiagnosticsLoggerTests
             OverlayFile.Write(path, "one");
             OverlayFile.Write(path, "two");
             Assert.Equal("two", File.ReadAllText(path));
-            Assert.False(File.Exists(path + ".tmp"));
+            Assert.Empty(Directory.GetFiles(dir.FullName, "*.tmp"));
             OverlayFile.Delete(path);
             OverlayFile.Delete(path);
             Assert.False(File.Exists(path));

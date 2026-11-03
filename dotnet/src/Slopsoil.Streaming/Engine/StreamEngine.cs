@@ -8,7 +8,8 @@ namespace Slopsoil.Streaming.Engine;
 /// <summary>
 /// One go-live stream per guild (<c>streaming/engine.py</c> <c>start_live_stream</c> / <c>cancel_live_stream</c>):
 /// replaces the old stream only after its cleanup (STREAM_DELETE) finished, connects go-live, runs the pipeline
-/// and tears down only what it still owns. <c>onEnd</c> runs only when the stream ended on its own.
+/// and tears down only what it still owns. <c>onEnd</c> runs when the stream ended without a stop — naturally or
+/// because the pipeline failed (Python's <c>ended_naturally = not stop_requested</c>) — with the reason.
 /// </summary>
 public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pipelines, ILogger<StreamEngine>? logger = null)
 {
@@ -29,12 +30,15 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
     /// (after telling the user why via <paramref name="send"/>) if go-live could not start.
     /// </summary>
     public async Task<bool> StartAsync(
-        ulong guildId, StreamRequest request, Func<string, Task> send, Func<Task>? onEnd = null, CancellationToken ct = default)
+        ulong guildId, StreamRequest request, Func<string, Task> send, Func<PipelineEndReason, Task>? onEnd = null, CancellationToken ct = default)
     {
+        // Replies never throw out of the engine: a failed send must not leave a session registered.
+        Task Say(string text) => SafeAsync(() => send(text), "reply");
+
         if (!pipelines.EncoderAvailable)
         {
             _log.LogWarning("no H.264 encoder available — go-live requires video encoding");
-            await send("go-live requires a working H.264 encoder; none found").ConfigureAwait(false);
+            await Say("go-live requires a working H.264 encoder; none found").ConfigureAwait(false);
             return false;
         }
 
@@ -47,7 +51,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
 
         _sessions[guildId] = session;
         _log.LogInformation("starting go-live stream: {Title} → {Url}", request.Title, Redactor.RedactUrl(request.Url));
-        await send($"📺 **{request.Title}** (go-live)").ConfigureAwait(false);
+        await Say($"📺 **{request.Title}** (go-live)").ConfigureAwait(false);
 
         IGoLiveLink link;
         try
@@ -64,7 +68,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         {
             _log.LogError(ex, "failed to establish go-live connection");
             Release(guildId, session);
-            await send($"go-live connection failed: {ex.Message}").ConfigureAwait(false);
+            await Say($"go-live connection failed: {ex.Message}").ConfigureAwait(false);
             return false;
         }
 
@@ -88,7 +92,14 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         {
             _log.LogError(ex, "go-live pipeline failed to start for {Title}", request.Title);
             await CleanupAsync(guildId, session).ConfigureAwait(false);
-            await send($"go-live error: {ex.Message}").ConfigureAwait(false);
+            await Say($"go-live error: {ex.Message}").ConfigureAwait(false);
+            return false;
+        }
+
+        if (session.Stopping)
+        {
+            // A stop raced the pipeline creation (it saw Pipeline == null and left the cleanup to us).
+            await CleanupAsync(guildId, session).ConfigureAwait(false);
             return false;
         }
 
@@ -107,22 +118,25 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         }
     }
 
-    private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<Task>? onEnd)
+    private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<PipelineEndReason, Task>? onEnd)
     {
         var end = await session.Pipeline!.Completion.ConfigureAwait(false);
         _log.LogInformation("go-live stream {Title} ended: {Reason}", title, end.Reason);
-        var natural = end.Reason == PipelineEndReason.Natural && !session.Stopping;
+        var unstopped = end.Reason != PipelineEndReason.Stopped && !session.Stopping;
         await CleanupAsync(guildId, session).ConfigureAwait(false);
-        if (end.Reason == PipelineEndReason.Failed && end.Error is not null && !session.Stopping)
+        if (end.Reason == PipelineEndReason.Failed && end.Error is not null && unstopped)
         {
             await SafeAsync(() => send(end.Error), "error reply").ConfigureAwait(false);
         }
 
-        if (natural && onEnd is not null)
+        if (unstopped && onEnd is not null)
         {
-            await SafeAsync(onEnd, $"end-of-stream callback for '{title}'").ConfigureAwait(false);
+            await SafeAsync(() => onEnd(end.Reason), $"end-of-stream callback for '{title}'").ConfigureAwait(false);
         }
     }
+
+    /// <summary>Guilds with a stream starting or running (for shutdown).</summary>
+    public IReadOnlyCollection<ulong> ActiveGuilds => [.. _sessions.Keys];
 
     private async Task StopSessionAsync(ulong guildId, Session session, string reason)
     {

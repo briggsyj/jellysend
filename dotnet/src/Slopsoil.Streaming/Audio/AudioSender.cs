@@ -324,6 +324,14 @@ public sealed class AudioSender
             return true;
         }
 
+        if (ReferenceEquals(_time, TimeProvider.System))
+        {
+            // A wait handle, not a thread-pool timer callback: a busy pool or GC pause must not stall the 20 ms
+            // pacing and then burst (VideoPlayer.Sleep does the same; Python used Event.wait).
+            _stop.Token.WaitHandle.WaitOne(timeout);
+            return Stopping;
+        }
+
         var elapsed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using (_time.CreateTimer(static s => ((TaskCompletionSource)s!).TrySetResult(), elapsed, timeout, Timeout.InfiniteTimeSpan))
         {
@@ -343,6 +351,11 @@ public sealed class AudioSender
     /// <summary>Wait up to <see cref="PausePoll"/> for the gate to open (or a stop): true if it opened.</summary>
     private bool WaitPauseOpen(PauseGate gate)
     {
+        if (ReferenceEquals(_time, TimeProvider.System))
+        {
+            return gate.WaitOpen(PausePoll, _stop.Token) || gate.IsOpen;
+        }
+
         using var poll = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         using (_time.CreateTimer(static s => CancelQuietly((CancellationTokenSource)s!), poll, PausePoll, Timeout.InfiniteTimeSpan))
         {

@@ -113,6 +113,39 @@ public sealed class FfmpegPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task Stop_is_prompt_mid_stream_no_sigkill_wait()
+    {
+        Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");
+        var clip = MakeClip(20);
+        var pipeline = new FfmpegPipelineFactory(Options()) { TempDirectory = _dir }.Create(new StreamRequest { Title = "c", Url = clip, Live = false }, new CapturingLink());
+        pipeline.Start();
+        await pipeline.Playback.FirstFrameSent.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        await Task.Delay(500, TestContext.Current.CancellationToken);
+        var clock = Stopwatch.StartNew();
+        await pipeline.StopAsync();
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"stop took {clock.Elapsed}"); // was ~3 s (SIGKILL timeout)
+    }
+
+    [Fact]
+    public async Task Stop_does_not_hang_when_ffmpeg_produces_nothing()
+    {
+        Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");
+        // An input FIFO nobody writes to: FFmpeg blocks opening/reading it and never emits a byte (cold transcode).
+        var input = Path.Combine(_dir, "silent-input");
+        Assert.Equal(0, Mkfifo(input, 0x180));
+        var pipeline = new FfmpegPipelineFactory(Options()) { TempDirectory = _dir }.Create(new StreamRequest { Title = "s", Url = input, Live = true }, new CapturingLink());
+        pipeline.Start();
+        await Task.Delay(1000, TestContext.Current.CancellationToken);
+        var clock = Stopwatch.StartNew();
+        await pipeline.StopAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(8), $"stop took {clock.Elapsed}");
+        Assert.Equal(PipelineEndReason.Stopped, (await pipeline.Completion).Reason);
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int Mkfifo(string path, uint mode);
+
+    [Fact]
     public void No_encoder_means_no_pipeline()
     {
         var factory = new FfmpegPipelineFactory(Options(), detect: () => null);

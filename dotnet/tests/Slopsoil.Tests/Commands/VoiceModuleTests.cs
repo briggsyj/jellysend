@@ -106,16 +106,85 @@ public sealed class VoiceModuleTests
         _gateway.States[(5, 30)] = 50;
         await Send("!join");
 
-        await _module.OnVoiceStateUpdatedAsync(9, 20, null);         // other guild: no link
-        await _module.OnVoiceStateUpdatedAsync(5, 1, 99);            // the bot itself
-        await _module.OnVoiceStateUpdatedAsync(5, 20, 50);           // still in our channel (mute etc.)
+        await _module.OnVoiceStateChangedAsync(9, 20, 50, null);     // other guild: no link
+        await _module.OnVoiceStateChangedAsync(5, 1, 50, 99);        // the bot moved (handled as self)
         _gateway.States.Remove((5, 20));
-        await _module.OnVoiceStateUpdatedAsync(5, 20, null);         // 30 still there
+        await _module.OnVoiceStateChangedAsync(5, 20, 50, null);     // 30 still there
         Assert.Empty(_streams.Stops);
 
         _gateway.States[(5, 30)] = 51;
-        await _module.OnVoiceStateUpdatedAsync(5, 30, 51);           // moved away: only the bot remains
+        await _module.OnVoiceStateChangedAsync(5, 30, 50, 51);       // moved away: only the bot remains
         Assert.Equal([(5UL, "auto-leave")], _streams.Stops);
         Assert.Null(_voice.Get(5));
+    }
+
+    [Fact]
+    public async Task Events_outside_our_channel_never_auto_leave()
+    {
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States.Remove((5, 20));                             // cache incomplete: looks empty
+        await _module.OnVoiceStateChangedAsync(5, 40, 60, 61);       // someone moving between other channels
+        await _module.OnVoiceStateChangedAsync(5, 40, null, 60);     // someone joining another channel
+        Assert.Empty(_streams.Stops);
+    }
+
+    [Fact]
+    public async Task Kicked_or_dropped_bot_discards_the_session_after_a_grace_period()
+    {
+        var time = new Slopsoil.Tests.Discord.ManualTimeProvider();
+        var module = new VoiceModule(_voice, _streams, time: time);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _streams.Streaming.Add(5);
+        _gateway.Links[0].IsConnected = false;
+        _gateway.States.Remove((5, 1));                              // the bot is no longer in voice
+
+        var left = module.OnVoiceStateChangedAsync(5, 1, 50, null);
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.Empty(_streams.Stops);
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await left;
+        Assert.Equal([(5UL, "disconnected")], _streams.Stops);
+        Assert.Null(_voice.Find(5));
+    }
+
+    [Fact]
+    public async Task Self_leave_followed_by_a_rejoin_or_during_a_start_is_ignored()
+    {
+        var time = new Slopsoil.Tests.Discord.ManualTimeProvider();
+        var module = new VoiceModule(_voice, _streams, time: time);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");                                         // bot is in (5, 50) again
+        var moved = module.OnVoiceStateChangedAsync(5, 1, 49, null);
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await moved;
+
+        _gateway.States.Remove((5, 1));
+        _streams.Starting.Add(5);
+        var starting = module.OnVoiceStateChangedAsync(5, 1, 50, null);
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await starting;
+
+        _streams.Starting.Clear();
+        await _voice.LeaveAsync(5);                                  // our own !leave already cleaned up
+        var own = module.OnVoiceStateChangedAsync(5, 1, 50, null);
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await own;
+        Assert.Empty(_streams.Stops);
+    }
+
+    [Fact]
+    public async Task Leave_and_stop_work_with_a_stale_link()
+    {
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _streams.Streaming.Add(5);
+        _gateway.Links[0].IsConnected = false;                       // kicked: link is stale
+        await Send("!stop");
+        _streams.Streaming.Add(5);
+        await Send("!leave");
+        Assert.Equal(["joined!", "stopped", "left!"], _sender.Texts);
+        Assert.Equal([(5UL, "stop"), (5UL, "leave")], _streams.Stops);
     }
 }

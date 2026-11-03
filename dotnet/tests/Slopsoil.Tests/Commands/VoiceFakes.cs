@@ -56,6 +56,10 @@ internal sealed class FakeStreams : IStreamControl
 
     public bool IsStreaming(ulong guildId) => Streaming.Contains(guildId);
 
+    public HashSet<ulong> Starting { get; } = [];
+
+    public bool IsStarting(ulong guildId) => Starting.Contains(guildId);
+
     public Task StopAsync(ulong guildId, string reason)
     {
         Stops.Add((guildId, reason));

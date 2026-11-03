@@ -240,7 +240,10 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         _stopCts.Cancel();
         if (process is not null)
         {
-            Signal(process, closeStdout: true);
+            // SIGTERM only. Closing stdout here would block on .NET/Linux until the player thread's in-flight Read
+            // returns (a silent FFmpeg — cold transcode, stalled input — never returns), so no signal would be sent.
+            // The player thread closes stdout itself in KillProcess, where it cannot race its own Read.
+            Signal(process, closeStdout: false);
         }
     }
 

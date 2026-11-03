@@ -6,12 +6,11 @@ namespace Slopsoil.Streaming.Diagnostics;
 /// </summary>
 internal sealed class RepeatingTimer : IDisposable
 {
-    private readonly object _lock = new();
     private readonly TimeSpan _period;
     private readonly Action _tick;
     private readonly Action<Exception> _onError;
     private readonly ITimer _timer;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public RepeatingTimer(TimeProvider time, TimeSpan period, Action tick, Action<Exception> onError)
     {
@@ -21,34 +20,43 @@ internal sealed class RepeatingTimer : IDisposable
         _timer = time.CreateTimer(_ => Fire(), null, period, Timeout.InfiniteTimeSpan);
     }
 
+    /// <summary>
+    /// Stop the timer. Never waits for a tick in progress: callers dispose while holding their own locks, and a tick
+    /// may need those locks (overlay tick → player position), so waiting here could deadlock. A tick already running
+    /// finishes on its own and is not re-armed.
+    /// </summary>
     public void Dispose()
     {
-        lock (_lock)
-        {
-            _disposed = true;
-            _timer.Dispose();
-        }
+        _disposed = true;
+        _timer.Dispose();
     }
 
     private void Fire()
     {
-        lock (_lock)
+        if (_disposed)
         {
-            if (_disposed)
-            {
-                return;
-            }
+            return;
+        }
 
+        try
+        {
+            _tick();
+        }
+        catch (Exception ex)
+        {
+            _onError(ex);
+        }
+
+        // Re-armed only after the tick, so ticks never overlap.
+        if (!_disposed)
+        {
             try
             {
-                _tick();
+                _timer.Change(_period, Timeout.InfiniteTimeSpan);
             }
-            catch (Exception ex)
+            catch (ObjectDisposedException)
             {
-                _onError(ex);
             }
-
-            _timer.Change(_period, Timeout.InfiniteTimeSpan);
         }
     }
 }

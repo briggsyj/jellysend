@@ -23,6 +23,18 @@ public sealed class VoiceManager(IVoiceGateway gateway, ILogger<VoiceManager>? l
     /// <summary>For DM commands: any guild with a connected link.</summary>
     public IVoiceLink? Any() => _links.Values.FirstOrDefault(l => l.IsConnected);
 
+    /// <summary>The guild's link even if its connection dropped (kicked, network) — for stop/leave commands.</summary>
+    public IVoiceLink? Find(ulong guildId) => _links.TryGetValue(guildId, out var link) ? link : null;
+
+    /// <summary>For DM stop/leave: any guild with a link, connected or not.</summary>
+    public IVoiceLink? FindAny() => _links.Values.FirstOrDefault(l => l.IsConnected) ?? _links.Values.FirstOrDefault();
+
+    /// <summary>Guilds with a voice link (connected or stale).</summary>
+    public IReadOnlyCollection<ulong> Guilds => [.. _links.Keys];
+
+    /// <summary>True while a join/move for the guild is in progress (a move leaves before it rejoins).</summary>
+    public bool IsBusy(ulong guildId) => _locks.TryGetValue(guildId, out var gate) && gate.CurrentCount == 0;
+
     /// <summary>Return a link that is actually connected to <paramref name="channelId"/>.</summary>
     public async Task<IVoiceLink> EnsureAsync(ulong guildId, ulong channelId, CancellationToken ct)
     {

@@ -77,22 +77,30 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         media.Register(router);
         router.AddUnavailablePlaceholders();
 
+        // Commands start in arrival order (like discord.py's single event loop) but run concurrently once they
+        // await — a picker waiting 10 s must not block the next message.
+        var inbox = System.Threading.Channels.Channel.CreateUnbounded<ChatMessage>(new() { SingleReader = true });
+        var dispatcher = Task.Run(async () =>
+        {
+            await foreach (var message in inbox.Reader.ReadAllAsync(CancellationToken.None))
+            {
+                _ = router.DispatchAsync(message, stoppingToken);
+            }
+        }, CancellationToken.None);
+
         // Order matters: caches learn the author/guild before the router checks roles.
         gateway.Dispatch += directory.Apply;
         gateway.Dispatch += guildNames.Apply;
         gateway.Dispatch += OnDispatch;
+        gateway.VoiceStates.Changed += (guild, user, before, after) =>
+            _ = Task.Run(() => voiceModule.OnVoiceStateChangedAsync(guild, user, before, after), CancellationToken.None);
 
         void OnDispatch(string type, JsonElement data)
         {
             // Parse now: the JSON document is disposed once dispatch handlers return.
             if (type == "MESSAGE_CREATE" && ChatMessageParser.TryParse(data, out var message))
             {
-                _ = Task.Run(() => router.DispatchAsync(message, stoppingToken), CancellationToken.None);
-            }
-            else if (type == "VOICE_STATE_UPDATE" && Id(data, "guild_id") is { } guild && Id(data, "user_id") is { } user)
-            {
-                var channel = Id(data, "channel_id");
-                _ = Task.Run(() => voiceModule.OnVoiceStateUpdatedAsync(guild, user, channel), CancellationToken.None);
+                inbox.Writer.TryWrite(message);
             }
         }
 
@@ -119,6 +127,33 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             Environment.ExitCode = 1;
             lifetime.StopApplication();
         }
+        finally
+        {
+            inbox.Writer.TryComplete();
+            await ShutdownStreamsAsync(engine, media, voice);
+            await dispatcher.WaitAsync(TimeSpan.FromSeconds(1), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>
+    /// <c>bot.close()</c>: stop every stream (FFmpeg killed, STREAM_DELETE sent, SyncPlay left, transcodes released)
+    /// and leave voice, bounded so a stuck connection can't hang the shutdown.
+    /// </summary>
+    private async Task ShutdownStreamsAsync(StreamEngine engine, MediaModule media, VoiceManager voice)
+    {
+        var guilds = engine.ActiveGuilds.Concat(voice.Guilds).Distinct().ToList();
+        if (guilds.Count == 0)
+        {
+            return;
+        }
+
+        _log.LogInformation("shutting down: stopping streams in {Count} guild(s)", guilds.Count);
+        var stops = guilds.Select(async g =>
+        {
+            await media.StopAsync(g, "shutdown");
+            await voice.LeaveAsync(g);
+        });
+        await Task.WhenAll(stops).WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
     private static VoiceOptions VoiceOptionsFor(ILogger log)
@@ -146,10 +181,6 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             Log = m => log.LogInformation("{Message}", m),
         };
     }
-
-    private static ulong? Id(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-        && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
 
     private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
     {

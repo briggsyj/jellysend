@@ -135,9 +135,13 @@ public sealed class MediaPlayTests
     {
         _h.Library.SearchError = new JellyfinException("Jellyfin request failed", new HttpRequestException("connection refused"));
         await _h.Send("!media x");
-        _h.Library.SearchError = new JellyfinException("HTTP 500");
+        _h.Library.SearchError = new JellyfinException("Jellyfin /Items → HTTP 500");
         await _h.Send("!media x");
-        Assert.Equal(["could not reach Jellyfin: Jellyfin request failed", "Jellyfin search failed: HTTP 500"], _h.Texts);
+        _h.Library.SearchError = new JellyfinException("bad JSON");
+        await _h.Send("!media x");
+        Assert.Equal(
+            ["could not reach Jellyfin: Jellyfin request failed", "could not reach Jellyfin: Jellyfin /Items → HTTP 500", "Jellyfin search failed: bad JSON"],
+            _h.Texts); // Python: HTTPError is a URLError → "could not reach"
     }
 
     [Fact]

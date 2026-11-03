@@ -38,6 +38,9 @@ public interface IStreamControl
     /// <summary>True while a stream (go-live) is running or starting in the guild.</summary>
     bool IsStreaming(ulong guildId);
 
+    /// <summary>True while a media start is in progress (it may briefly leave and rejoin voice).</summary>
+    bool IsStarting(ulong guildId);
+
     /// <summary>
     /// Stop everything streaming in the guild — stream task, player, audio, go-live — and clear per-session
     /// media state that ends with the voice session (playlist, SyncPlay, debug overlay). Never throws.

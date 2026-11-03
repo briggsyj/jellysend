@@ -209,7 +209,7 @@ public sealed class VideoPlayerTests : IDisposable
     }
 
     [Fact]
-    public async Task Stop_mid_stream_sends_nothing_more_and_closes_stdout_before_sigterm()
+    public async Task Stop_mid_stream_sends_nothing_more_signals_first_then_the_player_closes_stdout()
     {
         var proc = Proc(Nals.AnnexB(Nals.Idr, Nals.Aud, Nals.P1, Nals.Aud, Nals.P2, Nals.Aud), running: true);
         var player = Player();
@@ -218,7 +218,10 @@ public sealed class VideoPlayerTests : IDisposable
 
         Assert.Equal(VideoPlayerEnd.Stopped, await Ended(player));
         AssertFrames([Nals.Idr]);
-        Assert.Equal(["close", "term"], proc.Events.Take(2));
+        // Stop() only signals (closing stdout there could block behind the player thread's Read); the player thread
+        // then closes stdout itself while killing the process.
+        Assert.Equal("term", proc.Events.First());
+        Assert.True(proc.StdoutClosed);
         Assert.True(proc.Disposed);
         var events = proc.Events.Count;
         player.Stop(); // idempotent
@@ -764,10 +767,12 @@ public sealed class VideoPlayerTests : IDisposable
         var player = Player(o => o with { DebugOverlay = true });
         player.Start();
         await Waits.UntilAsync(() => _sink.Count == 1, "frame");
-        Directory.CreateDirectory(player.OverlayPath + ".tmp"); // the atomic write now fails
+        File.Delete(player.OverlayPath);
+        Directory.CreateDirectory(player.OverlayPath); // the atomic replace now fails
         _time.Advance(VideoPlayer.OverlayRefresh);
         Assert.Contains("overlay write failed", _log.Text);
-        Directory.Delete(player.OverlayPath + ".tmp");
+        Directory.Delete(player.OverlayPath);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(player.OverlayPath)!, Path.GetFileName(player.OverlayPath) + "*.tmp"));
     }
 
     [Fact]

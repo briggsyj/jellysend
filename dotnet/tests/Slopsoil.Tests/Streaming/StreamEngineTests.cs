@@ -30,8 +30,15 @@ public sealed class StreamEngineTests
         return Task.CompletedTask;
     }
 
-    private Task OnEnd()
+    private readonly List<PipelineEndReason> _endReasons = [];
+
+    private Task OnEnd(PipelineEndReason reason)
     {
+        lock (_endReasons)
+        {
+            _endReasons.Add(reason);
+        }
+
         Interlocked.Increment(ref _ends);
         return Task.CompletedTask;
     }
@@ -119,14 +126,54 @@ public sealed class StreamEngineTests
     }
 
     [Fact]
-    public async Task Pipeline_failure_replies_with_its_error_and_skips_on_end()
+    public async Task Pipeline_failure_replies_with_its_error_and_reports_the_end()
     {
         await _engine.StartAsync(5, Req(), Send, OnEnd, Ct);
         _pipelines.Created[0].End(PipelineEndReason.Failed, "go-live stream failed to start");
-        await Until(() => _sent.Count == 2);
+        await Until(() => _ends == 1);
         Assert.Equal("go-live stream failed to start", _sent[1]);
         Assert.False(_engine.IsStreaming(5));
-        Assert.Equal(0, _ends);
+        Assert.Equal([PipelineEndReason.Failed], _endReasons); // like Python: any unstopped end may auto-advance
+    }
+
+    [Fact]
+    public async Task A_failing_reply_does_not_leak_the_session()
+    {
+        Task Throwing(string _) => throw new InvalidOperationException("REST 403");
+        Assert.True(await _engine.StartAsync(5, Req(), Throwing, OnEnd, Ct));
+        await _engine.StopAsync(5);
+        Assert.False(_engine.IsStreaming(5));
+        _connector.Next.Enqueue(_ => Task.FromException<IGoLiveLink>(new TimeoutException("x")));
+        Assert.False(await _engine.StartAsync(5, Req(), Throwing, OnEnd, Ct));
+        Assert.False(_engine.IsStreaming(5));
+        Assert.Empty(_engine.ActiveGuilds);
+    }
+
+    [Fact]
+    public async Task Stop_racing_pipeline_creation_still_cleans_up()
+    {
+        var gate = new SemaphoreSlim(0);
+        var engine = new StreamEngine(_connector, new BlockingFactory(_pipelines, gate));
+        var start = Task.Run(() => engine.StartAsync(5, Req(), Send, OnEnd, Ct), Ct); // blocks inside Create
+        await Until(() => _connector.Links.Count == 1);
+        var stop = engine.StopAsync(5);           // sees Pipeline == null
+        gate.Release();                           // creation proceeds after the stop flag is set
+        Assert.False(await start);
+        await stop;
+        Assert.False(engine.IsStreaming(5));
+        Assert.Equal(1, _pipelines.Created[0].Stops);
+        Assert.Equal(1, _connector.Links[0].Disconnects);
+    }
+
+    private sealed class BlockingFactory(FakePipelineFactory inner, SemaphoreSlim gate) : IPipelineFactory
+    {
+        public bool EncoderAvailable => true;
+
+        public IPipeline Create(StreamRequest request, IGoLiveLink link)
+        {
+            gate.Wait(TestContext.Current.CancellationToken);
+            return inner.Create(request, link);
+        }
     }
 
     [Fact]
@@ -166,7 +213,7 @@ public sealed class StreamEngineTests
     [Fact]
     public async Task End_callback_and_send_errors_are_contained()
     {
-        await _engine.StartAsync(5, Req(), Send, () => throw new InvalidOperationException("cb"), Ct);
+        await _engine.StartAsync(5, Req(), Send, _ => throw new InvalidOperationException("cb"), Ct);
         _pipelines.Created[0].End(PipelineEndReason.Natural);
         await Until(() => !_engine.IsStreaming(5));
 

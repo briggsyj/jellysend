@@ -13,6 +13,12 @@ public sealed class VoiceStateCache
 {
     private readonly ConcurrentDictionary<ulong, ConcurrentDictionary<ulong, ulong>> _guilds = new();
 
+    /// <summary>
+    /// Raised after a VOICE_STATE_UPDATE / PASSIVE_UPDATE_V2 changed a user's channel: (guild, user, before, after).
+    /// Lets listeners compare with the previous channel, which the cache no longer holds once it applied the update.
+    /// </summary>
+    public event Action<ulong, ulong, ulong?, ulong?>? Changed;
+
     /// <summary>The voice channel <paramref name="userId"/> is in, or null.</summary>
     public ulong? GetVoiceChannel(ulong guildId, ulong userId) =>
         _guilds.TryGetValue(guildId, out var users) && users.TryGetValue(userId, out var channel) ? channel : null;
@@ -75,7 +81,7 @@ public sealed class VoiceStateCache
             case "VOICE_STATE_UPDATE":
                 if (Snowflake(data, "guild_id") is { } guildId)
                 {
-                    Update(guildId, data);
+                    Update(guildId, data, notify: true);
                 }
 
                 break;
@@ -88,16 +94,16 @@ public sealed class VoiceStateCache
                     {
                         foreach (var user in removed.EnumerateArray())
                         {
-                            if (Parse(user) is { } userId)
+                            if (Parse(user) is { } userId && users.TryRemove(userId, out var was))
                             {
-                                users.TryRemove(userId, out _);
+                                Changed?.Invoke(passive, userId, was, null);
                             }
                         }
                     }
 
                     foreach (var state in Array(data, "updated_voice_states"))
                     {
-                        Update(passive, state);
+                        Update(passive, state, notify: true);
                     }
                 }
 
@@ -118,7 +124,7 @@ public sealed class VoiceStateCache
         }
     }
 
-    private void Update(ulong guildId, JsonElement state)
+    private void Update(ulong guildId, JsonElement state, bool notify = false)
     {
         if (Snowflake(state, "user_id") is not { } userId)
         {
@@ -126,13 +132,20 @@ public sealed class VoiceStateCache
         }
 
         var users = _guilds.GetOrAdd(guildId, _ => new());
-        if (Snowflake(state, "channel_id") is { } channelId)
+        ulong? before = users.TryGetValue(userId, out var was) ? was : null;
+        var after = Snowflake(state, "channel_id");
+        if (after is { } channelId)
         {
             users[userId] = channelId;
         }
         else
         {
             users.TryRemove(userId, out _);
+        }
+
+        if (notify && before != after)
+        {
+            Changed?.Invoke(guildId, userId, before, after);
         }
     }
 

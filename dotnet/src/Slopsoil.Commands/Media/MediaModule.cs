@@ -73,7 +73,7 @@ public sealed class MediaModule : IStreamControl
     public void Register(CommandRouter router)
     {
         router.Add("media", Role.Friend, MediaAsync)
-            .Sub("search", Role.Friend, c => MediaAsync(c))
+            .Sub("search", Role.Friend, c => c.Rest.Trim().Length == 0 ? Task.CompletedTask : MediaAsync(c))
             .Sub("help", Role.Friend, HelpAsync)
             .Sub("pause", Role.Friend, PauseAsync)
             .Sub("play", Role.Friend, PlayAsync)
@@ -91,6 +91,8 @@ public sealed class MediaModule : IStreamControl
     // ── IStreamControl (voice commands) ──────────────────────────────────────
 
     public bool IsStreaming(ulong guildId) => _engine.IsStreaming(guildId);
+
+    public bool IsStarting(ulong guildId) => _states.TryGetValue(guildId, out var s) && s.StartLock.CurrentCount == 0;
 
     public async Task StopAsync(ulong guildId, string reason)
     {
@@ -293,8 +295,8 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var guild = ContextGuild(c);
-        if (guild is null || _voice.Get(guild.Value) is null)
+        var guild = ContextGuild(c) ?? _voice.FindAny()?.GuildId;
+        if (guild is null || (_voice.Find(guild.Value) is null && !_engine.IsStreaming(guild.Value)))
         {
             await c.ReplyAsync("not in a voice channel").ConfigureAwait(false);
             return;
@@ -386,7 +388,12 @@ public sealed class MediaModule : IStreamControl
                 return;
             }
 
-            state.Queue.Add(item);
+            if (state.Queue.Add(item) is null)
+            {
+                await c.ReplyAsync($"the playlist is full ({MediaText.PlaylistMax} items)").ConfigureAwait(false);
+                return;
+            }
+
             var head = state.Queue.TakeNext()!;
             await c.ReplyAsync($"➕ queued **{MediaLabels.Format(item)}** at #{state.Queue.Count}").ConfigureAwait(false);
             if (!await PlayItemAsync(c, head).ConfigureAwait(false))
@@ -617,7 +624,8 @@ public sealed class MediaModule : IStreamControl
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
         {
-            var unreachable = ex.InnerException is HttpRequestException or TaskCanceledException or TimeoutException;
+            var unreachable = ex.InnerException is HttpRequestException or TaskCanceledException or TimeoutException
+                || (ex is JellyfinException && ex.Message.Contains("HTTP", StringComparison.Ordinal));
             _log.LogError(ex, unreachable ? "could not reach Jellyfin" : "Jellyfin search failed");
             await c.ReplyAsync(unreachable ? $"could not reach Jellyfin: {ex.Message}" : $"Jellyfin search failed: {ex.Message}").ConfigureAwait(false);
             return null;
@@ -742,16 +750,7 @@ public sealed class MediaModule : IStreamControl
         await state.StartLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            var generation = Interlocked.Increment(ref state.Generation);
-            var hadPlayer = _engine.GetPlayback(guild) is not null;
-            var started = await StartItemLockedAsync(guild, channel, item, start, sync, generation).ConfigureAwait(false);
-            if (!started && hadPlayer && Volatile.Read(ref state.Generation) == generation && _engine.GetPlayback(guild) is not null)
-            {
-                // Failed before replacing the current stream: let it keep auto-advancing when it ends.
-                Interlocked.CompareExchange(ref state.Generation, generation - 1, generation);
-            }
-
-            return started;
+            return await StartItemHoldingLockAsync(guild, state, channel, item, start, sync).ConfigureAwait(false);
         }
         finally
         {
@@ -759,10 +758,28 @@ public sealed class MediaModule : IStreamControl
         }
     }
 
-    private async Task<bool> StartItemLockedAsync(ulong guild, ulong channel, MediaItem item, double start, bool sync, long generation)
+    /// <summary><see cref="StartItemAsync"/> body; the caller holds <c>state.StartLock</c>.</summary>
+    private async Task<bool> StartItemHoldingLockAsync(ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync)
+    {
+        var generation = Interlocked.Increment(ref state.Generation);
+        var hadPlayer = _engine.GetPlayback(guild) is not null;
+        var started = await StartItemLockedAsync(guild, state, channel, item, start, sync, generation).ConfigureAwait(false);
+        if (!started && hadPlayer && Volatile.Read(ref state.Generation) == generation && _engine.GetPlayback(guild) is not null)
+        {
+            // Failed before replacing the current stream: let it keep auto-advancing when it ends.
+            Interlocked.CompareExchange(ref state.Generation, generation - 1, generation);
+        }
+
+        return started;
+    }
+
+    /// <summary>The session is still the guild's current one and no newer start/stop happened.</summary>
+    private bool StillCurrent(ulong guild, GuildState state, long generation) =>
+        _states.TryGetValue(guild, out var current) && ReferenceEquals(current, state) && Volatile.Read(ref state.Generation) == generation;
+
+    private async Task<bool> StartItemLockedAsync(ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, long generation)
     {
         var library = _library!;
-        var state = State(guild);
         var send = state.Send;
         var label = MediaLabels.Format(item);
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
@@ -772,6 +789,14 @@ public sealed class MediaModule : IStreamControl
         if (stream is null)
         {
             await send($"could not start a Jellyfin playback session for **{label}** — check that the server is reachable and the credentials are valid").ConfigureAwait(false);
+            return false;
+        }
+
+        async Task<bool> Abandon()
+        {
+            // A stop/leave/teardown happened while this start was resolving: don't rejoin or stream.
+            _log.LogInformation("Jellyfin: start of {Label} abandoned (stopped meanwhile)", label);
+            await library.StopEncodingAsync(stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
             return false;
         }
 
@@ -805,6 +830,11 @@ public sealed class MediaModule : IStreamControl
             return false;
         }
 
+        if (!StillCurrent(guild, state, generation))
+        {
+            return await Abandon().ConfigureAwait(false);
+        }
+
         try
         {
             await _voice.EnsureAsync(guild, channel, CancellationToken.None).ConfigureAwait(false);
@@ -815,6 +845,11 @@ public sealed class MediaModule : IStreamControl
             await send($"could not join the voice channel: {ex.Message}").ConfigureAwait(false);
             await library.StopEncodingAsync(stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
             return false;
+        }
+
+        if (!StillCurrent(guild, state, generation))
+        {
+            return await Abandon().ConfigureAwait(false);
         }
 
         var previous = state.Now;
@@ -832,7 +867,17 @@ public sealed class MediaModule : IStreamControl
             SourceCodec = codec,
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
         };
-        var started = await _engine.StartAsync(guild, request, send, () => OnStreamEndAsync(guild, generation)).ConfigureAwait(false);
+
+        bool started;
+        try
+        {
+            started = await _engine.StartAsync(guild, request, send, reason => OnStreamEndAsync(guild, generation, reason)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "go-live start failed for {Label}", label);
+            started = false;
+        }
 
         if (previous is not null && !ReferenceEquals(previous.Stream, stream))
         {
@@ -850,6 +895,13 @@ public sealed class MediaModule : IStreamControl
             return false;
         }
 
+        if (!StillCurrent(guild, state, generation))
+        {
+            // Stopped/torn down while go-live was connecting: the engine stream is ours to end.
+            await _engine.StopAsync(guild, "abandoned").ConfigureAwait(false);
+            return await Abandon().ConfigureAwait(false);
+        }
+
         if (sync && library.HasUserCredentials)
         {
             Spawn(SyncQueueAsync(guild, item.Id, start, _engine.GetPlayback(guild)));
@@ -858,25 +910,43 @@ public sealed class MediaModule : IStreamControl
         return true;
     }
 
-    /// <summary>A stream finished on its own: release the transcode, play the next item.</summary>
-    private async Task OnStreamEndAsync(ulong guild, long generation)
+    /// <summary>
+    /// A stream ended without a stop (naturally, or the pipeline failed): release the transcode and play the next
+    /// item. Runs under the start lock so it can't race a user's start or skip; the generation check is atomic
+    /// with taking <c>Now</c>.
+    /// </summary>
+    private async Task OnStreamEndAsync(ulong guild, long generation, PipelineEndReason reason)
     {
-        if (!_states.TryGetValue(guild, out var state) || Volatile.Read(ref state.Generation) != generation)
+        if (!_states.TryGetValue(guild, out var state))
         {
             return;
         }
 
-        var finished = state.Now;
-        state.Now = null;
-        if (finished is not null)
+        await state.StartLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await _library!.StopEncodingAsync(finished.Stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
-        }
+            if (!StillCurrent(guild, state, generation))
+            {
+                return;
+            }
 
-        await AdvanceAsync(guild).ConfigureAwait(false);
+            var finished = state.Now;
+            state.Now = null;
+            if (finished is not null)
+            {
+                await _library!.StopEncodingAsync(finished.Stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            _log.LogInformation("stream ended ({Reason}) in guild {Guild}; advancing the playlist", reason, guild);
+            await AdvanceHoldingLockAsync(guild, state).ConfigureAwait(false);
+        }
+        finally
+        {
+            state.StartLock.Release();
+        }
     }
 
-    /// <summary>Start the next playable playlist item in the bot's voice channel.</summary>
+    /// <summary>Start the next playable playlist item in the bot's voice channel (user skip).</summary>
     private async Task<bool> AdvanceAsync(ulong guild)
     {
         if (!_states.TryGetValue(guild, out var state))
@@ -884,6 +954,19 @@ public sealed class MediaModule : IStreamControl
             return false;
         }
 
+        await state.StartLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await AdvanceHoldingLockAsync(guild, state).ConfigureAwait(false);
+        }
+        finally
+        {
+            state.StartLock.Release();
+        }
+    }
+
+    private async Task<bool> AdvanceHoldingLockAsync(ulong guild, GuildState state)
+    {
         while (state.Queue.Count > 0)
         {
             if (_voice.Get(guild) is not { } link)
@@ -893,7 +976,7 @@ public sealed class MediaModule : IStreamControl
 
             var item = state.Queue.TakeNext()!;
             await state.Send($"⏭ up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
-            if (await StartItemAsync(guild, link.ChannelId, item).ConfigureAwait(false))
+            if (await StartItemHoldingLockAsync(guild, state, link.ChannelId, item, 0, sync: true).ConfigureAwait(false))
             {
                 return true;
             }
