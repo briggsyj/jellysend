@@ -71,9 +71,9 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 
 **Independent Test**: quickstart.md scenario 2.
 
-- [ ] T020 [P] [US1] Tests for Jellyfin client in `dotnet/tests/Slopsoil.Tests/Services/JellyfinClientTests.cs` (search fields, find_episode via series→seasons→episodes, PlaybackInfo body with `SubtitleStreamIndex=-1` and H.264/AAC HLS profile, URL rewrite forcing `SubtitleStreamIndex=-1` and appending `api_key`, MediaStreams → `HasAudio`/`VideoCodec` incl. "no video stream → null", stop_encoding DELETE; reference `services/jellyfin.py` and its tests)
-- [ ] T021 [US1] Implement `dotnet/src/Slopsoil.Services/Jellyfin/{JellyfinClient.cs,Models.cs,AuthHeader.cs}` (API key + lazy username/password sign-in under a lock) until T020 passes
-- [ ] T022 [P] [US1] HLS variant resolver + ffprobe wrapper in `dotnet/src/Slopsoil.Services/Media/{HlsVariantResolver.cs,ProbeService.cs}` with tests (reference `services/hls.py`, `services/probe.py`; logs redacted)
+- [X] T020 [P] [US1] Tests for Jellyfin client in `dotnet/tests/Slopsoil.Tests/Services/JellyfinClientTests.cs` (search fields, find_episode via series→seasons→episodes, PlaybackInfo body with `SubtitleStreamIndex=-1` and H.264/AAC HLS profile, URL rewrite forcing `SubtitleStreamIndex=-1` and appending `api_key`, MediaStreams → `HasAudio`/`VideoCodec` incl. "no video stream → null", stop_encoding DELETE; reference `services/jellyfin.py` and its tests)
+- [X] T021 [US1] Implement `dotnet/src/Slopsoil.Services/Jellyfin/{JellyfinClient.cs,Models.cs,AuthHeader.cs}` (API key + lazy username/password sign-in under a lock) until T020 passes
+- [X] T022 [P] [US1] HLS variant resolver + ffprobe wrapper in `dotnet/src/Slopsoil.Services/Media/{HlsVariantResolver.cs,ProbeService.cs}` with tests (reference `services/hls.py`, `services/probe.py`; logs redacted)
 - [ ] T023 [P] [US1] Tests for FFmpeg command building in `dotnet/tests/Slopsoil.Tests/Streaming/FfmpegCommandTests.cs`: encoder detection order NVENC → VA-API → libx264 → libopenh264 with `-bf 0` on hardware, fit-to-box scale expression (`dar`, `2*round`, `setsar=1`), exact `-r` (`29.97`) and `-g round(fps)`, `-ss` before `-i`, silence `anullsrc` when no audio, reconnect flags only for URLs
 - [ ] T024 [US1] Implement `dotnet/src/Slopsoil.Streaming/Video/{EncoderDetector.cs,FfmpegCommand.cs}` until T023 passes
 - [ ] T025 [P] [US1] Tests for the video player in `dotnet/tests/Slopsoil.Tests/Streaming/VideoPlayerTests.cs` with a fake process stream of canned Annex-B: frame grouping by AUD/slice, pacing clock, no flush after stop, SW-encoder fallback on zero frames, `Position = offset + frames/fps`
@@ -128,7 +128,7 @@ targets hold; `off` removes it without a screenshare drop.
 
 **Independent Test**: quickstart.md scenario 5.
 
-- [ ] T037 [P] [US4] Tests then implementation of `dotnet/src/Slopsoil.Services/SyncPlay/SyncPlayGroup.cs` (device id `slopsoil-<guildId>`, `/socket?api_key=&deviceId=`, New/SetIgnoreWait/SetNewQueue/Pause/Unpause/Seek/Leave bodies, ForceKeepAlive → KeepAlive every Data/2 s, SyncPlayCommand and PlayQueue parsing, dead socket → `Closed`) with tests in `dotnet/tests/Slopsoil.Tests/Services/SyncPlayTests.cs` (reference `services/syncplay.py`, `tests/test_syncplay.py`)
+- [X] T037 [P] [US4] Tests then implementation of `dotnet/src/Slopsoil.Services/SyncPlay/SyncPlayGroup.cs` (device id `slopsoil-<guildId>`, `/socket?api_key=&deviceId=`, New/SetIgnoreWait/SetNewQueue/Pause/Unpause/Seek/Leave bodies, ForceKeepAlive → KeepAlive every Data/2 s, SyncPlayCommand and PlayQueue parsing, dead socket → `Closed`) with tests in `dotnet/tests/Slopsoil.Tests/Services/SyncPlayTests.cs` (reference `services/syncplay.py`, `tests/test_syncplay.py`)
 - [ ] T038 [US4] Wire SyncPlay into `MediaModule`: group per guild (serialised creation), queue sent after first frame using player position, own-command 5 s drift window, item echo window 10 s, Pause/Unpause/Seek/Stop handlers with 3 s drift tolerance, PlayQueue switch, teardown on leave; tests in `dotnet/tests/Slopsoil.Tests/Commands/SyncPlayCommandTests.cs`
 
 ---
