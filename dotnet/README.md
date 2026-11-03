@@ -44,6 +44,7 @@ Project references enforce the constitution's layer rules: `Services` depends on
 | Spike: libdave Docker build (T006) | done — `build-check-dotnet` CI job |
 | Spike: gateway / voice / go-live (T012) | done — unit-tested against fakes |
 | Spike: test-pattern harness (T013) | implemented — **awaiting manual run in a DAVE channel** |
+| Foundation: options, redaction, roles, router, number picker, host (T014–T019) | done — bot logs in, answers `!ping` / `!help`, refuses non-subset commands |
 | US1–US5 | not started |
 
 ## Running the go-live spike (T013)

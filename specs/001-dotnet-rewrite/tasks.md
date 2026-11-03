@@ -59,7 +59,7 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 - [X] T016 [P] Tests then implementation of roles in `dotnet/src/Slopsoil.Common/Permissions/RoleResolver.cs` (Admin ⊃ Friend ⊃ Viewer ⊃ None; bot's own account passes; reference `permissions.py`)
 - [X] T017 Command router in `dotnet/src/Slopsoil.Commands/Routing/CommandRouter.cs`: `!` prefix, groups with sub-commands, `*rest` arguments, role attribute checks (silent on failure), "not available in this edition" replies for `!play`, `!channels`, `!search`, `!add-source`, `!sources`, `!delete-source` (FR-044), tests in `dotnet/tests/Slopsoil.Tests/Commands/RouterTests.cs`
 - [X] T018 [P] Number-picker helper `dotnet/src/Slopsoil.Commands/Interaction/NumberPrompt.cs` (10 s timeout → "timed out — cancelled", `!`-prefixed reply → "cancelled", decimal digits only, out-of-range message; reference `_wait_for_number`) with tests
-- [ ] T019 Host wiring in `dotnet/src/Slopsoil.Host/Program.cs` (generic host, options, redacting logging, gateway client, command modules) and `dotnet/src/Slopsoil.Commands/General/GeneralModule.cs` (`!help`, `!ping` per `cogs/general.py`)
+- [X] T019 Host wiring in `dotnet/src/Slopsoil.Host/Program.cs` (generic host, options, redacting logging, gateway client, command modules) and `dotnet/src/Slopsoil.Commands/General/GeneralModule.cs` (`!help`, `!ping` per `cogs/general.py`)
 
 **Checkpoint**: bot logs in, answers `!ping`/`!help`, refuses non-subset commands.
 
