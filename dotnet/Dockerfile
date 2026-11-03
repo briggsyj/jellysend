@@ -39,7 +39,8 @@ RUN dotnet publish src/Slopsoil.Host/Slopsoil.Host.csproj -c Release -r linux-x6
 
 # Stage 3: runtime. Same media stack as the Python image (see ../Dockerfile for
 # why ffmpeg-free + RPM Fusion VA-API drivers), plus libopus/libsodium for the
-# bot's own Opus encoding and transport encryption.
+# bot's own Opus encoding and transport encryption, and a monospace font for the
+# `!media debug` overlay (FFmpeg drawtext resolves font=monospace via fontconfig).
 FROM registry.fedoraproject.org/fedora-minimal:44
 RUN microdnf install -y \
         ffmpeg-free \
@@ -49,6 +50,8 @@ RUN microdnf install -y \
         openssl-libs \
         libstdc++ \
         libicu \
+        fontconfig \
+        dejavu-sans-mono-fonts \
         https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-44.noarch.rpm \
         https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-44.noarch.rpm \
     && microdnf install -y --allowerasing \

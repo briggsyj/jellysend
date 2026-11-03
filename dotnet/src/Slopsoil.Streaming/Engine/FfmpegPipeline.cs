@@ -245,5 +245,7 @@ internal sealed class FfmpegPipeline : IPipeline
         public void SetDebugOverlay(bool on) => player.SetDebugOverlay(on);
 
         public string DiagnosticsText() => DiagnosticsFormat.Overlay(diagnostics.Snapshot());
+
+        public StreamDiagnosticsSnapshot? DiagnosticsSnapshot() => diagnostics.Snapshot();
     }
 }

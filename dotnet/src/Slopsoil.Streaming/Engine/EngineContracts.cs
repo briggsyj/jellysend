@@ -84,6 +84,9 @@ public interface IPlayback
 
     /// <summary>Human-readable diagnostics snapshot (for <c>!media debug</c>).</summary>
     string DiagnosticsText();
+
+    /// <summary>Structured diagnostics snapshot (soak harness), when the pipeline keeps one.</summary>
+    Diagnostics.StreamDiagnosticsSnapshot? DiagnosticsSnapshot() => null;
 }
 
 public enum PipelineEndReason

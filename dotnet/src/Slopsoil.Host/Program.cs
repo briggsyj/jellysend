@@ -44,6 +44,18 @@ foreach (var warning in warnings)
     log.LogWarning("{Warning}", warning);
 }
 
+if (Environment.GetEnvironmentVariable("SLOPSOIL_SOAK") == "1")
+{
+    var soakStop = new CancellationTokenSource(); // not disposed: ProcessExit may still cancel it
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        soakStop.Cancel();
+    };
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => soakStop.Cancel();
+    return await Soak.RunAsync(options, host.Services.GetRequiredService<ILoggerFactory>(), soakStop.Token);
+}
+
 if (options.DiscordToken is null)
 {
     log.LogCritical("DISCORD_TOKEN environment variable not set");
