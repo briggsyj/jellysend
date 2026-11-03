@@ -77,7 +77,7 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
                 return Task.CompletedTask;
             }
 
-            return RunAsync(subcommand, context.WithRest(subRest));
+            return RunAsync(subcommand, context.WithRest(subRest, sub));
         }
 
         return RunAsync(command, context);

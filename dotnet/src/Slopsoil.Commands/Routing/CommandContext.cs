@@ -21,6 +21,9 @@ public sealed class CommandContext(ChatMessage message, string rest, IMessageSen
 
     public CancellationToken Cancellation { get; } = ct;
 
+    /// <summary>The sub-command word the user typed (alias included), or empty for the group's own handler.</summary>
+    public string InvokedWith { get; private init; } = "";
+
     public ulong? GuildId => Message.GuildId;
 
     public ulong ChannelId => Message.ChannelId;
@@ -29,5 +32,6 @@ public sealed class CommandContext(ChatMessage message, string rest, IMessageSen
 
     public Task ReplyAsync(string content) => sender.SendAsync(ChannelId, content, Cancellation);
 
-    internal CommandContext WithRest(string newRest) => new(Message, newRest, sender, Hub, Cancellation);
+    internal CommandContext WithRest(string newRest, string invokedWith = "") =>
+        new(Message, newRest, sender, Hub, Cancellation) { InvokedWith = invokedWith };
 }

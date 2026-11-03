@@ -1,0 +1,238 @@
+using Slopsoil.Commands.Media;
+using Slopsoil.Commands.Routing;
+using Slopsoil.Commands.Voice;
+using Slopsoil.Services.Jellyfin;
+using Slopsoil.Services.Media;
+using Slopsoil.Services.SyncPlay;
+using Slopsoil.Streaming.Engine;
+using Slopsoil.Tests.Discord;
+using Slopsoil.Tests.Streaming;
+
+namespace Slopsoil.Tests.Commands;
+
+internal sealed class FakeSyncPlay(Func<SyncPlayCommand, CancellationToken, Task> onCommand, Func<SyncPlayQueue, CancellationToken, Task> onQueue) : ISyncPlay
+{
+    public List<string> Calls { get; } = [];
+
+    public bool FailOpen { get; set; }
+
+    public string? GroupName { get; private set; }
+
+    public bool Closed { get; set; }
+
+    public Task Command(string command, double? position) => onCommand(new SyncPlayCommand(command, position), default);
+
+    public Task Queue(string? item, double start) => onQueue(new SyncPlayQueue(item, start, true), default);
+
+    public Task OpenAsync(string groupName, CancellationToken ct)
+    {
+        Calls.Add($"open {groupName}");
+        if (FailOpen)
+        {
+            throw new InvalidOperationException("denied");
+        }
+
+        GroupName = groupName;
+        return Task.CompletedTask;
+    }
+
+    public Task CloseAsync(CancellationToken ct)
+    {
+        Calls.Add("close");
+        Closed = true;
+        return Task.CompletedTask;
+    }
+
+    public Task SetQueueAsync(string itemId, double startSeconds, CancellationToken ct)
+    {
+        Calls.Add($"queue {itemId} {startSeconds}");
+        return Task.CompletedTask;
+    }
+
+    public Task PauseAsync(CancellationToken ct)
+    {
+        Calls.Add("pause");
+        return Task.CompletedTask;
+    }
+
+    public Task UnpauseAsync(CancellationToken ct)
+    {
+        Calls.Add("unpause");
+        return Task.CompletedTask;
+    }
+
+    public Task SeekAsync(double seconds, CancellationToken ct)
+    {
+        Calls.Add($"seek {seconds}");
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeLibrary : IMediaLibrary
+{
+    public bool HasUserCredentials { get; set; }
+
+    public Dictionary<string, List<MediaItem>> Search { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, List<MediaItem>> Seasons { get; } = [];
+
+    public Dictionary<string, List<MediaItem>> Episodes { get; } = [];
+
+    public Dictionary<string, MediaItem> Items { get; } = [];
+
+    public Exception? SearchError { get; set; }
+
+    public bool NoPlayback { get; set; }
+
+    public bool UnknownMetadata { get; set; }
+
+    public ProbeResult? Probe { get; set; }
+
+    public string Codec { get; set; } = "h264";
+
+    public List<string> Stopped { get; } = [];
+
+    public List<FakeSyncPlay> Groups { get; } = [];
+
+    public bool FailSyncOpen { get; set; }
+
+    private int _sessions;
+
+    public Task<IReadOnlyList<MediaItem>> SearchAsync(string query, CancellationToken ct) =>
+        SearchError is { } e ? Task.FromException<IReadOnlyList<MediaItem>>(e)
+            : Task.FromResult<IReadOnlyList<MediaItem>>(Search.TryGetValue(query, out var r) ? r : []);
+
+    public Task<IReadOnlyList<MediaItem>> FindEpisodeAsync(string show, int season, int episode, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<MediaItem>>(Search.TryGetValue($"{show} {season}x{episode}", out var r) ? r : []);
+
+    public Task<IReadOnlyList<MediaItem>> GetSeasonsAsync(string seriesId, CancellationToken ct) =>
+        seriesId == "bad" ? Task.FromException<IReadOnlyList<MediaItem>>(new JellyfinException("seasons down"))
+            : Task.FromResult<IReadOnlyList<MediaItem>>(Seasons.TryGetValue(seriesId, out var r) ? r : []);
+
+    public Task<IReadOnlyList<MediaItem>> GetEpisodesAsync(string seriesId, string seasonId, CancellationToken ct) =>
+        seasonId == "bad" ? Task.FromException<IReadOnlyList<MediaItem>>(new JellyfinException("episodes down"))
+            : Task.FromResult<IReadOnlyList<MediaItem>>(Episodes.TryGetValue(seasonId, out var r) ? r : []);
+
+    public Task<MediaItem?> GetItemAsync(string itemId, CancellationToken ct) => Task.FromResult(Items.GetValueOrDefault(itemId));
+
+    public Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct)
+    {
+        if (NoPlayback)
+        {
+            return Task.FromResult<PlaybackStream?>(null);
+        }
+
+        var n = Interlocked.Increment(ref _sessions);
+        return Task.FromResult<PlaybackStream?>(new PlaybackStream(
+            $"http://jf/videos/{itemId}/master.m3u8?api_key=SECRET", $"ps{n}", UnknownMetadata ? null : true, UnknownMetadata ? null : Codec));
+    }
+
+    public Task StopEncodingAsync(string? playSessionId, CancellationToken ct)
+    {
+        lock (Stopped)
+        {
+            Stopped.Add(playSessionId ?? "");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<string> ResolveVariantAsync(string url, CancellationToken ct) => Task.FromResult(url.Replace("master", "variant", StringComparison.Ordinal));
+
+    public Task<ProbeResult?> ProbeAsync(string url, CancellationToken ct) => Task.FromResult(Probe);
+
+    public ISyncPlay CreateSyncPlay(ulong guildId, Func<SyncPlayCommand, CancellationToken, Task> onCommand, Func<SyncPlayQueue, CancellationToken, Task> onPlayQueue)
+    {
+        var g = new FakeSyncPlay(onCommand, onPlayQueue) { FailOpen = FailSyncOpen };
+        Groups.Add(g);
+        return g;
+    }
+}
+
+/// <summary>Router + media + voice modules over fakes. Friend is user 20, in voice channel 50 of guild 5.</summary>
+internal sealed class MediaHarness
+{
+    public FakeSender Sender { get; } = new();
+
+    public FakeVoiceGateway Gateway { get; } = new();
+
+    public FakeConnector Connector { get; } = new();
+
+    public FakePipelineFactory Pipelines { get; }
+
+    public FakeLibrary Library { get; } = new();
+
+    public ManualTimeProvider Time { get; } = new();
+
+    public VoiceManager Voice { get; }
+
+    public StreamEngine Engine { get; }
+
+    public MediaModule Media { get; }
+
+    public CommandRouter Router { get; }
+
+    public MessageHub Hub { get; }
+
+    /// <summary>Reply to a picker once it is actually waiting.</summary>
+    public async Task Answer(string content)
+    {
+        await Until(() => Hub.WaiterCount > 0, "no prompt is waiting");
+        await Send(content);
+    }
+
+    public MediaHarness(bool configured = true)
+    {
+        Pipelines = new FakePipelineFactory(Connector.Log);
+        Voice = new VoiceManager(Gateway);
+        Engine = new StreamEngine(Connector, Pipelines);
+        Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time);
+        Hub = new MessageHub(Time);
+        Router = new CommandRouter(new FakeRoles(), Sender, Hub);
+        Media.Register(Router);
+        new VoiceModule(Voice, Media).Register(Router);
+        Gateway.States[(5, 20)] = 50;
+    }
+
+    public IReadOnlyList<string> Texts
+    {
+        get
+        {
+            lock (Sender.Sent)
+            {
+                return [.. Sender.Texts];
+            }
+        }
+    }
+
+    public FakePipeline Current => Pipelines.Created[^1];
+
+    public static MediaItem Movie(string id, string name, int? year = 2010, long? ticks = 60L * 60 * 10_000_000) =>
+        new() { Id = id, Name = name, Type = "Movie", ProductionYear = year, RunTimeTicks = ticks };
+
+    public static MediaItem Episode(string id, string series, int season, int episode, string name) =>
+        new() { Id = id, Name = name, Type = "Episode", SeriesName = series, ParentIndexNumber = season, IndexNumber = episode };
+
+    public Task Send(string content, ulong? guild = 5, ulong author = 20) =>
+        Router.DispatchAsync(new ChatMessage(guild, 7, author, content), TestContext.Current.CancellationToken);
+
+    /// <summary>Send without awaiting (the handler waits for a picker reply).</summary>
+    public Task Start(string content) => Task.Run(() => Send(content));
+
+    public async Task Until(Func<bool> condition, string? what = null)
+    {
+        for (var i = 0; i < 600 && !condition(); i++)
+        {
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(condition(), what ?? $"timed out; replies: {string.Join(" | ", Texts)}");
+    }
+
+    public Task UntilReply(string text) => Until(() => Texts.Contains(text), $"no reply '{text}'; got: {string.Join(" | ", Texts)}");
+
+    public async Task Drain()
+    {
+        await Until(() => Media.Background.IsEmpty);
+    }
+}

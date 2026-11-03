@@ -9,6 +9,18 @@ public sealed class MessageHub(TimeProvider? time = null)
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly List<(Func<ChatMessage, bool> Check, TaskCompletionSource<ChatMessage> Tcs)> _waiters = [];
 
+    /// <summary>Number of pending waiters (tests use it to answer a prompt only once it listens).</summary>
+    internal int WaiterCount
+    {
+        get
+        {
+            lock (_waiters)
+            {
+                return _waiters.Count;
+            }
+        }
+    }
+
     /// <summary>Deliver a message to every matching waiter; each waiter completes at most once.</summary>
     public void Publish(ChatMessage message)
     {

@@ -65,6 +65,15 @@ public sealed class Playlist<T>(Func<T, string> label)
         }
     }
 
+    /// <summary>Put an item back at the head (its start failed); may exceed the cap by one, as Python's insert(0).</summary>
+    public void PushFront(T item)
+    {
+        lock (_lock)
+        {
+            _items.Insert(0, item);
+        }
+    }
+
     public void Clear()
     {
         lock (_lock)
