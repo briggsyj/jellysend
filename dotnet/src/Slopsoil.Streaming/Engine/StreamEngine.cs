@@ -1,0 +1,211 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Slopsoil.Common.Logging;
+
+namespace Slopsoil.Streaming.Engine;
+
+/// <summary>
+/// One go-live stream per guild (<c>streaming/engine.py</c> <c>start_live_stream</c> / <c>cancel_live_stream</c>):
+/// replaces the old stream only after its cleanup (STREAM_DELETE) finished, connects go-live, runs the pipeline
+/// and tears down only what it still owns. <c>onEnd</c> runs only when the stream ended on its own.
+/// </summary>
+public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pipelines, ILogger<StreamEngine>? logger = null)
+{
+    /// <summary>How long a replacement waits for the old stream's cleanup.</summary>
+    public static readonly TimeSpan OldStreamCleanupWait = TimeSpan.FromSeconds(5);
+
+    private readonly ILogger _log = logger ?? NullLogger<StreamEngine>.Instance;
+    private readonly ConcurrentDictionary<ulong, Session> _sessions = new();
+
+    /// <summary>The guild's running stream controls, or null.</summary>
+    public IPlayback? GetPlayback(ulong guildId) => _sessions.TryGetValue(guildId, out var s) ? s.Pipeline?.Playback : null;
+
+    /// <summary>True while a stream is starting or running in the guild.</summary>
+    public bool IsStreaming(ulong guildId) => _sessions.ContainsKey(guildId);
+
+    /// <summary>
+    /// Start <paramref name="request"/> as the guild's go-live stream. Returns true once the pipeline runs; false
+    /// (after telling the user why via <paramref name="send"/>) if go-live could not start.
+    /// </summary>
+    public async Task<bool> StartAsync(
+        ulong guildId, StreamRequest request, Func<string, Task> send, Func<Task>? onEnd = null, CancellationToken ct = default)
+    {
+        if (!pipelines.EncoderAvailable)
+        {
+            _log.LogWarning("no H.264 encoder available — go-live requires video encoding");
+            await send("go-live requires a working H.264 encoder; none found").ConfigureAwait(false);
+            return false;
+        }
+
+        var session = new Session();
+        if (_sessions.TryGetValue(guildId, out var old))
+        {
+            await StopSessionAsync(guildId, old, "replaced").ConfigureAwait(false);
+            await old.Done.WaitAsync(OldStreamCleanupWait, CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+        }
+
+        _sessions[guildId] = session;
+        _log.LogInformation("starting go-live stream: {Title} → {Url}", request.Title, Redactor.RedactUrl(request.Url));
+        await send($"📺 **{request.Title}** (go-live)").ConfigureAwait(false);
+
+        IGoLiveLink link;
+        try
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Cancel.Token);
+            link = await connector.ConnectAsync(guildId, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (session.Stopping || ct.IsCancellationRequested)
+        {
+            Release(guildId, session);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "failed to establish go-live connection");
+            Release(guildId, session);
+            await send($"go-live connection failed: {ex.Message}").ConfigureAwait(false);
+            return false;
+        }
+
+        session.Link = link;
+        if (session.Stopping)
+        {
+            // Stopped while connecting.
+            await link.DisconnectAsync().ConfigureAwait(false);
+            Release(guildId, session);
+            return false;
+        }
+
+        IPipeline pipeline;
+        try
+        {
+            pipeline = pipelines.Create(request, link);
+            session.Pipeline = pipeline;
+            pipeline.Start();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "go-live pipeline failed to start for {Title}", request.Title);
+            await CleanupAsync(guildId, session).ConfigureAwait(false);
+            await send($"go-live error: {ex.Message}").ConfigureAwait(false);
+            return false;
+        }
+
+        _log.LogInformation("go-live started for {Title}", request.Title);
+        _ = Task.Run(() => RunAsync(guildId, session, request.Title, send, onEnd), CancellationToken.None);
+        return true;
+    }
+
+    /// <summary>Stop the guild's stream (the go-live ends; voice stays). Waits for its cleanup.</summary>
+    public async Task StopAsync(ulong guildId, string reason = "stop")
+    {
+        if (_sessions.TryGetValue(guildId, out var session))
+        {
+            await StopSessionAsync(guildId, session, reason).ConfigureAwait(false);
+            await session.Done.WaitAsync(OldStreamCleanupWait, CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<Task>? onEnd)
+    {
+        var end = await session.Pipeline!.Completion.ConfigureAwait(false);
+        _log.LogInformation("go-live stream {Title} ended: {Reason}", title, end.Reason);
+        var natural = end.Reason == PipelineEndReason.Natural && !session.Stopping;
+        await CleanupAsync(guildId, session).ConfigureAwait(false);
+        if (end.Reason == PipelineEndReason.Failed && end.Error is not null && !session.Stopping)
+        {
+            await SafeAsync(() => send(end.Error), "error reply").ConfigureAwait(false);
+        }
+
+        if (natural && onEnd is not null)
+        {
+            await SafeAsync(onEnd, $"end-of-stream callback for '{title}'").ConfigureAwait(false);
+        }
+    }
+
+    private async Task StopSessionAsync(ulong guildId, Session session, string reason)
+    {
+        if (session.Stopping)
+        {
+            return;
+        }
+
+        session.Stopping = true;
+        await session.Cancel.CancelAsync().ConfigureAwait(false);
+        _log.LogInformation("stopping go-live in guild {Guild} ({Reason})", guildId, reason);
+        if (session.Pipeline is null)
+        {
+            // Still connecting: StartAsync notices Stopping and cleans up.
+            return;
+        }
+
+        await CleanupAsync(guildId, session).ConfigureAwait(false);
+    }
+
+    /// <summary>Stop pipeline, disconnect go-live, release the registry slot if still ours. Runs once.</summary>
+    private async Task CleanupAsync(ulong guildId, Session session)
+    {
+        if (Interlocked.Exchange(ref session.CleanedUp, 1) != 0)
+        {
+            await session.Done.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            if (session.Pipeline is { } pipeline)
+            {
+                await SafeAsync(pipeline.StopAsync, "stopping pipeline").ConfigureAwait(false);
+            }
+
+            if (session.Link is { } link)
+            {
+                await SafeAsync(link.DisconnectAsync, "disconnecting go-live").ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            Release(guildId, session);
+        }
+    }
+
+    private void Release(ulong guildId, Session session)
+    {
+        // Owner check: a newer stream may already have registered for the guild.
+        _sessions.TryRemove(new KeyValuePair<ulong, Session>(guildId, session));
+        session.Finish();
+    }
+
+    private async Task SafeAsync(Func<Task> action, string what)
+    {
+        try
+        {
+            await action().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "error {What}", what);
+        }
+    }
+
+    private sealed class Session
+    {
+        private readonly TaskCompletionSource _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int CleanedUp;
+
+        public volatile bool Stopping;
+
+        /// <summary>Cancels a go-live connect still in progress when the session is stopped.</summary>
+        public CancellationTokenSource Cancel { get; } = new();
+
+        public IGoLiveLink? Link { get; set; }
+
+        public IPipeline? Pipeline { get; set; }
+
+        public Task Done => _done.Task;
+
+        public void Finish() => _done.TrySetResult();
+    }
+}
