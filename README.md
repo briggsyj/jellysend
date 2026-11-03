@@ -169,6 +169,35 @@ New GHCR packages are private. Either make the package public (GitHub → your p
 
 The repo's own `docker-compose.yml` uses `${SLOPSOIL_IMAGE:-ghcr.io/briggsyj/slopsoil:latest}`; set `SLOPSOIL_IMAGE` in `.env` to point it at your image or pin a `sha-` tag. `docker compose pull && docker compose up -d` uses the CI-built image, `docker compose up -d --build` builds locally.
 
+### Running the .NET edition (preview)
+
+A .NET 10 rewrite of the Jellyfin features is published next to the Python image until it reaches parity
+([spec](specs/001-dotnet-rewrite/spec.md), [parity checklist](specs/001-dotnet-rewrite/checklists/parity.md)):
+
+| Tag | Contents |
+|---|---|
+| `latest` | Python bot (unchanged) |
+| `dotnet` | newest .NET build (pushes to `001-dotnet-rewrite`, merges into `develop`) |
+| `dotnet-sha-<commit>` | a pinned .NET build |
+
+Switch with one line in `.env`, keeping everything else (same variables, volume and `/dev/dri` mapping):
+
+```
+SLOPSOIL_IMAGE=ghcr.io/briggsyj/slopsoil:dotnet
+```
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Remove the line (and pull again) to go back to Python. What's different:
+
+- Included: `!media` (play, pickers, pause/play/resume/stop/skip, playlist, aspect-ratio, SyncPlay), `!join`, `!leave`,
+  `!stop`, `!help`, `!ping`, plus `.NET`-only `!media debug on|off` (diagnostics overlay burned into the stream).
+- Not included: TVheadend, IPTV sources and yt-dlp (`!play`, `!channels`, `!search`, `!add-source`, `!sources`,
+  `!delete-source` reply that they are not available). `TVHEADEND_*`, `YTDLP_FORMAT` and `TIMEZONE` are ignored.
+- `SLOPSOIL_SPIKE=testpattern` runs a transport self-test instead of the bot: `!join` streams a test pattern and tone.
+
 ### Option A - Pre-built image (recommended)
 
 #### 1. Create a `docker-compose.yml`

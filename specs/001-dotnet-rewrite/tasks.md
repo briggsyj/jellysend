@@ -92,7 +92,7 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 
 **Independent Test**: quickstart.md scenario 3.
 
-- [ ] T032 [P] [US2] Tests for `TimestampParser` in `dotnet/tests/Slopsoil.Tests/Commands/TimestampTests.cs` (port every case from `tests/test_jellyfin_commands.py`: `1:23:45`, `1.23.45`, `1:23` = h:mm, bare = minutes, `45m`, `90s`, `1h30m`, reject components ≥ 60 after the first)
+- [X] T032 [P] [US2] Tests for `TimestampParser` in `dotnet/tests/Slopsoil.Tests/Commands/TimestampTests.cs` (port every case from `tests/test_jellyfin_commands.py`: `1:23:45`, `1.23.45`, `1:23` = h:mm, bare = minutes, `45m`, `90s`, `1h30m`, reject components ≥ 60 after the first)
 - [ ] T033 [P] [US2] Video player pause gate / in-place seek / restart handshake (`RestartSeq`, `SegmentOffset`, `SegmentFrames`, `SeekPending` incl. restarting window, ≤ 0.5 s drained-wait, unregister on sender exit) + tests in `VideoPlayerTests.cs`; audio sender drain-on-restart, pause-loop restart handling and pending-seek silence + tests in `AudioSenderTests.cs`
 - [ ] T034 [US2] `MediaModule` `pause`, `play`, `resume <time>`, `stop`, `aspect-ratio`/`aspect`/`ar` (options exactly: Original (default), 16:9, 4:3, 2.39:1 (21:9), 1.85:1; applies live only when the stream is a Jellyfin one; remembered per guild across leaving voice), and title fall-through for help/pause/play/stop/skip/playlist/resume/aspect, with tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaControlTests.cs`
 - [ ] T035 [US2] `VoiceModule` `!leave`/`!stop` sharing one stop helper (cancel stream → stop audio → disconnect go-live → leave) and auto-leave when the last human leaves, with tests (reference `cogs/voice.py`, `tests/test_voice.py`)
@@ -138,8 +138,8 @@ targets hold; `off` removes it without a screenshare drop.
 **Independent Test**: quickstart.md scenario 6.
 
 - [X] T039 [US5] Extend `.github/workflows/docker-publish.yml` with a .NET image job building `dotnet/Dockerfile`: PR build-check (no push, cache read-only) and on merge to develop push `ghcr.io/<owner>/slopsoil:dotnet` and `:dotnet-sha-<short sha>` (`latest` untouched)
-- [ ] T040 [US5] Parity checklist `specs/001-dotnet-rewrite/checklists/parity.md` generated from contracts/commands.md rows (input → expected reply) for manual sign-off before cut-over
-- [ ] T041 [US5] README section "Running the .NET edition" (tag, env compatibility, what's not included) in `README.md`
+- [X] T040 [US5] Parity checklist `specs/001-dotnet-rewrite/checklists/parity.md` generated from contracts/commands.md rows (input → expected reply) for manual sign-off before cut-over
+- [X] T041 [US5] README section "Running the .NET edition" (tag, env compatibility, what's not included) in `README.md`
 
 ---
 
