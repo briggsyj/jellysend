@@ -112,13 +112,26 @@ public sealed class VoiceModule(VoiceManager voice, IStreamControl streams, ILog
         await voice.LeaveAsync(guildId);
     }
 
+    /// <summary>Longest a self "left voice" check waits for a start/join in progress before deciding.</summary>
+    public static readonly TimeSpan SelfLeftBusyLimit = TimeSpan.FromSeconds(60);
+
     /// <summary>The bot left voice without !leave (kicked, moved out, connection lost): discard the session.</summary>
     private async Task OnSelfLeftAsync(ulong guildId)
     {
         await Task.Delay(SelfLeftGrace, _time).ConfigureAwait(false);
-        if (voice.Gateway.GetVoiceChannel(guildId, voice.Gateway.SelfId) is not null || voice.IsBusy(guildId) || streams.IsStarting(guildId))
+
+        // A start or move in progress may legitimately leave and rejoin: wait for it to finish, then decide on the
+        // state it left behind (giving up here would leave a kicked session alive forever).
+        var waited = TimeSpan.Zero;
+        while ((voice.IsBusy(guildId) || streams.IsStarting(guildId)) && waited < SelfLeftBusyLimit)
         {
-            return; // moved/rejoined, or a start/join is reconnecting on purpose
+            await Task.Delay(SelfLeftGrace, _time).ConfigureAwait(false);
+            waited += SelfLeftGrace;
+        }
+
+        if (voice.Gateway.GetVoiceChannel(guildId, voice.Gateway.SelfId) is not null)
+        {
+            return; // moved/rejoined
         }
 
         if (voice.Find(guildId) is null && !streams.IsStreaming(guildId))

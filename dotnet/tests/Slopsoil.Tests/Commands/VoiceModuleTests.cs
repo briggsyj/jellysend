@@ -164,6 +164,11 @@ public sealed class VoiceModuleTests
         _streams.Starting.Add(5);
         var starting = module.OnVoiceStateChangedAsync(5, 1, 50, null);
         time.Advance(VoiceModule.SelfLeftGrace);
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.False(starting.IsCompleted);                          // waits for the start instead of giving up
+        _gateway.States[(5, 1)] = 50;                                // the start rejoined
+        _streams.Starting.Clear();
+        time.Advance(VoiceModule.SelfLeftGrace);
         await starting;
 
         _streams.Starting.Clear();
@@ -172,6 +177,57 @@ public sealed class VoiceModuleTests
         time.Advance(VoiceModule.SelfLeftGrace);
         await own;
         Assert.Empty(_streams.Stops);
+    }
+
+    [Fact]
+    public async Task Self_leave_during_a_start_that_ends_out_of_voice_tears_down()
+    {
+        var time = new Slopsoil.Tests.Discord.ManualTimeProvider();
+        var module = new VoiceModule(_voice, _streams, time: time);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States.Remove((5, 1));                              // kicked mid-start
+        _streams.Starting.Add(5);
+        var left = module.OnVoiceStateChangedAsync(5, 1, 50, null);
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        _streams.Starting.Clear();
+        time.Advance(VoiceModule.SelfLeftGrace);
+        await left;
+        Assert.Equal([(5UL, "disconnected")], _streams.Stops);
+    }
+
+    [Fact]
+    public async Task Leave_waits_for_an_in_flight_connect_and_removes_it()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slow = new SlowGateway(_gateway, release.Task);
+        var voice = new VoiceManager(slow);
+        var connecting = voice.EnsureAsync(5, 50, TestContext.Current.CancellationToken);
+        var leaving = voice.LeaveAsync(5);
+        Assert.False(leaving.IsCompleted);
+        release.SetResult();
+        await connecting;
+        await leaving;
+        Assert.Null(voice.Find(5));
+        Assert.False(_gateway.Links[0].IsConnected);
+    }
+
+    private sealed class SlowGateway(FakeVoiceGateway inner, Task gate) : IVoiceGateway
+    {
+        public ulong SelfId => inner.SelfId;
+
+        public ulong? GetVoiceChannel(ulong guildId, ulong userId) => inner.GetVoiceChannel(guildId, userId);
+
+        public (ulong Guild, ulong Channel)? FindUserVoice(ulong userId) => inner.FindUserVoice(userId);
+
+        public IReadOnlyCollection<ulong> UsersInChannel(ulong guildId, ulong channelId) => inner.UsersInChannel(guildId, channelId);
+
+        public async Task<IVoiceLink> ConnectAsync(ulong guildId, ulong channelId, CancellationToken ct)
+        {
+            await gate;
+            return await inner.ConnectAsync(guildId, channelId, ct);
+        }
     }
 
     [Fact]

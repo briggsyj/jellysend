@@ -242,6 +242,37 @@ public sealed class MediaControlTests
     }
 
     [Fact]
+    public async Task Stop_during_auto_advance_keeps_the_playlist()
+    {
+        await PlayFilm();
+        await _h.Send("!media queue other");
+        _h.Library.Search["third"] = [MediaHarness.Movie("t", "Third", 2002)];
+        await _h.Send("!media queue third");
+        _h.Library.PlaybackGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Library.PlaybackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Current.End(PipelineEndReason.Natural);       // auto-advance starts "Other"…
+        await _h.Library.PlaybackEntered.Task;
+        await _h.Send("!stop");                          // …and the user stops meanwhile
+        _h.Library.PlaybackGate.SetResult();
+        await _h.Until(() => !_h.Media.IsStarting(5));
+        Assert.Single(_h.Pipelines.Created);             // neither Other nor Third started
+        await _h.Send("!media playlist");
+        Assert.Equal("**Up next** (2/10):\n  `1` Other (2001)\n  `2` Third (2002)", _h.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task No_reconnect_after_a_kick_and_no_false_reconnect_message()
+    {
+        await PlayFilm();
+        _h.Gateway.States.Remove((5, 1));                // kicked: the bot is no longer in the channel
+        _h.Connector.Links[^1].Close();
+        await _h.Until(() => !_h.Media.IsStreaming(5) && !_h.Media.IsStarting(5));
+        Assert.Single(_h.Pipelines.Created);
+        Assert.Contains(Slopsoil.Streaming.Engine.StreamEngine.ConnectionLostMessage, _h.Texts);
+        Assert.DoesNotContain(_h.Texts, t => t.Contains("reconnecting", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Pipeline_failure_message_reaches_the_channel()
     {
         await PlayFilm();

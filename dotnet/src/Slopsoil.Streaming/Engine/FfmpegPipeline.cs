@@ -150,7 +150,7 @@ internal sealed class FfmpegPipeline : IPipeline
             {
                 if (!_stop.IsCancellationRequested)
                 {
-                    _log.LogError("go-live: timed out waiting for audio FIFO");
+                    _log.LogError("go-live: no audio from FFmpeg (it exited or did not open the audio FIFO in time)");
                     _player.Stop();
                     _end.TrySetResult(new PipelineEnd(PipelineEndReason.Failed, "go-live stream failed to start"));
                 }
@@ -198,9 +198,15 @@ internal sealed class FfmpegPipeline : IPipeline
         var open = Task.Run(() => StreamPcmSource.OpenFifo(path));
         // Give up early when the player already finished (FFmpeg failed before opening its outputs).
         var winner = await Task.WhenAny(open, Task.Delay(_fifoTimeout, _stop.Token), _player.Completion).ConfigureAwait(false);
-        if (winner == open)
+        if (winner == open || open.IsCompletedSuccessfully)
         {
+            // Opened (possibly at the same time as a very short clip already finished): use it.
             return await open.ConfigureAwait(false);
+        }
+
+        if (_player.Completion.IsCompleted)
+        {
+            _log.LogWarning("FFmpeg exited before opening the audio FIFO");
         }
 
         try

@@ -118,8 +118,21 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         }
     }
 
-    /// <summary>Message shown when the screenshare connection drops and the item is resumed.</summary>
-    public const string ConnectionLostMessage = "⚠ the screenshare connection dropped — reconnecting…";
+    /// <summary>
+    /// Stop the guild's stream only if it is still the one whose controls are <paramref name="playback"/> — an
+    /// abandoned start must not end a newer stream that registered meanwhile.
+    /// </summary>
+    public async Task StopIfCurrentAsync(ulong guildId, IPlayback playback, string reason)
+    {
+        if (_sessions.TryGetValue(guildId, out var session) && ReferenceEquals(session.Pipeline?.Playback, playback))
+        {
+            await StopSessionAsync(guildId, session, reason).ConfigureAwait(false);
+            await session.Done.WaitAsync(OldStreamCleanupWait, CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Shown when the screenshare connection drops under a running stream (the media layer may then resume).</summary>
+    public const string ConnectionLostMessage = "⚠ the screenshare connection dropped";
 
     private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<PipelineEnd, Task>? onEnd)
     {

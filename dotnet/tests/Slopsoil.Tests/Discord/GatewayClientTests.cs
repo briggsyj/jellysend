@@ -192,8 +192,9 @@ public sealed class GatewayClientTests : IAsyncLifetime
         _time.Advance(TimeSpan.FromSeconds(42)); // no ACK arrived
 
         var ws2 = await _factory.NextAsync();
+        // The old socket's close/dispose may still be finishing on the receive task when the new one is created.
+        await VoiceConnectionTests.WaitUntil(() => ws.Disposed);
         Assert.Equal(4000, ws.ClosedWith);
-        Assert.True(ws.Disposed);
         Assert.Equal("wss://gateway-us-east1-b.discord.gg/?encoding=json&v=9", ws2.Uri!.ToString());
         ws2.Hello();
         var resume = await ws2.ExpectAsync(GatewayOp.Resume);

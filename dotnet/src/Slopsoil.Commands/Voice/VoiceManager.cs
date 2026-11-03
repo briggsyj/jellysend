@@ -67,17 +67,29 @@ public sealed class VoiceManager(IVoiceGateway gateway, ILogger<VoiceManager>? l
         }
     }
 
-    /// <summary>Leave voice in the guild. Returns false if there was no connected link.</summary>
+    /// <summary>
+    /// Leave voice in the guild. Returns false if there was no connected link. Waits for a join/move in progress
+    /// (same per-guild gate), so a leave issued while a start is still connecting removes that new link too.
+    /// </summary>
     public async Task<bool> LeaveAsync(ulong guildId)
     {
-        if (!_links.TryRemove(guildId, out var link))
+        var gate = _locks.GetOrAdd(guildId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return false;
-        }
+            if (!_links.TryRemove(guildId, out var link))
+            {
+                return false;
+            }
 
-        var wasConnected = link.IsConnected;
-        await SafeDisconnectAsync(link).ConfigureAwait(false);
-        return wasConnected;
+            var wasConnected = link.IsConnected;
+            await SafeDisconnectAsync(link).ConfigureAwait(false);
+            return wasConnected;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private async Task SafeDisconnectAsync(IVoiceLink link)

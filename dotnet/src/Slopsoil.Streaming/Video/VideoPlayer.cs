@@ -242,8 +242,26 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         {
             // SIGTERM only. Closing stdout here would block on .NET/Linux until the player thread's in-flight Read
             // returns (a silent FFmpeg — cold transcode, stalled input — never returns), so no signal would be sent.
-            // The player thread closes stdout itself in KillProcess, where it cannot race its own Read.
+            // The player thread closes stdout itself in KillProcess, where it cannot race its own Read. If FFmpeg
+            // ignores SIGTERM (blocked in a syscall), escalate to SIGKILL after the usual grace.
             Signal(process, closeStdout: false);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // On the player's clock (fake in tests); only observes the process, never waits on it.
+                    await Task.Delay(TerminateGrace, _time).ConfigureAwait(false);
+                    if (!process.HasExited)
+                    {
+                        _log.LogWarning("FFmpeg ignored SIGTERM for {Grace}; killing it", TerminateGrace);
+                        process.Kill();
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+                {
+                    // Already gone or reaped by the player thread.
+                }
+            });
         }
     }
 
@@ -818,7 +836,18 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         }
     }
 
-    private void WriteOverlay() => OverlayFile.Write(OverlayPath, DiagnosticsFormat.Overlay(Diagnostics.Snapshot()));
+    private void WriteOverlay()
+    {
+        var text = DiagnosticsFormat.Overlay(Diagnostics.Snapshot());
+        // A tick still running when the player finished (its timer is disposed without waiting) must not recreate
+        // the overlay file Finish just deleted.
+        if (Volatile.Read(ref _finished) || !Volatile.Read(ref _debug))
+        {
+            return;
+        }
+
+        OverlayFile.Write(OverlayPath, text);
+    }
 
     private sealed class FollowerHandle(VideoPlayer owner) : IAudioFollowerHandle
     {
