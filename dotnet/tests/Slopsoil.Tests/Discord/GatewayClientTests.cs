@@ -506,6 +506,16 @@ public class VoiceStateCacheTests
     }
 
     [Fact]
+    public void Find_user_returns_the_lowest_guild_with_the_user_in_voice()
+    {
+        var cache = new VoiceStateCache();
+        cache.Apply("GUILD_CREATE", Json("""{"id":"9","voice_states":[{"user_id":"2","channel_id":"90"}]}"""));
+        cache.Apply("GUILD_CREATE", Json("""{"id":"3","voice_states":[{"user_id":"2","channel_id":"30"}]}"""));
+        Assert.Equal((3UL, 30UL), cache.FindUser(2));
+        Assert.Null(cache.FindUser(7));
+    }
+
+    [Fact]
     public void Ignores_malformed_and_unrelated_payloads()
     {
         var cache = new VoiceStateCache();

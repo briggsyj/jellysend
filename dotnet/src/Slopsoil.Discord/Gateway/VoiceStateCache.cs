@@ -21,6 +21,20 @@ public sealed class VoiceStateCache
     public IReadOnlyDictionary<ulong, ulong> GetGuild(ulong guildId) =>
         _guilds.TryGetValue(guildId, out var users) ? new Dictionary<ulong, ulong>(users) : new Dictionary<ulong, ulong>();
 
+    /// <summary>The first (lowest id) guild where <paramref name="userId"/> is in voice, for DM commands.</summary>
+    public (ulong Guild, ulong Channel)? FindUser(ulong userId)
+    {
+        foreach (var (guild, users) in _guilds.OrderBy(g => g.Key))
+        {
+            if (users.TryGetValue(userId, out var channel))
+            {
+                return (guild, channel);
+            }
+        }
+
+        return null;
+    }
+
     public void Clear() => _guilds.Clear();
 
     /// <summary>Update the cache from dispatch <paramref name="eventName"/> with data <paramref name="data"/>.</summary>
