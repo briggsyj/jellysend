@@ -132,11 +132,62 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var item = await ResolveAsync(c, query).ConfigureAwait(false);
-        if (item is not null)
+        // `!media <title> <time>` (spec 002): start the chosen item at the time.
+        var (title, startAt) = MediaText.SplitTrailingTime(query);
+        if (startAt is not { } start)
+        {
+            if (await ResolveAsync(c, query).ConfigureAwait(false) is { } plain)
+            {
+                await PlayItemAsync(c, plain).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        // FR-004: a title that genuinely ends in a time-like word still plays (from the beginning).
+        var (item, fellBack) = await ResolveWithFallbackAsync(c, title, query).ConfigureAwait(false);
+        if (item is null)
+        {
+            return;
+        }
+
+        if (fellBack)
         {
             await PlayItemAsync(c, item).ConfigureAwait(false);
+            return;
         }
+
+        if (item.RuntimeSeconds is { } runtime && start >= runtime)
+        {
+            await c.ReplyAsync($"{MediaText.FormatTimestamp(start)} is past the end ({MediaText.FormatTimestamp(runtime)})").ConfigureAwait(false);
+            return;
+        }
+
+        if (start > 0)
+        {
+            await c.ReplyAsync($"⏩ starting at {MediaText.FormatTimestamp(start)}").ConfigureAwait(false);
+        }
+
+        await PlayItemAsync(c, item, start).ConfigureAwait(false);
+    }
+
+    /// <summary>Search <paramref name="query"/>; if it finds nothing at all, search <paramref name="fallback"/> instead.</summary>
+    private async Task<(MediaItem? Item, bool FellBack)> ResolveWithFallbackAsync(CommandContext c, string query, string fallback)
+    {
+        var quiet = new QuietMiss();
+        var item = await ResolveAsync(c, query, quiet).ConfigureAwait(false);
+        if (item is not null || !quiet.NothingFound)
+        {
+            return (item, false); // found, or cancelled/failed in a picker or on an error (already replied)
+        }
+
+        return (await ResolveAsync(c, fallback).ConfigureAwait(false), true);
+    }
+
+    /// <summary>Lets the first, title-only search of a fall-back pair skip its "nothing found" reply.</summary>
+    private sealed class QuietMiss
+    {
+        public bool NothingFound { get; set; }
     }
 
     /// <summary><c>!media stop making sense</c> is a title, not <c>stop</c> + junk: search it.</summary>
@@ -613,7 +664,7 @@ public sealed class MediaModule : IStreamControl
         return true;
     }
 
-    private async Task<MediaItem?> ResolveAsync(CommandContext c, string query)
+    private async Task<MediaItem?> ResolveAsync(CommandContext c, string query, QuietMiss? quiet = null)
     {
         var library = _library!;
         var (show, season, episode) = MediaText.ParseEpisodeQuery(query);
@@ -637,6 +688,12 @@ public sealed class MediaModule : IStreamControl
 
         if (results.Count == 0)
         {
+            if (quiet is not null)
+            {
+                quiet.NothingFound = true;
+                return null;
+            }
+
             await c.ReplyAsync(season is { } ns && episode is { } ne
                 ? $"S{ns:00}E{ne:00} of `{show}` not found in Jellyfin"
                 : $"nothing found in Jellyfin for `{query}`").ConfigureAwait(false);

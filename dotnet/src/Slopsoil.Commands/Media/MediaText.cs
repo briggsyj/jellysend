@@ -27,6 +27,7 @@ public static partial class MediaText
         `!media <movie>` — e.g. `!media inception`
         `!media <show> s03e05` — a specific episode
         `!media <show>` — pick season → episode
+        `!media <movie> 1:23:45` — start at a time (also `<show> s03e05 45m`)
 
         **Control**
         `!media pause` · `!media play`
@@ -96,6 +97,33 @@ public static partial class MediaText
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// <c>!media &lt;title&gt; &lt;time&gt;</c> (spec 002, FR-002/FR-003): split a trailing start time off a query. Only the last
+    /// word counts, only after a non-empty title, and only if it has a <c>:</c>/<c>.</c> separator or an
+    /// <c>h</c>/<c>m</c>/<c>s</c> unit and is a valid <see cref="ParseTimestamp"/> time — a bare number is a title
+    /// (<c>blade runner 2049</c>), and a time on its own is a title (<c>2:22</c>).
+    /// </summary>
+    public static (string Title, double? Seconds) SplitTrailingTime(string query)
+    {
+        var trimmed = query.Trim();
+        var split = trimmed.LastIndexOfAny([' ', '\t', '\n']);
+        if (split < 0)
+        {
+            return (trimmed, null);
+        }
+
+        var title = trimmed[..split].TrimEnd();
+        var word = trimmed[(split + 1)..];
+        var marked = word.Contains(':', StringComparison.Ordinal) || word.Contains('.', StringComparison.Ordinal)
+            || word.Any(ch => ch is 'h' or 'm' or 's' or 'H' or 'M' or 'S');
+        if (title.Length == 0 || !marked || word.All(char.IsAsciiDigit) || ParseTimestamp(word) is not { } seconds)
+        {
+            return (trimmed, null);
+        }
+
+        return (title, seconds);
     }
 
     /// <summary><c>H:MM:SS</c>, negatives clamp to zero, fractions truncate.</summary>

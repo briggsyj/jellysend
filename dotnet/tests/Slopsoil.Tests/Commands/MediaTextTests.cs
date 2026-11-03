@@ -94,3 +94,31 @@ public sealed class MediaTextTests
         Assert.Equal(10, MediaText.PlaylistMax);
     }
 }
+
+public sealed class SplitTrailingTimeTests
+{
+    [Theory]
+    [InlineData("inception 1:12:30", "inception", 4350.0)]
+    [InlineData("inception 1.12", "inception", 4320.0)]
+    [InlineData("  the office s02e03 0:11  ", "the office s02e03", 660.0)]
+    [InlineData("alien 45m", "alien", 2700.0)]
+    [InlineData("alien 90s", "alien", 90.0)]
+    [InlineData("apollo 13 1h2m3s", "apollo 13", 3723.0)]
+    [InlineData("film 0:00", "film", 0.0)]
+    [InlineData("film 1H30M", "film", 5400.0)]
+    public void Splits_a_trailing_time(string query, string title, double seconds) =>
+        Assert.Equal((title, (double?)seconds), MediaText.SplitTrailingTime(query));
+
+    [Theory]
+    [InlineData("inception")]
+    [InlineData("blade runner 2049")]          // bare number: a title, never minutes here
+    [InlineData("apollo 13")]
+    [InlineData("1917")]
+    [InlineData("2:22")]                       // time with no title in front: the title
+    [InlineData("inception 1:75")]             // not a valid time
+    [InlineData("the matrix reloaded")]        // ends in a word with h/m/s letters but not a time
+    [InlineData("film 1.5h")]
+    [InlineData("")]
+    public void Leaves_everything_else_as_the_title(string query) =>
+        Assert.Equal((query.Trim(), (double?)null), MediaText.SplitTrailingTime(query));
+}

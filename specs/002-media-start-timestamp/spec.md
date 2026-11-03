@@ -8,6 +8,15 @@
 
 **Input**: User description: "Extending the play media command `!media <name> <timestamp>` to allow the user to jump to a hours-minutes-optionalseconds timestamp immediately"
 
+## Clarifications
+
+### Session 2026-11-03
+
+- Q: Which edition gets the feature? → A: The .NET edition only (it supersedes the Python bot, which is not
+  changed).
+- Q: Should `!media queue <title> <time>` remember a start time? → A: No. Queued items always start from the
+  beginning; `!media queue inception 1:12` searches for "inception 1:12" as today.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Start a movie part-way through (Priority: P1)
@@ -120,10 +129,9 @@ would play the wrong title or the right title at a nonsense position.
   the item's starting position.
 - **FR-011**: The `!media help` text MUST document the new form (e.g. `!media <movie> 1:23:45` — start at a
   time).
-- **FR-012**: The feature MUST be available in [NEEDS CLARIFICATION: which edition(s) — the current Python
-  bot, the .NET edition being built, or both?].
-- **FR-013**: `!media queue <title> <time>` [NEEDS CLARIFICATION: should a queued item remember a start
-  time and begin there when the playlist reaches it, or is the time only for immediate playback?].
+- **FR-012**: The feature MUST be available in the .NET edition; the Python bot is unchanged.
+- **FR-013**: `!media queue <title> <time>` MUST NOT take a start time: the whole text is the title search, and
+  queued items start from the beginning (unchanged behaviour).
 
 ### Key Entities
 

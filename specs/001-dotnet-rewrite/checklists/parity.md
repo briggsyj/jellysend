@@ -41,6 +41,9 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | P7 | `!media zzzzqqq` | ``nothing found in Jellyfin for `zzzzqqq` `` | [ ] | [ ] |
 | P8 | `!media <movie>` while not in voice | `you're not in a voice channel` | [ ] | [ ] |
 | P9 | `!media search queue` | title search for "queue" (not the sub-command) | [ ] | [ ] |
+| P10 | `!media <movie> 1:12:30` (spec 002, .NET only) | `⏩ starting at 1:12:30`; first frame at that point | n/a | [ ] |
+| P11 | `!media <movie> 9:00:00` past the runtime | `9:00:00 is past the end (H:MM:SS)`; nothing starts | n/a | [ ] |
+| P12 | `!media blade runner 2049` / `!media 2:22` | plays from the beginning (numbers stay part of the title) | [ ] | [ ] |
 
 ## Control (US2)
 
