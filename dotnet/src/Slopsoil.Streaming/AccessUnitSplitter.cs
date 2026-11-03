@@ -5,7 +5,8 @@ namespace Slopsoil.Streaming;
 /// <summary>
 /// Splits an H.264 Annex-B byte stream into access units (one list of NAL units per frame), as
 /// <c>video_player.py</c>'s read loop does: an AUD or a new slice ends the current frame, SPS/PPS/SEI
-/// are carried into the next frame (SPS VUI rewritten for Discord), anything else is dropped.
+/// are carried into the next frame (SPS VUI rewritten for Discord), anything else is dropped. Unlike Python,
+/// continuation slices of one picture (first_mb_in_slice != 0) stay in that picture's access unit.
 /// </summary>
 public sealed class AccessUnitSplitter
 {
@@ -77,6 +78,15 @@ public sealed class AccessUnitSplitter
         }
         else if (type is 1 or 5)
         {
+            // A slice with first_mb_in_slice == 0 (ue(v) "1" bit) starts a picture; later slices of the same
+            // picture (sliced-threads encoders) join it so they share one RTP timestamp.
+            var firstSlice = nal.Length < 2 || (nal[1] & 0x80) != 0;
+            if (!firstSlice && _frame.Count > 0 && _pending.Count == 0)
+            {
+                _frame.Add(nal.ToArray());
+                return;
+            }
+
             if (_frame.Count > 0)
             {
                 output.Add(_frame);

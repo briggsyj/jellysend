@@ -29,6 +29,20 @@ public sealed class AccessUnitSplitterTests
     }
 
     [Fact]
+    public void Continuation_slices_join_their_picture()
+    {
+        byte[] idrPart2 = [0x65, 0x22, 0x01];   // first_mb_in_slice != 0
+        byte[] pPart2 = [0x41, 0x11, 0x02];
+        var splitter = new AccessUnitSplitter();
+        var frames = splitter.Feed(Stream(Pps, Idr, idrPart2, Slice, pPart2, Slice)).ToList();
+        frames.AddRange(splitter.Flush());
+        Assert.Equal(3, frames.Count);
+        Assert.Equal([Pps, Idr, idrPart2], frames[0]);
+        Assert.Equal([Slice, pPart2], frames[1]);
+        Assert.Equal([Slice], frames[2]);
+    }
+
+    [Fact]
     public void Nal_split_across_chunks_is_reassembled_and_flushed_at_end()
     {
         var data = Stream(Idr, Slice, [.. Slice, 0x00, 0x00]);
@@ -69,13 +83,14 @@ public sealed class AccessUnitSplitterTests
 public sealed class AccessUnitSplitterFfmpegTests
 {
     [Theory]
-    [InlineData("libx264", "-x264-params", "aud=1")]
-    [InlineData("libx264", "-x264-params", "aud=0")]
-    public void Real_encoder_output_yields_one_access_unit_per_frame(string codec, string optName, string optValue)
+    [InlineData("aud=1")]
+    [InlineData("aud=0")]
+    [InlineData("aud=1:sliced-threads=1:threads=4")]
+    public void Real_encoder_output_yields_one_access_unit_per_frame(string x264Params)
     {
         var output = RunFfmpeg(
-            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-frames:v", "45", "-g", "15", "-bf", "0",
-            "-c:v", codec, optName, optValue, "-f", "h264", "pipe:1");
+            "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=30", "-frames:v", "45", "-g", "15", "-bf", "0",
+            "-c:v", "libx264", "-tune", "zerolatency", "-x264-params", x264Params, "-f", "h264", "pipe:1");
         Assert.SkipWhen(output is null, "ffmpeg with libx264 not available");
 
         var splitter = new AccessUnitSplitter();
@@ -83,7 +98,7 @@ public sealed class AccessUnitSplitterFfmpegTests
         frames.AddRange(splitter.Flush()); // after the lazy Feed calls ran
 
         Assert.Equal(45, frames.Count);
-        Assert.All(frames, f => Assert.Single(f, n => (n[0] & 0x1F) is 1 or 5));
+        Assert.All(frames, f => Assert.Single(f, n => (n[0] & 0x1F) is 1 or 5 && (n[1] & 0x80) != 0));
         Assert.Equal(3, frames.Count(f => f.Any(n => (n[0] & 0x1F) == 5)));
         Assert.All(frames.Where(f => f.Any(n => (n[0] & 0x1F) == 5)), f => Assert.Equal(7, f[0][0] & 0x1F));
     }
