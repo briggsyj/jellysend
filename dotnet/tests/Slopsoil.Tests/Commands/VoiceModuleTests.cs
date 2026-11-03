@@ -107,7 +107,6 @@ public sealed class VoiceModuleTests
         await Send("!join");
 
         await _module.OnVoiceStateChangedAsync(9, 20, 50, null);     // other guild: no link
-        await _module.OnVoiceStateChangedAsync(5, 1, 50, 99);        // the bot moved (handled as self)
         _gateway.States.Remove((5, 20));
         await _module.OnVoiceStateChangedAsync(5, 20, 50, null);     // 30 still there
         Assert.Empty(_streams.Stops);
@@ -116,6 +115,105 @@ public sealed class VoiceModuleTests
         await _module.OnVoiceStateChangedAsync(5, 30, 50, 51);       // moved away: only the bot remains
         Assert.Equal([(5UL, "auto-leave")], _streams.Stops);
         Assert.Null(_voice.Get(5));
+    }
+
+    private (VoiceModule Module, Slopsoil.Tests.Discord.ManualTimeProvider Time) WithTimeout(double minutes)
+    {
+        var time = new Slopsoil.Tests.Discord.ManualTimeProvider();
+        return (new VoiceModule(_voice, _streams, time: time, emptyChannelTimeout: TimeSpan.FromMinutes(minutes)), time);
+    }
+
+    [Fact]
+    public async Task Empty_channel_keeps_streaming_until_the_timeout_then_stops_and_leaves()
+    {
+        var (module, time) = WithTimeout(20);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _streams.Streaming.Add(5);
+        _gateway.States.Remove((5, 20));
+        await module.OnVoiceStateChangedAsync(5, 20, 50, null);       // last viewer left
+        Assert.Empty(_streams.Stops);
+        time.Advance(TimeSpan.FromMinutes(19));
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.Empty(_streams.Stops);
+        time.Advance(TimeSpan.FromMinutes(1));
+        await module.EmptyCountdowns[5];
+        Assert.Equal([(5UL, "empty-timeout")], _streams.Stops);
+        Assert.Null(_voice.Find(5));
+    }
+
+    [Fact]
+    public async Task Rejoining_cancels_and_leaving_again_restarts_the_countdown()
+    {
+        var (module, time) = WithTimeout(20);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States.Remove((5, 20));
+        await module.OnVoiceStateChangedAsync(5, 20, 50, null);
+        var first = module.EmptyCountdowns[5];
+        time.Advance(TimeSpan.FromMinutes(10));
+        _gateway.States[(5, 30)] = 50;
+        await module.OnVoiceStateChangedAsync(5, 30, null, 50);       // someone came back
+        await first;
+        time.Advance(TimeSpan.FromMinutes(15));                        // past the original deadline
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.Empty(_streams.Stops);
+
+        _gateway.States.Remove((5, 30));
+        await module.OnVoiceStateChangedAsync(5, 30, 50, null);       // empty again: a fresh 20 minutes
+        time.Advance(TimeSpan.FromMinutes(19));
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.Empty(_streams.Stops);
+        time.Advance(TimeSpan.FromMinutes(1));
+        await module.EmptyCountdowns[5];
+        Assert.Single(_streams.Stops);
+    }
+
+    [Fact]
+    public async Task Countdown_ends_quietly_when_the_bot_already_left_or_people_came_back_unseen()
+    {
+        var (module, time) = WithTimeout(1);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States.Remove((5, 20));
+        await module.OnVoiceStateChangedAsync(5, 20, 50, null);
+        _gateway.States[(5, 40)] = 50;                                 // a viewer the event stream missed
+        time.Advance(TimeSpan.FromMinutes(1));
+        await module.EmptyCountdowns[5];
+        Assert.Empty(_streams.Stops);
+
+        _gateway.States.Remove((5, 40));
+        await module.OnVoiceStateChangedAsync(5, 40, 50, null);
+        var countdown = module.EmptyCountdowns[5];
+        await _voice.LeaveAsync(5);                                    // !leave meanwhile
+        var selfLeft = module.OnVoiceStateChangedAsync(5, 1, 50, null); // the bot's own leave cancels it
+        await countdown;                                               // cancelled, without waiting for time
+        time.Advance(TimeSpan.FromMinutes(1));                         // (also passes the self-left grace)
+        await selfLeft;
+        Assert.Empty(_streams.Stops);
+    }
+
+    [Fact]
+    public async Task Moved_into_an_empty_channel_starts_the_countdown()
+    {
+        var (module, time) = WithTimeout(5);
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States[(5, 1)] = 77;                                  // a moderator moved the bot
+        await module.OnVoiceStateChangedAsync(5, 1, 50, 77);
+        time.Advance(TimeSpan.FromMinutes(5));
+        await module.EmptyCountdowns[5];
+        Assert.Equal([(5UL, "empty-timeout")], _streams.Stops);
+    }
+
+    [Fact]
+    public async Task Zero_timeout_leaves_at_once_and_a_move_into_an_empty_channel_does_too()
+    {
+        _gateway.States[(5, 20)] = 50;
+        await Send("!join");
+        _gateway.States[(5, 1)] = 77;
+        await _module.OnVoiceStateChangedAsync(5, 1, 50, 77);
+        Assert.Equal([(5UL, "auto-leave")], _streams.Stops);
     }
 
     [Fact]

@@ -51,6 +51,12 @@ public sealed partial record SlopsoilOptions
     /// <summary>A/V offset in milliseconds (±5000).</summary>
     public int AvSyncMs { get; init; }
 
+    /// <summary>Default of <see cref="EmptyChannelTimeout"/> (spec 003).</summary>
+    public static readonly TimeSpan DefaultEmptyChannelTimeout = TimeSpan.FromMinutes(20);
+
+    /// <summary>How long the bot stays (and streams) in a voice channel nobody else is in; zero = leave at once.</summary>
+    public TimeSpan EmptyChannelTimeout { get; init; } = DefaultEmptyChannelTimeout;
+
     /// <summary>Jellyfin is usable when a URL and an API key or login are configured.</summary>
     public bool JellyfinConfigured =>
         JellyfinUrl is not null && (JellyfinApiKey is not null || (JellyfinUsername is not null && JellyfinPassword is not null));
@@ -142,6 +148,19 @@ public sealed partial record SlopsoilOptions
             }
         }
 
+        var emptyTimeout = DefaultEmptyChannelTimeout;
+        if (Get("EMPTY_CHANNEL_TIMEOUT_MINUTES") is { } e)
+        {
+            if (TryDouble(e, out var minutes) && minutes is >= 0 and <= 1440)
+            {
+                emptyTimeout = TimeSpan.FromMinutes(minutes);
+            }
+            else
+            {
+                warn?.Invoke($"EMPTY_CHANNEL_TIMEOUT_MINUTES='{e}' invalid (want 0-1440); using 20");
+            }
+        }
+
         var allowed = new HashSet<ulong>();
         foreach (var part in (Get("ALLOWED_USER_IDS") ?? "").Split(','))
         {
@@ -166,6 +185,7 @@ public sealed partial record SlopsoilOptions
             VideoBitrate = Get("STREAM_VIDEO_BITRATE") ?? quality.Bitrate,
             PacketPace = pace,
             AvSyncMs = sync,
+            EmptyChannelTimeout = emptyTimeout,
         };
     }
 
@@ -173,7 +193,8 @@ public sealed partial record SlopsoilOptions
     public override string ToString() =>
         $"SlopsoilOptions {{ Jellyfin = {JellyfinUrl ?? "(unset)"}, SyncPlay = {SyncPlayConfigured}, Admins = {AllowedUserIds.Count}, "
         + $"Resolution = {Resolution}, Fps = {Fps.ToString(CultureInfo.InvariantCulture)}, Bitrate = {VideoBitrate}, "
-        + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs} }}";
+        + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs}, "
+        + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min }}";
 
     // Python float(): decimal or exponent, no thousands separators; also rejects NaN/inf like the range checks would.
     private static bool TryDouble(string s, out double value) =>

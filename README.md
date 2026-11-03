@@ -197,6 +197,9 @@ Remove the line (and pull again) to go back to Python. What's different:
 - Not included: TVheadend, IPTV sources and yt-dlp (`!play`, `!channels`, `!search`, `!add-source`, `!sources`,
   `!delete-source` reply that they are not available). `TVHEADEND_*`, `YTDLP_FORMAT` and `TIMEZONE` are ignored.
 - `SLOPSOIL_SPIKE=testpattern` runs a transport self-test instead of the bot: `!join` streams a test pattern and tone.
+- When everyone leaves the voice channel the stream keeps going for `EMPTY_CHANNEL_TIMEOUT_MINUTES` (default 20;
+  `0` = stop and leave at once, as the Python bot does) and stops if nobody returns.
+- `!media <title> 1:23:45` starts the item at that time (also `<show> s01e02 45m`).
 
 ### Option A - Pre-built image (recommended)
 

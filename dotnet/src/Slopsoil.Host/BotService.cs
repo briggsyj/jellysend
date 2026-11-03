@@ -70,7 +70,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
 
         var guildNames = new GuildNames();
         var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>());
-        var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>());
+        var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout);
 
         GeneralModule.Register(router, () => library is not null);
         voiceModule.Register(router);

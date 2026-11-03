@@ -16,6 +16,7 @@ variables are ignored without error so an existing `.env` works unchanged.
 | `STREAM_VIDEO_BITRATE` | no | preset | e.g. `2000k` |
 | `STREAM_PACKET_PACE` | no | `0.0` | 0.0–0.95 |
 | `STREAM_AV_SYNC_MS` | no | `0` | ±5000, offset the follower holds |
+| `EMPTY_CHANNEL_TIMEOUT_MINUTES` | no | `20` | .NET only (spec 003): stop + leave after the voice channel stayed empty this long; 0–1440, 0 = immediately |
 | `TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE` | — | — | accepted and ignored in this edition |
 
 # Contract: Container image

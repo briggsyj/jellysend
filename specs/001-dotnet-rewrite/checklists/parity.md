@@ -26,7 +26,7 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | V3 | `!leave` while streaming | `left!`; go-live ends, account leaves | [ ] | [ ] |
 | V4 | `!leave` when not connected | `not in a voice channel` | [ ] | [ ] |
 | V5 | `!stop` while streaming / idle | `stopped` / `nothing is playing` | [ ] | [ ] |
-| V6 | Last human leaves the channel | stream stops and the account leaves | [ ] | [ ] |
+| V6 | Last human leaves the channel | Python: stops and leaves at once · .NET (spec 003): keeps streaming, stops and leaves after `EMPTY_CHANNEL_TIMEOUT_MINUTES` (20) unless someone returns; `0` = at once | [ ] | [ ] |
 
 ## Play (US1)
 
