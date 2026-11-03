@@ -45,7 +45,16 @@ Project references enforce the constitution's layer rules: `Services` depends on
 | Spike: gateway / voice / go-live (T012) | done — unit-tested against fakes |
 | Spike: test-pattern harness (T013) | implemented — **awaiting manual run in a DAVE channel** |
 | Foundation: options, redaction, roles, router, number picker, host (T014–T019) | done — bot logs in, answers `!ping` / `!help`, refuses non-subset commands |
-| US1–US5 | not started |
+| US1 play (T020–T031) | done — Jellyfin search/pickers, FFmpeg video player, A/V-following audio sender, stream engine |
+| US2 control (T032–T035) | done — pause/play/resume/stop/aspect-ratio, `!join`/`!leave`/`!stop`, auto-leave |
+| US6 stability + debug (T044–T049) | done — diagnostics, 10 s stats log, `!media debug` overlay, soak harness ([tests/soak](tests/soak/README.md)) |
+| US3 playlist (T036), US4 SyncPlay (T037–T038) | done |
+| US5 deployment (T039–T041) | done — `:dotnet` image, parity checklist, README |
+| Polish: log scan (T042) | done |
+| Not yet verified live | T013 spike run, parity checklist, 2-hour soak on reference hardware, then cut-over (T043) |
+
+Everything above is unit- and integration-tested (real FFmpeg end to end on a fake go-live link); nothing has run
+against real Discord yet — the spike run is the first live check.
 
 ## Running the go-live spike (T013)
 
