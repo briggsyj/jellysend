@@ -1,5 +1,8 @@
 using Slopsoil.Discord.Dave;
+using System.Net.Sockets;
 using Slopsoil.Discord.Rtp;
+using Slopsoil.Streaming.Diagnostics;
+using Slopsoil.Streaming.Video;
 
 namespace Slopsoil.Streaming;
 
@@ -13,7 +16,7 @@ public delegate bool PacketSink(ReadOnlySpan<byte> datagram);
 /// audio packet path. Not thread-safe per media kind; audio and video may run on separate threads.
 /// </summary>
 public sealed class RtpMediaSender(
-    PacketSink sink, string mode, byte[] key, uint audioSsrc, uint videoSsrc, Func<IDaveSession?> dave)
+    PacketSink sink, string mode, byte[] key, uint audioSsrc, uint videoSsrc, Func<IDaveSession?> dave) : IVideoFrameSink
 {
     /// <summary>90 kHz RTP clock for video.</summary>
     public const int VideoClock = 90_000;
@@ -34,8 +37,15 @@ public sealed class RtpMediaSender(
 
     public long PacketsDropped => Interlocked.Read(ref _packetsDropped);
 
+    /// <summary>Datagrams whose send threw (socket closed, I/O error); the packet is lost, the stream goes on.</summary>
+    public long SendErrors => Interlocked.Read(ref _sendErrors);
+
+    /// <summary>Optional per-packet outcome sink (the stream diagnostics).</summary>
+    public ITransportStats? Stats { get; set; }
+
     private long _packetsSent;
     private long _packetsDropped;
+    private long _sendErrors;
 
     /// <summary>Send one 20 ms Opus frame (timestamp advances 960 samples).</summary>
     public void SendOpus(ReadOnlySpan<byte> opus)
@@ -51,7 +61,14 @@ public sealed class RtpMediaSender(
     }
 
     /// <summary>Send one access unit; all packets share a timestamp, the last carries the marker.</summary>
-    public void SendVideoFrame(IReadOnlyList<byte[]> nals, int timestampIncrement)
+    public void SendVideoFrame(IReadOnlyList<byte[]> nals, int timestampIncrement) =>
+        SendVideoFrame(nals, timestampIncrement, null);
+
+    /// <summary>
+    /// As <see cref="SendVideoFrame(IReadOnlyList{byte[]}, int)"/>, calling <paramref name="pacer"/> after each
+    /// packet; when it returns false the rest of the frame is dropped (the timestamp still advances).
+    /// </summary>
+    public void SendVideoFrame(IReadOnlyList<byte[]> nals, int timestampIncrement, PacketPacer? pacer)
     {
         if (nals.Count == 0)
         {
@@ -71,6 +88,10 @@ public sealed class RtpMediaSender(
                 var header = RtpHeader.Build(_videoSeq, _videoTs, videoSsrc, marker: i == payloads.Count - 1);
                 Send(TransportCrypto.Encrypt(header, payloads[i], mode, key, ref _videoNonce));
                 _videoSeq = (_videoSeq + 1) & 0xFFFF;
+                if (pacer is not null && !pacer(i, payloads.Count))
+                {
+                    break;
+                }
             }
 
             _videoTs = (_videoTs + timestampIncrement) & 0xFFFF_FFFF;
@@ -118,13 +139,27 @@ public sealed class RtpMediaSender(
 
     private void Send(byte[] datagram)
     {
-        if (sink(datagram))
+        bool sent;
+        try
+        {
+            sent = sink(datagram);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or ObjectDisposedException)
+        {
+            Interlocked.Increment(ref _sendErrors);
+            Stats?.SendError();
+            return;
+        }
+
+        if (sent)
         {
             Interlocked.Increment(ref _packetsSent);
+            Stats?.PacketSent();
         }
         else
         {
             Interlocked.Increment(ref _packetsDropped);
+            Stats?.PacketDropped();
         }
     }
 }
