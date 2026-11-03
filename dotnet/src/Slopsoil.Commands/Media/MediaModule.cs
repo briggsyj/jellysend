@@ -829,6 +829,8 @@ public sealed class MediaModule : IStreamControl
             StartOffset = start,
             Aspect = _aspect.TryGetValue(guild, out var aspect) ? aspect : null,
             DebugOverlay = _debug.TryGetValue(guild, out var debug) && debug,
+            SourceCodec = codec,
+            RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
         };
         var started = await _engine.StartAsync(guild, request, send, () => OnStreamEndAsync(guild, generation)).ConfigureAwait(false);
 

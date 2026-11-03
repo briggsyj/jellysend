@@ -47,6 +47,12 @@ public sealed record StreamRequest
     public double? Aspect { get; init; }
 
     public bool DebugOverlay { get; init; }
+
+    /// <summary>Source video codec, for diagnostics.</summary>
+    public string? SourceCodec { get; init; }
+
+    /// <summary>Item runtime in seconds when known, for diagnostics.</summary>
+    public double? RuntimeSeconds { get; init; }
 }
 
 /// <summary>Live controls of a running stream (the video player, as the commands see it).</summary>
