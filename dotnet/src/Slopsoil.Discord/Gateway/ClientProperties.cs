@@ -44,6 +44,22 @@ public sealed record ClientProperties
         ["User-Agent"] = UserAgent,
     };
 
+    /// <summary>IDENTIFY-only fields of <see cref="ToJson"/> that are not part of the REST super properties.</summary>
+    public static readonly IReadOnlySet<string> GatewayOnlyFields =
+        new HashSet<string>(["is_fast_connect", "latest_headless_tasks", "latest_headless_task_run_seconds_before", "gateway_connect_reasons"]);
+
+    /// <summary>The <c>X-Super-Properties</c> object for REST (<c>Headers.super_properties</c>): IDENTIFY's minus the gateway-only fields.</summary>
+    public JsonObject ToSuperPropertiesJson()
+    {
+        var json = ToJson();
+        foreach (var field in GatewayOnlyFields)
+        {
+            json.Remove(field);
+        }
+
+        return json;
+    }
+
     /// <summary>The IDENTIFY <c>properties</c> object (<c>Headers.gateway_properties</c>).</summary>
     public JsonObject ToJson() => new()
     {

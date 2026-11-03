@@ -149,6 +149,12 @@ public sealed class GoLiveConnection : IAsyncDisposable
                 },
                 ct).ConfigureAwait(false);
 
+            // Op 22 right after op 18, as golive.py does: marks the stream active before the stream server handshake.
+            await _gateway.SendAsync(
+                GatewayOp.StreamSetPaused,
+                new JsonObject { ["stream_key"] = streamKey, ["paused"] = false },
+                ct).ConfigureAwait(false);
+
             ServerId = await created.Task.WaitAsync(ct).ConfigureAwait(false);
             var (token, endpoint) = await server.Task.WaitAsync(ct).ConfigureAwait(false);
             _options.Log?.Invoke($"go-live: stream server {endpoint} (server_id={ServerId})");
@@ -162,10 +168,6 @@ public sealed class GoLiveConnection : IAsyncDisposable
             _session = await VoiceSession.ConnectAsync(info, _options, ct).ConfigureAwait(false);
             await _session.AnnounceVideoAsync(ct).ConfigureAwait(false);
 
-            await _gateway.SendAsync(
-                GatewayOp.StreamSetPaused,
-                new JsonObject { ["stream_key"] = streamKey, ["paused"] = false },
-                ct).ConfigureAwait(false);
         }
         finally
         {

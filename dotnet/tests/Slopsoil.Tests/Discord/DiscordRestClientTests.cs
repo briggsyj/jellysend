@@ -36,6 +36,8 @@ public sealed class DiscordRestClientTests
         Assert.Equal(new ClientProperties().UserAgent, request.Headers.UserAgent.ToString());
         var super = JsonDocument.Parse(Convert.FromBase64String(request.Headers.GetValues("X-Super-Properties").Single()));
         Assert.Equal("Chrome", super.RootElement.GetProperty("browser").GetString());
+        Assert.All(ClientProperties.GatewayOnlyFields, f => Assert.False(super.RootElement.TryGetProperty(f, out _), f));
+        Assert.True(super.RootElement.TryGetProperty("client_build_number", out _));
         Assert.Equal("en-US", request.Headers.GetValues("X-Discord-Locale").Single());
 
         var json = JsonDocument.Parse(body!).RootElement;

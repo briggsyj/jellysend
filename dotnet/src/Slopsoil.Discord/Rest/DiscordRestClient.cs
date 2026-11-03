@@ -39,7 +39,7 @@ public sealed class DiscordRestClient
         _token = token;
         _properties = properties ?? new ClientProperties();
         _time = time ?? TimeProvider.System;
-        _superProperties = Convert.ToBase64String(Encoding.UTF8.GetBytes(_properties.ToJson().ToJsonString()));
+        _superProperties = Convert.ToBase64String(Encoding.UTF8.GetBytes(_properties.ToSuperPropertiesJson().ToJsonString()));
     }
 
     public static Uri ApiBase { get; } = new("https://discord.com/api/v9/");

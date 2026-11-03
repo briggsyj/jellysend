@@ -71,13 +71,13 @@ public class GoLiveConnectionTests
         GoLiveConnection.ConnectAsync(rig.Gateway, Guild, Channel, "voice-sess", rig.Options, TestContext.Current.CancellationToken);
 
     [Fact]
-    public async Task Op_sequence_create_then_stream_socket_then_unpause()
+    public async Task Op_sequence_create_and_unpause_then_stream_socket()
     {
         var rig = MakeRig();
         await using var conn = await Connect(rig);
 
-        // 18 first; 22 only once the stream socket is up and op 12 VIDEO went out.
-        Assert.Equal([(GatewayOp.StreamCreate, false), (GatewayOp.StreamSetPaused, true)], rig.Timeline);
+        // 18 then 22 straight away (golive.py order), both before the stream socket exists.
+        Assert.Equal([(GatewayOp.StreamCreate, false), (GatewayOp.StreamSetPaused, false)], rig.Timeline);
         Assert.Equal(
             """{"type":"guild","guild_id":"10","channel_id":"20","preferred_region":null}""",
             rig.Gateway.Sent[0].Data.GetRawText());
@@ -154,8 +154,8 @@ public class GoLiveConnectionTests
     {
         var rig = MakeRig(sendCreate: sendCreate, sendServer: sendServer, timeout: TimeSpan.FromMilliseconds(50));
         await Assert.ThrowsAsync<TimeoutException>(() => Connect(rig));
-        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamDelete], rig.Gateway.Ops());
-        Assert.Equal($$"""{"stream_key":"{{Key}}"}""", rig.Gateway.Sent[1].Data.GetRawText());
+        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamSetPaused, GatewayOp.StreamDelete], rig.Gateway.Ops());
+        Assert.Equal($$"""{"stream_key":"{{Key}}"}""", rig.Gateway.Sent[2].Data.GetRawText());
         Assert.Equal(0, rig.Gateway.Subscribers);
         Assert.Empty(rig.Sockets.Created);
     }
@@ -165,7 +165,7 @@ public class GoLiveConnectionTests
     {
         var rig = MakeRig(ws: VoiceServerScript.Create(describe: false), timeout: TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAsync<TimeoutException>(() => Connect(rig));
-        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamDelete], rig.Gateway.Ops());
+        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamSetPaused, GatewayOp.StreamDelete], rig.Gateway.Ops());
         Assert.True(rig.Ws.Disposed);
         Assert.True(rig.Udp.Disposed);
     }
@@ -186,7 +186,7 @@ public class GoLiveConnectionTests
         var rig = MakeRig(ws);
         var ex = await Assert.ThrowsAsync<VoiceConnectionException>(() => Connect(rig));
         Assert.Equal(4004, ex.CloseCode);
-        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamDelete], rig.Gateway.Ops());
+        Assert.Equal([GatewayOp.StreamCreate, GatewayOp.StreamSetPaused, GatewayOp.StreamDelete], rig.Gateway.Ops());
         Assert.True(rig.Ws.Disposed);
     }
 
