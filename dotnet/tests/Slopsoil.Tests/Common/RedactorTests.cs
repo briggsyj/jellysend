@@ -18,6 +18,12 @@ public sealed class RedactorTests
         Assert.Equal("not a url ?api_key=***", Redactor.RedactUrl("not a url ?api_key=k"));
 
     [Theory]
+    [InlineData("/tmp/clip.mp4?api_key=SECRET&x=1", "/tmp/clip.mp4?api_key=***&x=1")]
+    [InlineData("C:\\media\\a.mkv?token=SECRET", "C:\\media\\a.mkv?token=***")]
+    public void Redact_url_of_a_path_never_leaks(string path, string expected) =>
+        Assert.Equal(expected, Redactor.RedactUrl(path));
+
+    [Theory]
     [InlineData("Error opening http://h/x?api_key=SECRET&y=1 failed", "Error opening http://h/x?api_key=***&y=1 failed")]
     [InlineData("rtsp://admin:hunter2@cam/stream", "rtsp://***@cam/stream")]
     [InlineData("a;password=p\"q", "a;password=***\"q")]

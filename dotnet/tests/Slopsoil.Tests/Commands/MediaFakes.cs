@@ -90,6 +90,9 @@ internal sealed class FakeLibrary : IMediaLibrary
 
     public string Codec { get; set; } = "h264";
 
+    /// <summary>Playback URL for an item id (default: a Jellyfin-like URL carrying an API key).</summary>
+    public Func<string, string> UrlFor { get; set; } = id => $"http://jf/videos/{id}/master.m3u8?api_key=SECRET";
+
     public List<string> Stopped { get; } = [];
 
     public List<FakeSyncPlay> Groups { get; } = [];
@@ -124,7 +127,7 @@ internal sealed class FakeLibrary : IMediaLibrary
 
         var n = Interlocked.Increment(ref _sessions);
         return Task.FromResult<PlaybackStream?>(new PlaybackStream(
-            $"http://jf/videos/{itemId}/master.m3u8?api_key=SECRET", $"ps{n}", UnknownMetadata ? null : true, UnknownMetadata ? null : Codec));
+            UrlFor(itemId), $"ps{n}", UnknownMetadata ? null : true, UnknownMetadata ? null : Codec));
     }
 
     public Task StopEncodingAsync(string? playSessionId, CancellationToken ct)

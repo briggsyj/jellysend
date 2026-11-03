@@ -12,7 +12,9 @@ public static partial class Redactor
     /// <summary>Drop <c>user:pass@</c> and secret query parameters from a URL; non-URLs go through <see cref="RedactText"/>.</summary>
     public static string RedactUrl(string url)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        // Only explicit scheme://… strings are parsed: on Unix a bare path is also an "absolute URI" (file://), and
+        // converting it would escape '?' into the path where the secret would survive.
+        if (!url.Contains("://", StringComparison.Ordinal) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
             return RedactText(url);
         }
@@ -22,7 +24,8 @@ public static partial class Redactor
             ? []
             : query.Split('&').Where(p => !SecretQueryKeys.Contains(Uri.UnescapeDataString(p.Split('=', 2)[0]))).ToArray();
         // Unlike Python, an explicit default port (":80") is dropped — harmless for logs.
-        return new UriBuilder(uri) { UserName = "", Password = "", Query = string.Join('&', kept) }.Uri.ToString();
+        // RedactText as a second pass: anything the URI parser normalised oddly is still masked.
+        return RedactText(new UriBuilder(uri) { UserName = "", Password = "", Query = string.Join('&', kept) }.Uri.ToString());
     }
 
     /// <summary>Mask secrets in any text that may embed URLs (e.g. FFmpeg stderr, exception messages).</summary>

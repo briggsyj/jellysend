@@ -74,15 +74,15 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 - [X] T020 [P] [US1] Tests for Jellyfin client in `dotnet/tests/Slopsoil.Tests/Services/JellyfinClientTests.cs` (search fields, find_episode via series→seasons→episodes, PlaybackInfo body with `SubtitleStreamIndex=-1` and H.264/AAC HLS profile, URL rewrite forcing `SubtitleStreamIndex=-1` and appending `api_key`, MediaStreams → `HasAudio`/`VideoCodec` incl. "no video stream → null", stop_encoding DELETE; reference `services/jellyfin.py` and its tests)
 - [X] T021 [US1] Implement `dotnet/src/Slopsoil.Services/Jellyfin/{JellyfinClient.cs,Models.cs,AuthHeader.cs}` (API key + lazy username/password sign-in under a lock) until T020 passes
 - [X] T022 [P] [US1] HLS variant resolver + ffprobe wrapper in `dotnet/src/Slopsoil.Services/Media/{HlsVariantResolver.cs,ProbeService.cs}` with tests (reference `services/hls.py`, `services/probe.py`; logs redacted)
-- [ ] T023 [P] [US1] Tests for FFmpeg command building in `dotnet/tests/Slopsoil.Tests/Streaming/FfmpegCommandTests.cs`: encoder detection order NVENC → VA-API → libx264 → libopenh264 with `-bf 0` on hardware, fit-to-box scale expression (`dar`, `2*round`, `setsar=1`), exact `-r` (`29.97`) and `-g round(fps)`, `-ss` before `-i`, silence `anullsrc` when no audio, reconnect flags only for URLs
-- [ ] T024 [US1] Implement `dotnet/src/Slopsoil.Streaming/Video/{EncoderDetector.cs,FfmpegCommand.cs}` until T023 passes
-- [ ] T025 [P] [US1] Tests for the video player in `dotnet/tests/Slopsoil.Tests/Streaming/VideoPlayerTests.cs` with a fake process stream of canned Annex-B: frame grouping by AUD/slice, pacing clock, no flush after stop, SW-encoder fallback on zero frames, `Position = offset + frames/fps`
-- [ ] T026 [US1] Implement `dotnet/src/Slopsoil.Streaming/Video/VideoPlayer.cs` (dedicated thread, FIFO creation via `mkfifo`, stdout closed before SIGTERM on kill) until T025 passes
+- [X] T023 [P] [US1] Tests for FFmpeg command building in `dotnet/tests/Slopsoil.Tests/Streaming/FfmpegCommandTests.cs`: encoder detection order NVENC → VA-API → libx264 → libopenh264 with `-bf 0` on hardware, fit-to-box scale expression (`dar`, `2*round`, `setsar=1`), exact `-r` (`29.97`) and `-g round(fps)`, `-ss` before `-i`, silence `anullsrc` when no audio, reconnect flags only for URLs
+- [X] T024 [US1] Implement `dotnet/src/Slopsoil.Streaming/Video/{EncoderDetector.cs,FfmpegCommand.cs}` until T023 passes
+- [X] T025 [P] [US1] Tests for the video player in `dotnet/tests/Slopsoil.Tests/Streaming/VideoPlayerTests.cs` with a fake process stream of canned Annex-B: frame grouping by AUD/slice, pacing clock, no flush after stop, SW-encoder fallback on zero frames, `Position = offset + frames/fps`
+- [X] T026 [US1] Implement `dotnet/src/Slopsoil.Streaming/Video/VideoPlayer.cs` (dedicated thread, FIFO creation via `mkfifo`, stdout closed before SIGTERM on kill) until T025 passes
 - [X] T027 [P] [US1] Tests for the audio sender clock follower in `dotnet/tests/Slopsoil.Tests/Streaming/AudioSenderTests.cs`: slack `max(40 ms, 0.5/fps+20 ms)`, settling-window alignment (see FR-054), drop when behind, `STREAM_AV_SYNC_MS` target kept, no correction before the segment's first frame (port the cases from `tests/test_golive.py`)
 - [X] T028 [US1] Implement `dotnet/src/Slopsoil.Streaming/Audio/AudioSender.cs` until T027 passes
 - [X] T029 [US1] Implement `dotnet/src/Slopsoil.Streaming/Engine/StreamEngine.cs` (`StartLiveStreamAsync(guild, channel, title, url, audio, startOffset, aspect, onEnd)`; waits for old stream cleanup before STREAM_CREATE; owner-checked cleanup; 45 s FIFO timeout; onEnd only on natural end) with tests in `dotnet/tests/Slopsoil.Tests/Streaming/StreamEngineTests.cs` (reference `streaming/engine.py`, `tests/test_engine.py`)
-- [ ] T030 [US1] Implement `dotnet/src/Slopsoil.Commands/Media/MediaModule.cs` play flow: `!media <query>`, `!media search`, bare `!media` → help, result picker, season → episode pickers, labels (`Name (Year)`, `Series — SxxEyy — Name`, S00/E00 kept), "you're not in a voice channel", "checking stream…", error replies identical to `cogs/jellyfin.py`; tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaPlayTests.cs`
-- [ ] T031 [US1] Implement `dotnet/src/Slopsoil.Commands/Voice/VoiceModule.cs` `!join` and voice-state tracking (resolve author's voice channel from guild voice states; reference `cogs/utils.py`)
+- [X] T030 [US1] Implement `dotnet/src/Slopsoil.Commands/Media/MediaModule.cs` play flow: `!media <query>`, `!media search`, bare `!media` → help, result picker, season → episode pickers, labels (`Name (Year)`, `Series — SxxEyy — Name`, S00/E00 kept), "you're not in a voice channel", "checking stream…", error replies identical to `cogs/jellyfin.py`; tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaPlayTests.cs`
+- [X] T031 [US1] Implement `dotnet/src/Slopsoil.Commands/Voice/VoiceModule.cs` `!join` and voice-state tracking (resolve author's voice channel from guild voice states; reference `cogs/utils.py`)
 
 **Checkpoint**: MVP — quickstart scenario 2 passes against real Discord + Jellyfin.
 
@@ -93,9 +93,9 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 **Independent Test**: quickstart.md scenario 3.
 
 - [X] T032 [P] [US2] Tests for `TimestampParser` in `dotnet/tests/Slopsoil.Tests/Commands/TimestampTests.cs` (port every case from `tests/test_jellyfin_commands.py`: `1:23:45`, `1.23.45`, `1:23` = h:mm, bare = minutes, `45m`, `90s`, `1h30m`, reject components ≥ 60 after the first)
-- [ ] T033 [P] [US2] Video player pause gate / in-place seek / restart handshake (`RestartSeq`, `SegmentOffset`, `SegmentFrames`, `SeekPending` incl. restarting window, ≤ 0.5 s drained-wait, unregister on sender exit) + tests in `VideoPlayerTests.cs`; audio sender drain-on-restart, pause-loop restart handling and pending-seek silence + tests in `AudioSenderTests.cs`
-- [ ] T034 [US2] `MediaModule` `pause`, `play`, `resume <time>`, `stop`, `aspect-ratio`/`aspect`/`ar` (options exactly: Original (default), 16:9, 4:3, 2.39:1 (21:9), 1.85:1; applies live only when the stream is a Jellyfin one; remembered per guild across leaving voice), and title fall-through for help/pause/play/stop/skip/playlist/resume/aspect, with tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaControlTests.cs`
-- [ ] T035 [US2] `VoiceModule` `!leave`/`!stop` sharing one stop helper (cancel stream → stop audio → disconnect go-live → leave) and auto-leave when the last human leaves, with tests (reference `cogs/voice.py`, `tests/test_voice.py`)
+- [X] T033 [P] [US2] Video player pause gate / in-place seek / restart handshake (`RestartSeq`, `SegmentOffset`, `SegmentFrames`, `SeekPending` incl. restarting window, ≤ 0.5 s drained-wait, unregister on sender exit) + tests in `VideoPlayerTests.cs`; audio sender drain-on-restart, pause-loop restart handling and pending-seek silence + tests in `AudioSenderTests.cs`
+- [X] T034 [US2] `MediaModule` `pause`, `play`, `resume <time>`, `stop`, `aspect-ratio`/`aspect`/`ar` (options exactly: Original (default), 16:9, 4:3, 2.39:1 (21:9), 1.85:1; applies live only when the stream is a Jellyfin one; remembered per guild across leaving voice), and title fall-through for help/pause/play/stop/skip/playlist/resume/aspect, with tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaControlTests.cs`
+- [X] T035 [US2] `VoiceModule` `!leave`/`!stop` sharing one stop helper (cancel stream → stop audio → disconnect go-live → leave) and auto-leave when the last human leaves, with tests (reference `cogs/voice.py`, `tests/test_voice.py`)
 
 ---
 
@@ -107,10 +107,10 @@ stream.
 **Independent Test**: spec User Story 6 — 2-hour item with debug on; overlay refreshes ≥ 1/s; stability
 targets hold; `off` removes it without a screenshare drop.
 
-- [ ] T044 [P] [US6] Tests then implementation of `dotnet/src/Slopsoil.Streaming/Diagnostics/StreamDiagnostics.cs`: rolling 10 s window and immutable snapshot with exactly the fields in data-model.md "StreamDiagnostics" (FpsSent/FpsTarget, LateFrames, MaxLatenessMs, ReadStallMs, PacketsPerSec, SendDrops, SendErrors, DriftMs, SilenceSteps, SkipSteps, Encoder, Resolution, Bitrate, SourceCodec, Position, Runtime); fed by VideoPlayer, AudioSender and the UDP transport; tests in `dotnet/tests/Slopsoil.Tests/Streaming/StreamDiagnosticsTests.cs`
-- [ ] T045 [US6] Periodic log line every 10 s while streaming (debug on or off, redacted) from the snapshot, matching the Python "video stats" fields (FR-053), in `dotnet/src/Slopsoil.Streaming/Diagnostics/DiagnosticsLogger.cs` with tests
-- [ ] T046 [US6] Overlay: when debug is on, `FfmpegCommand` appends a `drawtext=textfile=<tmp>/slopsoil_<ssrc>_debug.txt:reload=1` stage (after scaling, before hwupload for VA-API; monospace, top-left, semi-opaque box) and `VideoPlayer` rewrites that file atomically once per second from the snapshot with the four groups in spec US6 scenario 1; no extra filter when off (FR-051, US6 scenario 5); tests in `FfmpegCommandTests.cs` and `VideoPlayerTests.cs`
-- [ ] T047 [US6] `MediaModule` `!media debug [on|off]` (Friend): on/off toggles per-guild `DebugOverlay` and applies via the in-place restart path (FR-052); bare `debug` replies with state + snapshot text; other words → title search; setting survives playlist advance and is cleared on leaving voice; reply wording added to contracts/commands.md parity rows; tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaDebugTests.cs`
+- [X] T044 [P] [US6] Tests then implementation of `dotnet/src/Slopsoil.Streaming/Diagnostics/StreamDiagnostics.cs`: rolling 10 s window and immutable snapshot with exactly the fields in data-model.md "StreamDiagnostics" (FpsSent/FpsTarget, LateFrames, MaxLatenessMs, ReadStallMs, PacketsPerSec, SendDrops, SendErrors, DriftMs, SilenceSteps, SkipSteps, Encoder, Resolution, Bitrate, SourceCodec, Position, Runtime); fed by VideoPlayer, AudioSender and the UDP transport; tests in `dotnet/tests/Slopsoil.Tests/Streaming/StreamDiagnosticsTests.cs`
+- [X] T045 [US6] Periodic log line every 10 s while streaming (debug on or off, redacted) from the snapshot, matching the Python "video stats" fields (FR-053), in `dotnet/src/Slopsoil.Streaming/Diagnostics/DiagnosticsLogger.cs` with tests
+- [X] T046 [US6] Overlay: when debug is on, `FfmpegCommand` appends a `drawtext=textfile=<tmp>/slopsoil_<ssrc>_debug.txt:reload=1` stage (after scaling, before hwupload for VA-API; monospace, top-left, semi-opaque box) and `VideoPlayer` rewrites that file atomically once per second from the snapshot with the four groups in spec US6 scenario 1; no extra filter when off (FR-051, US6 scenario 5); tests in `FfmpegCommandTests.cs` and `VideoPlayerTests.cs`
+- [X] T047 [US6] `MediaModule` `!media debug [on|off]` (Friend): on/off toggles per-guild `DebugOverlay` and applies via the in-place restart path (FR-052); bare `debug` replies with state + snapshot text; other words → title search; setting survives playlist advance and is cleared on leaving voice; reply wording added to contracts/commands.md parity rows; tests in `dotnet/tests/Slopsoil.Tests/Commands/MediaDebugTests.cs`
 - [X] T048 [US6] Port the follower rules exactly as FR-054 (no stall hold; settling window: first 1 s of each segment, immediate 20 ms steps ≤ 15; steady state: drift > 120 ms for ≥ 1 s → one 20 ms step per 250 ms, ≤ 15 per episode, until ≤ 30 ms) with the anti-rubber-banding test cases from `tests/test_golive.py` (transient lag untouched, settling cap, persistence, rate limit, episode cap, exit band, restart reset) in `AudioSenderTests.cs`
 - [ ] T049 [US6] Soak harness `dotnet/tests/soak/README.md` + `SLOPSOIL_SOAK=1` mode in the host that streams a local 2-hour test file with debug on and writes the per-10 s snapshots to CSV; document how to check SC-008/SC-009 from the CSV; run once on reference hardware before the parity sign-off
 
@@ -120,7 +120,7 @@ targets hold; `off` removes it without a screenshare drop.
 
 **Independent Test**: quickstart.md scenario 4.
 
-- [ ] T036 [US3] `GuildSession` per data-model.md in `dotnet/src/Slopsoil.Commands/Media/GuildSession.cs` ("max 10 (`PlaylistMax`); order matters", generation counter, start lock) and `MediaModule` `queue`, `order`, `remove`, `playlist`, `skip`, auto-advance on natural end with generation guard and start-lock serialisation, tests in `dotnet/tests/Slopsoil.Tests/Commands/PlaylistTests.cs` (port playlist cases from `tests/test_jellyfin_commands.py`)
+- [X] T036 [US3] `GuildSession` per data-model.md in `dotnet/src/Slopsoil.Commands/Media/GuildSession.cs` ("max 10 (`PlaylistMax`); order matters", generation counter, start lock) and `MediaModule` `queue`, `order`, `remove`, `playlist`, `skip`, auto-advance on natural end with generation guard and start-lock serialisation, tests in `dotnet/tests/Slopsoil.Tests/Commands/PlaylistTests.cs` (port playlist cases from `tests/test_jellyfin_commands.py`)
 
 ---
 
@@ -129,7 +129,7 @@ targets hold; `off` removes it without a screenshare drop.
 **Independent Test**: quickstart.md scenario 5.
 
 - [X] T037 [P] [US4] Tests then implementation of `dotnet/src/Slopsoil.Services/SyncPlay/SyncPlayGroup.cs` (device id `slopsoil-<guildId>`, `/socket?api_key=&deviceId=`, New/SetIgnoreWait/SetNewQueue/Pause/Unpause/Seek/Leave bodies, ForceKeepAlive → KeepAlive every Data/2 s, SyncPlayCommand and PlayQueue parsing, dead socket → `Closed`) with tests in `dotnet/tests/Slopsoil.Tests/Services/SyncPlayTests.cs` (reference `services/syncplay.py`, `tests/test_syncplay.py`)
-- [ ] T038 [US4] Wire SyncPlay into `MediaModule`: group per guild (serialised creation), queue sent after first frame using player position, own-command 5 s drift window, item echo window 10 s, Pause/Unpause/Seek/Stop handlers with 3 s drift tolerance, PlayQueue switch, teardown on leave; tests in `dotnet/tests/Slopsoil.Tests/Commands/SyncPlayCommandTests.cs`
+- [X] T038 [US4] Wire SyncPlay into `MediaModule`: group per guild (serialised creation), queue sent after first frame using player position, own-command 5 s drift window, item echo window 10 s, Pause/Unpause/Seek/Stop handlers with 3 s drift tolerance, PlayQueue switch, teardown on leave; tests in `dotnet/tests/Slopsoil.Tests/Commands/SyncPlayCommandTests.cs`
 
 ---
 
@@ -145,7 +145,7 @@ targets hold; `off` removes it without a screenshare drop.
 
 ## Phase 9: Polish & cut-over
 
-- [ ] T042 Log-scan test in `dotnet/tests/Slopsoil.Tests/Common/LogScanTests.cs` driving a full fake play/pause/seek/stop through the router and asserting no credential appears in captured logs (SC-006)
+- [X] T042 Log-scan test in `dotnet/tests/Slopsoil.Tests/Common/LogScanTests.cs` driving a full fake play/pause/seek/stop through the router and asserting no credential appears in captured logs (SC-006)
 - [ ] T043 Cut-over PR (after parity.md is signed off): tag last Python build as `v1.x`, switch `latest` to the .NET image, title `feat!: .NET edition becomes latest` with `BREAKING CHANGE:` footer naming the removed TV/IPTV/yt-dlp features and the Python tag to pin (constitution Principle I)
 
 ---

@@ -1,12 +1,20 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Slopsoil.Common.Config;
 using Slopsoil.Commands.General;
+using Slopsoil.Commands.Media;
 using Slopsoil.Commands.Routing;
+using Slopsoil.Commands.Voice;
+using Slopsoil.Discord.Dave;
 using Slopsoil.Discord.Gateway;
 using Slopsoil.Discord.Rest;
 using Slopsoil.Discord.Transport;
+using Slopsoil.Discord.Voice;
+using Slopsoil.Services.Jellyfin;
+using Slopsoil.Services.Media;
+using Slopsoil.Streaming.Engine;
 
 namespace Slopsoil.Host;
 
@@ -14,16 +22,18 @@ namespace Slopsoil.Host;
 /// The bot process (<c>bot.py</c>): log in over the gateway, keep the role directory current, and run
 /// <c>!</c> commands from MESSAGE_CREATE, replying over REST. Wiring only; the parts are unit-tested.
 /// </summary>
-internal sealed class BotService(SlopsoilOptions options, ILogger<BotService> logger, IHostApplicationLifetime lifetime) : BackgroundService
+internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers, IHostApplicationLifetime lifetime) : BackgroundService
 {
+    private readonly ILogger _log = loggers.CreateLogger<BotService>();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var token = options.DiscordToken!;
         var properties = new ClientProperties();
-        var gatewayLog = (string m) => logger.LogInformation("{Message}", m);
+        var gatewayLog = loggers.CreateLogger<GatewayClient>();
         await using var gateway = new GatewayClient(
             new ClientWebSocketFactory(properties.WebSocketHeaders),
-            new GatewayOptions { Properties = properties, Log = gatewayLog });
+            new GatewayOptions { Properties = properties, Log = m => gatewayLog.LogInformation("{Message}", m) });
 
         using var http = new HttpClient();
         var rest = new DiscordRestClient(http, token, properties);
@@ -32,12 +42,44 @@ internal sealed class BotService(SlopsoilOptions options, ILogger<BotService> lo
             directory,
             new RestMessageSender(rest),
             new MessageHub(),
-            (command, ex) => logger.LogError(ex, "command {Command} failed", command));
-        GeneralModule.Register(router, () => options.JellyfinConfigured);
+            (command, ex) => _log.LogError(ex, "command {Command} failed", command));
+
+        // Voice + go-live.
+        var voiceOptions = VoiceOptionsFor(loggers.CreateLogger("Slopsoil.Voice"));
+        var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
+        var pipelines = new FfmpegPipelineFactory(options, loggers);
+        var engine = new StreamEngine(new GoLiveConnector(gateway, voice, voiceOptions), pipelines, loggers.CreateLogger<StreamEngine>());
+
+        // Jellyfin.
+        using var jellyfinHttp = new HttpClient();
+        using var jellyfin = JellyfinClient.FromOptions(options, jellyfinHttp, loggers.CreateLogger<JellyfinClient>());
+        IMediaLibrary? library = jellyfin is null
+            ? null
+            : new JellyfinLibrary(
+                jellyfin,
+                new HlsVariantResolver(jellyfinHttp, loggers.CreateLogger<HlsVariantResolver>()),
+                new ProbeService(logger: loggers.CreateLogger<ProbeService>()),
+                loggers);
+        if (jellyfin is not null)
+        {
+            _log.LogInformation(
+                "Jellyfin client configured for {Url} (SyncPlay {State})",
+                jellyfin.BaseUrl,
+                jellyfin.HasUserCredentials ? "enabled" : "disabled — set JELLYFIN_USERNAME/JELLYFIN_PASSWORD to enable");
+        }
+
+        var guildNames = new GuildNames();
+        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>());
+        var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>());
+
+        GeneralModule.Register(router, () => library is not null);
+        voiceModule.Register(router);
+        media.Register(router);
         router.AddUnavailablePlaceholders();
 
-        // Order matters: the directory learns the author before the router checks their role.
+        // Order matters: caches learn the author/guild before the router checks roles.
         gateway.Dispatch += directory.Apply;
+        gateway.Dispatch += guildNames.Apply;
         gateway.Dispatch += OnDispatch;
 
         void OnDispatch(string type, JsonElement data)
@@ -47,15 +89,25 @@ internal sealed class BotService(SlopsoilOptions options, ILogger<BotService> lo
             {
                 _ = Task.Run(() => router.DispatchAsync(message, stoppingToken), CancellationToken.None);
             }
+            else if (type == "VOICE_STATE_UPDATE" && Id(data, "guild_id") is { } guild && Id(data, "user_id") is { } user)
+            {
+                var channel = Id(data, "channel_id");
+                _ = Task.Run(() => voiceModule.OnVoiceStateUpdatedAsync(guild, user, channel), CancellationToken.None);
+            }
         }
 
-        logger.LogInformation("Configuration: {Options}", options);
+        _log.LogInformation("Configuration: {Options}", options);
+        if (!pipelines.EncoderAvailable)
+        {
+            _log.LogWarning("no working H.264 encoder found — go-live streaming is unavailable");
+        }
+
         try
         {
             await gateway.ConnectAsync(token, stoppingToken);
-            logger.LogInformation("Logged in as user {UserId}", gateway.UserId);
+            _log.LogInformation("Logged in as user {UserId}", gateway.UserId);
             await gateway.Completion.WaitAsync(stoppingToken);
-            logger.LogError("Gateway connection ended; stopping");
+            _log.LogError("Gateway connection ended; stopping");
             lifetime.StopApplication();
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -63,11 +115,41 @@ internal sealed class BotService(SlopsoilOptions options, ILogger<BotService> lo
         }
         catch (Exception ex)
         {
-            logger.LogCritical(ex, "Gateway failed; stopping");
+            _log.LogCritical(ex, "Gateway failed; stopping");
             Environment.ExitCode = 1;
             lifetime.StopApplication();
         }
     }
+
+    private static VoiceOptions VoiceOptionsFor(ILogger log)
+    {
+        int daveVersion;
+        Func<IDaveSession>? daveFactory;
+        try
+        {
+            daveVersion = LibDaveSession.MaxSupportedProtocolVersion;
+            daveFactory = () => new LibDaveSession(daveVersion, 0, 0, m => log.LogInformation("{Message}", m));
+        }
+        catch (DllNotFoundException)
+        {
+            log.LogWarning("libdave.so not found: DAVE disabled (DAVE-required channels will refuse the connection)");
+            daveVersion = 0;
+            daveFactory = null;
+        }
+
+        return new VoiceOptions
+        {
+            WebSockets = new ClientWebSocketFactory(),
+            Udp = new UdpClientFactory(),
+            DaveSessionFactory = daveFactory,
+            MaxDaveProtocolVersion = daveVersion,
+            Log = m => log.LogInformation("{Message}", m),
+        };
+    }
+
+    private static ulong? Id(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+        && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
 
     private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
     {
