@@ -32,6 +32,9 @@ public sealed class MediaModule : IStreamControl
     /// <summary>After our own pause/unpause/seek, trust our position over the echoed command's.</summary>
     public static readonly TimeSpan SyncOwnCommandWindow = TimeSpan.FromSeconds(5);
 
+    /// <summary>How many times one item is resumed after its screenshare connection dropped.</summary>
+    public const int MaxReconnects = 3;
+
     /// <summary>How long the SyncPlay queue waits for the first frame before using the requested start.</summary>
     public static readonly TimeSpan FirstFrameWait = TimeSpan.FromSeconds(60);
 
@@ -853,7 +856,8 @@ public sealed class MediaModule : IStreamControl
         }
 
         var previous = state.Now;
-        state.Now = new NowPlaying(item, stream);
+        state.Now = new NowPlaying(item, stream) { Reconnects = state.ResumeReconnects };
+        state.ResumeReconnects = 0;
         var request = new StreamRequest
         {
             Title = label,
@@ -871,7 +875,7 @@ public sealed class MediaModule : IStreamControl
         bool started;
         try
         {
-            started = await _engine.StartAsync(guild, request, send, reason => OnStreamEndAsync(guild, generation, reason)).ConfigureAwait(false);
+            started = await _engine.StartAsync(guild, request, send, end => OnStreamEndAsync(guild, generation, end)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -915,7 +919,7 @@ public sealed class MediaModule : IStreamControl
     /// item. Runs under the start lock so it can't race a user's start or skip; the generation check is atomic
     /// with taking <c>Now</c>.
     /// </summary>
-    private async Task OnStreamEndAsync(ulong guild, long generation, PipelineEndReason reason)
+    private async Task OnStreamEndAsync(ulong guild, long generation, PipelineEnd end)
     {
         if (!_states.TryGetValue(guild, out var state))
         {
@@ -931,13 +935,28 @@ public sealed class MediaModule : IStreamControl
             }
 
             var finished = state.Now;
+            if (end.Reason == PipelineEndReason.ConnectionLost && finished is not null && _voice.Get(guild) is { } link
+                && finished.Reconnects < MaxReconnects)
+            {
+                // The screenshare dropped (voice server restart/migration): resume the same item where it was.
+                _log.LogInformation("resuming {Item} at {Position:0.0}s after the go-live connection dropped (attempt {Attempt})", finished.Item.Id, end.Position, finished.Reconnects + 1);
+                state.ResumeReconnects = finished.Reconnects + 1;
+                if (await StartItemHoldingLockAsync(guild, state, link.ChannelId, finished.Item, end.Position ?? 0, sync: false).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                state.ResumeReconnects = 0;
+                finished = state.Now; // a failed restart already released what it started
+            }
+
             state.Now = null;
             if (finished is not null)
             {
                 await _library!.StopEncodingAsync(finished.Stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
             }
 
-            _log.LogInformation("stream ended ({Reason}) in guild {Guild}; advancing the playlist", reason, guild);
+            _log.LogInformation("stream ended ({Reason}) in guild {Guild}; advancing the playlist", end.Reason, guild);
             await AdvanceHoldingLockAsync(guild, state).ConfigureAwait(false);
         }
         finally
@@ -1245,7 +1264,11 @@ public sealed class MediaModule : IStreamControl
         }
     }
 
-    private sealed record NowPlaying(MediaItem Item, PlaybackStream Stream);
+    private sealed record NowPlaying(MediaItem Item, PlaybackStream Stream)
+    {
+        /// <summary>How often this item was already resumed after a dropped connection.</summary>
+        public int Reconnects { get; init; }
+    }
 
     private sealed class GuildState
     {
@@ -1263,6 +1286,9 @@ public sealed class MediaModule : IStreamControl
         public ConcurrentDictionary<string, long> SyncSent { get; } = new();
 
         public long SyncOwnCommandAt = long.MinValue;
+
+        /// <summary>Reconnect count for the next start (set only when resuming after a dropped connection).</summary>
+        public int ResumeReconnects;
 
         public SemaphoreSlim StartLock { get; } = new(1, 1);
 

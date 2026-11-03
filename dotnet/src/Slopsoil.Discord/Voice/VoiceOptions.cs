@@ -25,6 +25,9 @@ public sealed class VoiceOptions
     /// <summary>Clock for heartbeat timestamps, heartbeat delays and timeouts.</summary>
     public TimeProvider Time { get; init; } = TimeProvider.System;
 
+    /// <summary>Users in a voice channel (guild, channel) from the gateway's voice-state cache, for DAVE recognition.</summary>
+    public Func<ulong, ulong, IEnumerable<ulong>>? ChannelMembers { get; init; }
+
     /// <summary>Optional diagnostic sink (never receives tokens or keys).</summary>
     public Action<string>? Log { get; init; }
 

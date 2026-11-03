@@ -382,7 +382,7 @@ public class VoiceDaveTests
         public ValueTask DisposeAsync() => Session.DisposeAsync();
     }
 
-    private static async Task<Rig> Connect(int daveVersion = 1)
+    private static async Task<Rig> Connect(int daveVersion = 1, Func<IEnumerable<ulong>>? members = null)
     {
         var ws = VoiceServerScript.Create(daveVersion: daveVersion);
         var dave = new FakeDave();
@@ -393,7 +393,7 @@ public class VoiceDaveTests
             DaveSessionFactory = () => dave,
             MaxDaveProtocolVersion = 1,
         };
-        var info = new VoiceServerInfo("voice.example", 10, User, "sess", "tok", DaveChannel);
+        var info = new VoiceServerInfo("voice.example", 10, User, "sess", "tok", DaveChannel) { ChannelMembers = members };
         var session = await VoiceSession.ConnectAsync(info, options, TestContext.Current.CancellationToken);
         return new Rig(session, ws, dave);
     }
@@ -433,6 +433,19 @@ public class VoiceDaveTests
         rig.Ws.PushBinary(5, VoiceOp.MlsExternalSender, 1, 2, 3);
         await rig.Dave.WaitForCallAsync("SetExternalSender");
         Assert.Equal([1, 2, 3], rig.Dave.LastData);
+    }
+
+    [Fact]
+    public async Task Recognised_users_include_voice_channel_members_not_yet_announced()
+    {
+        await using var rig = await Connect(members: () => [42UL, 8UL, 9UL]);
+        rig.Ws.Push(VoiceOp.ClientsConnect, """{"user_ids":["7"]}""");
+        await VoiceConnectionTests.WaitUntil(() => rig.Session.ConnectedUserIds.Count == 1);
+        rig.Ws.Drain();
+        rig.Ws.PushBinary(9, VoiceOp.MlsProposals, 0, 0x50);
+        await rig.Ws.NextBinaryAsync();
+        Assert.Equal([7UL, 8UL, 9UL, 42UL], rig.Dave.LastRecognized.Order());
+        Assert.Equal(1, rig.Dave.LastRecognized.Count(u => u == 42)); // self once
     }
 
     [Theory]
@@ -548,14 +561,27 @@ public class VoiceDaveTests
         await Sync(rig);
         Assert.Equal(0, rig.Session.DaveProtocolVersion);
 
-        // Upgrade back: prepare (no passthrough for v1) then execute → passthrough until keys arrive.
+        // Upgrade back: prepare (no passthrough for v1) then execute → encrypt again (passthrough off).
         rig.Dave.Calls.Clear();
         rig.Ws.Push(VoiceOp.DavePrepareTransition, """{"transition_id":6,"protocol_version":1}""");
         Assert.Equal("""{"transition_id":6}""", (await rig.Ws.NextTextAsync(VoiceOp.DaveTransitionReady)).GetRawText());
         rig.Ws.Push(VoiceOp.DaveExecuteTransition, """{"transition_id":6}""");
         await Sync(rig);
         Assert.Equal(1, rig.Session.DaveProtocolVersion);
-        Assert.Equal(["SetPassthroughMode(True)", "SetExternalSender"], rig.Dave.Calls);
+        Assert.Equal(["SetPassthroughMode(False)", "SetExternalSender"], rig.Dave.Calls);
+    }
+
+    [Fact]
+    public async Task Ignored_commit_sends_neither_ready_nor_invalid()
+    {
+        await using var rig = await Connect();
+        rig.Dave.CommitOk = null;
+        rig.Ws.Drain();
+        rig.Ws.PushBinary(11, VoiceOp.MlsAnnounceCommitTransition, 0x00, 0x07, 0x01);
+        await rig.Dave.WaitForCallAsync("ProcessCommit");
+        await Sync(rig);
+        Assert.Empty(SentTexts(rig));
+        Assert.DoesNotContain(rig.Ws.Drain(), f => !f.IsText);
     }
 
     [Fact]

@@ -118,7 +118,23 @@ internal sealed class FakeLibrary : IMediaLibrary
 
     public Task<MediaItem?> GetItemAsync(string itemId, CancellationToken ct) => Task.FromResult(Items.GetValueOrDefault(itemId));
 
-    public Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct)
+    /// <summary>When set, StartPlaybackAsync waits for it (simulates a slow server mid-start).</summary>
+    public TaskCompletionSource? PlaybackGate { get; set; }
+
+    public TaskCompletionSource PlaybackEntered { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct)
+    {
+        PlaybackEntered.TrySetResult();
+        if (PlaybackGate is { } gate)
+        {
+            await gate.Task;
+        }
+
+        return await StartPlaybackCoreAsync(itemId);
+    }
+
+    private Task<PlaybackStream?> StartPlaybackCoreAsync(string itemId)
     {
         if (NoPlayback)
         {

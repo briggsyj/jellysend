@@ -27,8 +27,12 @@ public interface IDaveSession : IDisposable
     /// <summary>Proposals from opcode 27; returns a commit(+welcome) to send as opcode 28, or null.</summary>
     byte[]? ProcessProposals(DaveProposalsOperation operation, ReadOnlySpan<byte> proposals, IReadOnlyCollection<ulong> recognizedUserIds);
 
-    /// <summary>Commit from opcode 29. Returns false if it failed (caller sends opcode 31 invalid commit/welcome).</summary>
-    bool ProcessCommit(ReadOnlySpan<byte> commit);
+    /// <summary>
+    /// Commit from opcode 29. True: applied (send opcode 23 ready). False: failed (send opcode 31 invalid
+    /// commit/welcome). Null: ignored by libdave (no MLS state, e.g. an in-flight commit while resetting) — send
+    /// neither.
+    /// </summary>
+    bool? ProcessCommit(ReadOnlySpan<byte> commit);
 
     /// <summary>Welcome from opcode 30. Returns false on failure.</summary>
     bool ProcessWelcome(ReadOnlySpan<byte> welcome, IReadOnlyCollection<ulong> recognizedUserIds);

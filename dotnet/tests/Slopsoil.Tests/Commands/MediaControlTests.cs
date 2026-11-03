@@ -182,6 +182,66 @@ public sealed class MediaControlTests
     }
 
     [Fact]
+    public async Task Leave_during_a_start_abandons_it_without_rejoining()
+    {
+        await PlayFilm();
+        _h.Library.PlaybackGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Library.PlaybackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var start = _h.Start("!media other");
+        await _h.Library.PlaybackEntered.Task;
+        await _h.Send("!leave");
+        _h.Library.PlaybackGate.SetResult();
+        await start;
+
+        Assert.Single(_h.Pipelines.Created);        // the new item never streamed
+        Assert.Single(_h.Gateway.Links);            // and the bot did not rejoin
+        Assert.False(_h.Media.IsStreaming(5));
+        Assert.Contains("ps2", _h.Library.Stopped); // its transcode was released
+    }
+
+    [Fact]
+    public async Task A_failed_stream_releases_its_transcode_and_advances()
+    {
+        await PlayFilm();
+        await _h.Send("!media queue other");
+        _h.Current.End(PipelineEndReason.Failed, "go-live error: encoder failed");
+        await _h.Until(() => _h.Pipelines.Created.Count == 2 && _h.Current.Started);
+        Assert.Equal("Other (2001)", _h.Current.Request.Title);
+        Assert.Contains("ps1", _h.Library.Stopped);
+        Assert.Contains("go-live error: encoder failed", _h.Texts);
+    }
+
+    [Fact]
+    public async Task Kicked_bot_can_still_be_stopped_and_media_stop_accepts_a_stale_link()
+    {
+        await PlayFilm();
+        _h.Gateway.Links[0].IsConnected = false;   // kicked
+        await _h.Send("!media stop");
+        Assert.Equal(["⏹ stopped and left the voice channel"], _h.Texts);
+        Assert.False(_h.Media.IsStreaming(5));
+    }
+
+    [Fact]
+    public async Task Dropped_screenshare_resumes_the_same_item_at_its_position_up_to_three_times()
+    {
+        await PlayFilm();
+        await _h.Send("!media queue other");
+        for (var attempt = 1; attempt <= MediaModule.MaxReconnects; attempt++)
+        {
+            var count = _h.Pipelines.Created.Count;
+            _h.Current.Fake.Position = 100 * attempt;
+            _h.Connector.Links[^1].Close();
+            await _h.Until(() => _h.Pipelines.Created.Count == count + 1 && _h.Current.Started);
+            Assert.Equal(("Film (2000)", 100.0 * attempt), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
+        }
+
+        // Budget spent: the next drop ends the item and the playlist advances.
+        _h.Connector.Links[^1].Close();
+        await _h.Until(() => _h.Current.Request.Title == "Other (2001)" && _h.Current.Started);
+        Assert.Contains(Slopsoil.Streaming.Engine.StreamEngine.ConnectionLostMessage, _h.Texts);
+    }
+
+    [Fact]
     public async Task Pipeline_failure_message_reaches_the_channel()
     {
         await PlayFilm();

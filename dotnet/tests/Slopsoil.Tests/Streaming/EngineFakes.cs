@@ -28,6 +28,13 @@ internal sealed class FakeLink : IGoLiveLink
         return Task.CompletedTask;
     }
 
+    private readonly TaskCompletionSource _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Closed => _closed.Task;
+
+    /// <summary>Simulate the go-live media connection dropping.</summary>
+    public void Close() => _closed.TrySetResult();
+
     public ValueTask DisposeAsync() => new(DisconnectAsync());
 }
 

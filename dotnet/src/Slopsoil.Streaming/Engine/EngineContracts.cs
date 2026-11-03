@@ -20,6 +20,9 @@ public interface IGoLiveLink : IAsyncDisposable
 
     /// <summary>STREAM_DELETE + close. Idempotent.</summary>
     Task DisconnectAsync();
+
+    /// <summary>Completes when the go-live media connection closed on its own (server restart, migration, kick).</summary>
+    Task Closed => Task.Delay(Timeout.Infinite);
 }
 
 /// <summary>Starts go-live in the guild's current voice channel (Host: VoiceConnection → GoLiveConnection).</summary>
@@ -94,10 +97,17 @@ public enum PipelineEndReason
     Natural,
     Stopped,
     Failed,
+
+    /// <summary>The go-live connection dropped under a running stream (the item can be resumed at <see cref="PipelineEnd.Position"/>).</summary>
+    ConnectionLost,
 }
 
 /// <summary>How a pipeline finished; <see cref="Error"/> is the user-facing message for failures.</summary>
-public sealed record PipelineEnd(PipelineEndReason Reason, string? Error = null);
+public sealed record PipelineEnd(PipelineEndReason Reason, string? Error = null)
+{
+    /// <summary>Playback position when the stream ended, when known.</summary>
+    public double? Position { get; init; }
+}
 
 /// <summary>Video player + audio sender for one item over one go-live link.</summary>
 public interface IPipeline

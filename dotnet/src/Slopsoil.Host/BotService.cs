@@ -45,7 +45,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             (command, ex) => _log.LogError(ex, "command {Command} failed", command));
 
         // Voice + go-live.
-        var voiceOptions = VoiceOptionsFor(loggers.CreateLogger("Slopsoil.Voice"));
+        var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("Slopsoil.Voice"));
         var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
         var pipelines = new FfmpegPipelineFactory(options, loggers);
         var engine = new StreamEngine(new GoLiveConnector(gateway, voice, voiceOptions), pipelines, loggers.CreateLogger<StreamEngine>());
@@ -156,7 +156,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         await Task.WhenAll(stops).WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
-    private static VoiceOptions VoiceOptionsFor(ILogger log)
+    private static VoiceOptions VoiceOptionsFor(GatewayClient gateway, ILogger log)
     {
         int daveVersion;
         Func<IDaveSession>? daveFactory;
@@ -178,6 +178,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             Udp = new UdpClientFactory(),
             DaveSessionFactory = daveFactory,
             MaxDaveProtocolVersion = daveVersion,
+            ChannelMembers = (guild, channel) => gateway.VoiceStates.GetGuild(guild).Where(kv => kv.Value == channel).Select(kv => kv.Key),
             Log = m => log.LogInformation("{Message}", m),
         };
     }

@@ -110,7 +110,10 @@ public sealed class VoiceConnection : IAsyncDisposable
             await _gateway.SendAsync(GatewayOp.VoiceStateUpdate, VoiceStatePayload(ChannelId, flags), ct).ConfigureAwait(false);
             SessionId = await state.Task.WaitAsync(ct).ConfigureAwait(false);
             var (token, endpoint) = await server.Task.WaitAsync(ct).ConfigureAwait(false);
-            var info = new VoiceServerInfo(endpoint, GuildId, _gateway.UserId, SessionId, token, ChannelId);
+            var info = new VoiceServerInfo(endpoint, GuildId, _gateway.UserId, SessionId, token, ChannelId)
+            {
+                ChannelMembers = _options.ChannelMembers is { } members ? () => members(GuildId, ChannelId) : null,
+            };
             _session = await VoiceSession.ConnectAsync(info, _options, ct).ConfigureAwait(false);
         }
         finally

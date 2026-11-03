@@ -79,6 +79,8 @@ internal sealed class GoLiveConnector(GatewayClient gateway, VoiceManager voice,
 
         public Task DisconnectAsync() => connection.DisconnectAsync();
 
+        public Task Closed => connection.Session.Completion;
+
         public ValueTask DisposeAsync() => connection.DisposeAsync();
     }
 }

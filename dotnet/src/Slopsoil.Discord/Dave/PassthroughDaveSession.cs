@@ -26,7 +26,7 @@ public sealed class PassthroughDaveSession : IDaveSession
 
     public byte[]? ProcessProposals(DaveProposalsOperation operation, ReadOnlySpan<byte> proposals, IReadOnlyCollection<ulong> recognizedUserIds) => null;
 
-    public bool ProcessCommit(ReadOnlySpan<byte> commit) => false;
+    public bool? ProcessCommit(ReadOnlySpan<byte> commit) => false;
 
     public bool ProcessWelcome(ReadOnlySpan<byte> welcome, IReadOnlyCollection<ulong> recognizedUserIds) => false;
 

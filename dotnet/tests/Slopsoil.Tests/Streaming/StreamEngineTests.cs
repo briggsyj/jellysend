@@ -31,12 +31,14 @@ public sealed class StreamEngineTests
     }
 
     private readonly List<PipelineEndReason> _endReasons = [];
+    private PipelineEnd? _lastEnd;
 
-    private Task OnEnd(PipelineEndReason reason)
+    private Task OnEnd(PipelineEnd end)
     {
         lock (_endReasons)
         {
-            _endReasons.Add(reason);
+            _endReasons.Add(end.Reason);
+            _lastEnd = end;
         }
 
         Interlocked.Increment(ref _ends);
@@ -134,6 +136,21 @@ public sealed class StreamEngineTests
         Assert.Equal("go-live stream failed to start", _sent[1]);
         Assert.False(_engine.IsStreaming(5));
         Assert.Equal([PipelineEndReason.Failed], _endReasons); // like Python: any unstopped end may auto-advance
+    }
+
+    [Fact]
+    public async Task Go_live_connection_loss_stops_the_pipeline_and_reports_the_position()
+    {
+        await _engine.StartAsync(5, Req(), Send, OnEnd, Ct);
+        _pipelines.Created[0].Fake.Position = 42.5;
+        _connector.Links[0].Close();
+        await Until(() => _ends == 1);
+        Assert.Equal(PipelineEndReason.ConnectionLost, _lastEnd!.Reason);
+        Assert.Equal(42.5, _lastEnd.Position);
+        Assert.True(_pipelines.Created[0].Stops >= 1); // stopped before the end is reported (cleanup may repeat it)
+        Assert.Equal(1, _connector.Links[0].Disconnects);
+        Assert.Contains(StreamEngine.ConnectionLostMessage, _sent);
+        Assert.False(_engine.IsStreaming(5));
     }
 
     [Fact]

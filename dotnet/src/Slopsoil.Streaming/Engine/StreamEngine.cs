@@ -30,7 +30,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
     /// (after telling the user why via <paramref name="send"/>) if go-live could not start.
     /// </summary>
     public async Task<bool> StartAsync(
-        ulong guildId, StreamRequest request, Func<string, Task> send, Func<PipelineEndReason, Task>? onEnd = null, CancellationToken ct = default)
+        ulong guildId, StreamRequest request, Func<string, Task> send, Func<PipelineEnd, Task>? onEnd = null, CancellationToken ct = default)
     {
         // Replies never throw out of the engine: a failed send must not leave a session registered.
         Task Say(string text) => SafeAsync(() => send(text), "reply");
@@ -118,20 +118,37 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         }
     }
 
-    private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<PipelineEndReason, Task>? onEnd)
+    /// <summary>Message shown when the screenshare connection drops and the item is resumed.</summary>
+    public const string ConnectionLostMessage = "⚠ the screenshare connection dropped — reconnecting…";
+
+    private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<PipelineEnd, Task>? onEnd)
     {
-        var end = await session.Pipeline!.Completion.ConfigureAwait(false);
+        var pipeline = session.Pipeline!;
+        PipelineEnd end;
+        if (await Task.WhenAny(pipeline.Completion, session.Link!.Closed).ConfigureAwait(false) == pipeline.Completion || session.Stopping)
+        {
+            end = await pipeline.Completion.ConfigureAwait(false);
+        }
+        else
+        {
+            // FFmpeg would keep sending UDP into a dead session: end it, report where it was.
+            var position = pipeline.Playback.Position;
+            _log.LogWarning("go-live connection for {Title} closed under the stream at {Position:0.0}s", title, position);
+            await SafeAsync(pipeline.StopAsync, "stopping pipeline").ConfigureAwait(false);
+            end = new PipelineEnd(PipelineEndReason.ConnectionLost, ConnectionLostMessage) { Position = position };
+        }
+
         _log.LogInformation("go-live stream {Title} ended: {Reason}", title, end.Reason);
         var unstopped = end.Reason != PipelineEndReason.Stopped && !session.Stopping;
         await CleanupAsync(guildId, session).ConfigureAwait(false);
-        if (end.Reason == PipelineEndReason.Failed && end.Error is not null && unstopped)
+        if (end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost && end.Error is not null && unstopped)
         {
             await SafeAsync(() => send(end.Error), "error reply").ConfigureAwait(false);
         }
 
         if (unstopped && onEnd is not null)
         {
-            await SafeAsync(() => onEnd(end.Reason), $"end-of-stream callback for '{title}'").ConfigureAwait(false);
+            await SafeAsync(() => onEnd(end), $"end-of-stream callback for '{title}'").ConfigureAwait(false);
         }
     }
 

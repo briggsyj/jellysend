@@ -91,6 +91,17 @@ public sealed class RtpMediaSenderTests
         Assert.Same(nals, sender.EncryptAccessUnit(nals));
     }
 
+    [Fact]
+    public void A_disposed_dave_session_drops_instead_of_throwing()
+    {
+        var dave = new TrailerDave { Disposed = true };
+        var sender = Sender(dave);
+        sender.SendOpus([1, 2]);
+        sender.SendVideoFrame([[0x65, 1]], 3000);
+        Assert.Empty(_sent);
+        Assert.Equal(1, sender.PacketsDropped);
+    }
+
     /// <summary>Inverts payload bytes (the ciphertext) and appends a 2-byte trailer, like DAVE's 0xFAFA marker.</summary>
     private sealed class TrailerDave : IDaveSession
     {
@@ -105,8 +116,11 @@ public sealed class RtpMediaSenderTests
         // Start-code bytes get inverted too; the sender drops them when splitting by NAL size.
         public byte[] EncryptH264(uint ssrc, ReadOnlySpan<byte> accessUnit) => Encrypt(ssrc, accessUnit);
 
+        public bool Disposed { get; set; }
+
         private byte[] Encrypt(uint ssrc, ReadOnlySpan<byte> data)
         {
+            ObjectDisposedException.ThrowIf(Disposed, this);
             LastSsrc = ssrc;
             return [.. data.ToArray().Select(b => (byte)(b ^ 0xFF)), 0xFA, 0xFA];
         }
@@ -122,7 +136,7 @@ public sealed class RtpMediaSenderTests
         public byte[]? ProcessProposals(DaveProposalsOperation operation, ReadOnlySpan<byte> proposals, IReadOnlyCollection<ulong> recognizedUserIds) =>
             throw new NotSupportedException();
 
-        public bool ProcessCommit(ReadOnlySpan<byte> commit) => throw new NotSupportedException();
+        public bool? ProcessCommit(ReadOnlySpan<byte> commit) => throw new NotSupportedException();
 
         public bool ProcessWelcome(ReadOnlySpan<byte> welcome, IReadOnlyCollection<ulong> recognizedUserIds) => throw new NotSupportedException();
 

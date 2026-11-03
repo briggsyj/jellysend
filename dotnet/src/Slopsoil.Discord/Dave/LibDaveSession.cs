@@ -130,7 +130,7 @@ public sealed class LibDaveSession : IDaveSession
         }
     }
 
-    public bool ProcessCommit(ReadOnlySpan<byte> commit)
+    public bool? ProcessCommit(ReadOnlySpan<byte> commit)
     {
         lock (_lock)
         {
@@ -141,7 +141,8 @@ public sealed class LibDaveSession : IDaveSession
                     _log?.Invoke("[DAVE] commit rejected by libdave");
                     return false;
                 case DaveCommitOutcome.Ignored:
-                    return true;
+                    _log?.Invoke("[DAVE] commit ignored (no MLS state)");
+                    return null;
                 default:
                     RefreshKey();
                     return true;

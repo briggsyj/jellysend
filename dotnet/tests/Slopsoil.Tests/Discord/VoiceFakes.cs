@@ -297,7 +297,7 @@ internal sealed class FakeDave : IDaveSession
 
     public byte[]? CommitWelcome { get; set; } = [0xC0, 0x11];
 
-    public bool CommitOk { get; set; } = true;
+    public bool? CommitOk { get; set; } = true;
 
     public bool WelcomeOk { get; set; } = true;
 
@@ -344,7 +344,7 @@ internal sealed class FakeDave : IDaveSession
         return Throw ? throw new InvalidOperationException("boom") : CommitWelcome;
     }
 
-    public bool ProcessCommit(ReadOnlySpan<byte> commit)
+    public bool? ProcessCommit(ReadOnlySpan<byte> commit)
     {
         LastData = commit.ToArray();
         Record("ProcessCommit");

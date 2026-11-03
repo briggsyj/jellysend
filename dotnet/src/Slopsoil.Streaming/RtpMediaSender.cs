@@ -50,7 +50,17 @@ public sealed class RtpMediaSender(
     /// <summary>Send one 20 ms Opus frame (timestamp advances 960 samples).</summary>
     public void SendOpus(ReadOnlySpan<byte> opus)
     {
-        var payload = dave() is { } session ? session.EncryptOpus(audioSsrc, opus) : opus.ToArray();
+        byte[] payload;
+        try
+        {
+            payload = dave() is { } session ? session.EncryptOpus(audioSsrc, opus) : opus.ToArray();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The go-live connection (and its DAVE session) closed under us: drop, as a failed UDP send would.
+            Interlocked.Increment(ref _packetsDropped);
+            return;
+        }
         lock (_audioLock)
         {
             var header = RtpHeader.Build(_audioSeq, _audioTs, audioSsrc, marker: false, RtpHeader.OpusPayloadType);
@@ -118,7 +128,15 @@ public sealed class RtpMediaSender(
             offset += nal.Length + 4;
         }
 
-        var encrypted = session.EncryptH264(videoSsrc, annexB);
+        byte[] encrypted;
+        try
+        {
+            encrypted = session.EncryptH264(videoSsrc, annexB);
+        }
+        catch (ObjectDisposedException)
+        {
+            return []; // connection closed under us: nothing to send
+        }
         if (encrypted.Length <= annexB.Length)
         {
             return nals;

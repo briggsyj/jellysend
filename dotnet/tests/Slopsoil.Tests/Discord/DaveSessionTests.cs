@@ -126,7 +126,7 @@ public class DaveSessionTests
     {
         var (session, dave, _) = Create();
         dave.Session.CommitOutcome = DaveCommitOutcome.Ignored;
-        Assert.True(session.ProcessCommit([1]));
+        Assert.Null(session.ProcessCommit([1]));
         Assert.False(session.Ready);
         Assert.Empty(dave.Session.RatchetRequests);
     }

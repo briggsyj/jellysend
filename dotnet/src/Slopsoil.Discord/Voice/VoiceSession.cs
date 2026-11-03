@@ -14,7 +14,15 @@ namespace Slopsoil.Discord.Voice;
 /// <param name="ServerId">Guild id for voice, <c>rtc_server_id</c> for go-live.</param>
 /// <param name="DaveChannelId">DAVE MLS group id: the voice channel id, or <c>rtc_server_id - 1</c> for go-live.</param>
 public sealed record VoiceServerInfo(
-    string Endpoint, ulong ServerId, ulong UserId, string SessionId, string Token, ulong DaveChannelId);
+    string Endpoint, ulong ServerId, ulong UserId, string SessionId, string Token, ulong DaveChannelId)
+{
+    /// <summary>
+    /// Members of the voice channel from the gateway's voice-state cache. DAVE recognises their union with the users
+    /// announced on this websocket (ops 11/13), like davey_compat's <c>_get_recognized_users</c>: libdave rejects an
+    /// add proposal for a user it doesn't recognise, and that viewer could never decrypt.
+    /// </summary>
+    public Func<IEnumerable<ulong>>? ChannelMembers { get; init; }
+}
 
 /// <summary>
 /// One voice-gateway v8 websocket + UDP media socket: the handshake and DAVE handling shared by
@@ -560,7 +568,7 @@ public sealed class VoiceSession : IAsyncDisposable
             case VoiceOp.MlsWelcome when memory.Length >= 5:
             {
                 var transitionId = BinaryPrimitives.ReadUInt16BigEndian(memory.Span[3..]);
-                bool ok;
+                bool? ok;
                 try
                 {
                     ok = op == VoiceOp.MlsWelcome
@@ -573,7 +581,12 @@ public sealed class VoiceSession : IAsyncDisposable
                     ok = false;
                 }
 
-                if (ok)
+                if (ok is null)
+                {
+                    // Ignored by libdave (no MLS state): neither ready (23) nor invalid (31).
+                    Log($"DAVE commit for transition {transitionId} ignored");
+                }
+                else if (ok.Value)
                 {
                     if (transitionId != 0)
                     {
@@ -595,7 +608,8 @@ public sealed class VoiceSession : IAsyncDisposable
     {
         lock (_usersLock)
         {
-            return [_info.UserId, .. _connectedUsers.Where(u => u != _info.UserId)];
+            var members = _info.ChannelMembers?.Invoke() ?? [];
+            return [_info.UserId, .. _connectedUsers.Union(members).Where(u => u != _info.UserId)];
         }
     }
 
@@ -640,8 +654,11 @@ public sealed class VoiceSession : IAsyncDisposable
         }
         else if (transitionId > 0 && _daveDowngraded)
         {
+            // Back on DAVE after a downgrade: encrypt again. (davey's set_passthrough_mode(True, …) that
+            // davey_compat mapped here applies to *decryptors*; on our send-only encryptor it would send plaintext
+            // to the DAVE group — the Python bot has the same bug.)
             _daveDowngraded = false;
-            DaveSession?.SetPassthroughMode(true);
+            DaveSession?.SetPassthroughMode(false);
             Log("DAVE session upgraded");
         }
     }
