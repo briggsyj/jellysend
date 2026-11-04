@@ -3,7 +3,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Slopsoil.Common.Config;
-using Slopsoil.Commands.General;
 using Slopsoil.Commands.Media;
 using Slopsoil.Commands.Routing;
 using Slopsoil.Commands.Voice;
@@ -72,10 +71,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>());
         var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout);
 
-        GeneralModule.Register(router, () => library is not null);
-        voiceModule.Register(router);
-        media.Register(router);
-        router.AddUnavailablePlaceholders();
+        media.Register(router, voiceModule); // !media … plus the !join/!leave/!stop/!help/!ping shortcuts
 
         // Commands start in arrival order (like discord.py's single event loop) but run concurrently once they
         // await — a picker waiting 10 s must not block the next message.

@@ -43,8 +43,7 @@ public sealed class LogScanTests : IDisposable
         var media = new MediaModule(library, engine, voice, logger: logs.CreateLogger<MediaModule>());
         var sender = new FakeSender();
         var router = new CommandRouter(new FakeRoles(), sender, new MessageHub(), (c, ex) => logs.CreateLogger("router").LogError(ex, "command {C} failed", c));
-        media.Register(router);
-        new VoiceModule(voice, media, logs.CreateLogger<VoiceModule>()).Register(router);
+        media.Register(router, new VoiceModule(voice, media, logs.CreateLogger<VoiceModule>()));
 
         Task Send(string text) => router.DispatchAsync(new ChatMessage(5, 7, 20, text), TestContext.Current.CancellationToken);
 
@@ -59,7 +58,7 @@ public sealed class LogScanTests : IDisposable
         await Task.Delay(1500, TestContext.Current.CancellationToken);
         await Send("!media playlist");
         await Send("!media debug");
-        await Send("!media stop");
+        await Send("!media leave");
 
         var text = logs.Text;
         Assert.Contains("api_key=***", text, StringComparison.Ordinal); // the URL was logged — redacted

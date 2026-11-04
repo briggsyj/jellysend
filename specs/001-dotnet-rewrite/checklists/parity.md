@@ -15,7 +15,8 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | G2 | `!help` | General + Voice sections; Jellyfin section when configured | [ ] | [ ] |
 | G3 | `!hello` as admin / as friend | `Hello, world!` / no reply | [ ] | [ ] |
 | G4 | `!media x` from a non-friend guild member | no reply (silent role failure) | [ ] | [ ] |
-| G5 | `!play x`, `!channels`, `!search x`, `!add-source a b`, `!sources`, `!delete-source` | Python: TV/IPTV behaviour · .NET: "not available in the .NET edition" | n/a | [ ] |
+| G5 | `!play x`, `!channels`, `!search x`, `!add-source a b`, `!sources`, `!delete-source`, `!hello` | Python: TV/IPTV behaviour · .NET: removed (no reply) | n/a | [ ] |
+| G6 | `!join` `!leave` `!stop` `!help` `!ping` | .NET: shortcuts — same reply as `!media join/leave/stop/help/ping` | n/a | [ ] |
 
 ## Voice
 
@@ -23,9 +24,9 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 |---|---|---|---|---|
 | V1 | `!join` while not in voice | `you're not in a voice channel` | [ ] | [ ] |
 | V2 | `!join` in voice | `joined!` and the account joins your channel | [ ] | [ ] |
-| V3 | `!leave` while streaming | `left!`; go-live ends, account leaves | [ ] | [ ] |
+| V3 | `!leave` while streaming | Python `left!` · .NET `⏹ stopped and left the voice channel`; go-live ends, account leaves | [ ] | [ ] |
 | V4 | `!leave` when not connected | `not in a voice channel` | [ ] | [ ] |
-| V5 | `!stop` while streaming / idle | `stopped` / `nothing is playing` | [ ] | [ ] |
+| V5 | `!stop` while streaming / idle | Python `stopped` · .NET `⏹ stopped — still in voice (…)` / `nothing is playing`; stays in voice | [ ] | [ ] |
 | V6 | Last human leaves the channel | Python: stops and leaves at once · .NET (spec 003): keeps streaming, stops and leaves after `EMPTY_CHANNEL_TIMEOUT_MINUTES` (20) unless someone returns; `0` = at once | [ ] | [ ] |
 
 ## Play (US1)
@@ -58,7 +59,7 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | C7 | `!media aspect-ratio` → `3` | picker (5 options, `← current`), `📐 aspect ratio set to **4:3** — applying now` | [ ] | [ ] |
 | C8 | `!media ar 9` | `pick a number between 1 and 5 — see `!media aspect-ratio`` | [ ] | [ ] |
 | C9 | aspect remembered after `!leave` + new play | new item uses the chosen ratio | [ ] | [ ] |
-| C10 | `!media stop` / when not connected | `⏹ stopped and left the voice channel` / `not in a voice channel` | [ ] | [ ] |
+| C10 | `!media stop` | Python: stops and leaves · .NET: stops, stays in voice, keeps the playlist (= `!stop`); use `!media leave` to leave | [ ] | [ ] |
 
 ## Playlist (US3)
 

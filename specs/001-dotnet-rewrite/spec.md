@@ -242,7 +242,9 @@ stream for viewers.
   `latest`, replacing the Python bot there. The last Python build MUST remain pullable by version/sha tag.
 - **FR-043**: An automated test suite MUST run in CI on every PR alongside the Python suite, with a
   coverage gate.
-- **FR-044**: Non-subset commands MUST answer that they are not available in this edition.
+- **FR-044**: ~~Non-subset commands MUST answer that they are not available in this edition.~~ Superseded
+  2026-11-04 by the maintainer: commands without a `!media` equivalent are removed (silent like any unknown
+  command); top-level commands are shortcuts of `!media` commands.
 
 **Stability and diagnostics**
 

@@ -73,15 +73,31 @@ public sealed class MediaModule : IStreamControl
     /// <summary>Background work (SyncPlay queue sync, auto-advance) — awaited by tests.</summary>
     internal ConcurrentDictionary<Task, byte> Background { get; } = new();
 
-    public void Register(CommandRouter router)
+    /// <summary>
+    /// Register <c>!media</c> and its sub-commands, plus the top-level shortcuts — each shortcut runs exactly its
+    /// <c>!media</c> equivalent (<c>!join</c>, <c>!leave</c>, <c>!stop</c>, <c>!help</c>, <c>!ping</c>).
+    /// </summary>
+    public void Register(CommandRouter router, VoiceModule voice)
     {
+        // `!media leave no trace` is a title; the `!leave` shortcut ignores extra words.
+        CommandHandler OrTitle(string word, CommandHandler handler) => async c =>
+        {
+            if (!await TitleFallthroughAsync(c, word, c.Rest).ConfigureAwait(false))
+            {
+                await handler(c).ConfigureAwait(false);
+            }
+        };
+
         router.Add("media", Role.Friend, MediaAsync)
             .Sub("search", Role.Friend, c => c.Rest.Trim().Length == 0 ? Task.CompletedTask : MediaAsync(c))
-            .Sub("help", Role.Friend, HelpAsync)
+            .Sub("help", Role.Viewer, SendHelpAsync)
+            .Sub("ping", Role.Viewer, PingAsync)
+            .Sub("join", Role.Friend, OrTitle("join", voice.JoinAsync))
+            .Sub("leave", Role.Friend, OrTitle("leave", voice.LeaveAsync))
+            .Sub("stop", Role.Friend, OrTitle("stop", voice.StopAsync))
             .Sub("pause", Role.Friend, PauseAsync)
             .Sub("play", Role.Friend, PlayAsync)
             .Sub("resume", Role.Friend, ResumeAsync)
-            .Sub("stop", Role.Friend, StopCommandAsync)
             .Sub("skip", Role.Friend, SkipAsync)
             .Sub("queue", Role.Friend, QueueAsync)
             .Sub("order", Role.Friend, OrderAsync)
@@ -89,7 +105,15 @@ public sealed class MediaModule : IStreamControl
             .Sub("aspect-ratio", Role.Friend, AspectAsync, "aspect", "ar")
             .Sub("playlist", Role.Friend, PlaylistAsync)
             .Sub("debug", Role.Friend, DebugAsync);
+
+        router.Add("join", Role.Friend, voice.JoinAsync);
+        router.Add("leave", Role.Friend, voice.LeaveAsync);
+        router.Add("stop", Role.Friend, voice.StopAsync);
+        router.Add("help", Role.Viewer, SendHelpAsync);
+        router.Add("ping", Role.Viewer, PingAsync);
     }
+
+    private static Task PingAsync(CommandContext c) => c.ReplyAsync("pong!");
 
     // ── IStreamControl (voice commands) ──────────────────────────────────────
 
@@ -200,16 +224,6 @@ public sealed class MediaModule : IStreamControl
 
         await MediaQueryAsync(c, $"{word} {rest.Trim()}").ConfigureAwait(false);
         return true;
-    }
-
-    private async Task HelpAsync(CommandContext c)
-    {
-        if (await TitleFallthroughAsync(c, "help", c.Rest).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        await SendHelpAsync(c).ConfigureAwait(false);
     }
 
     private async Task SendHelpAsync(CommandContext c)
@@ -341,26 +355,6 @@ public sealed class MediaModule : IStreamControl
         {
             await SyncCallAsync(guild.Value, (s, ct) => s.UnpauseAsync(ct), "unpause").ConfigureAwait(false);
         }
-    }
-
-    private async Task StopCommandAsync(CommandContext c)
-    {
-        if (await TitleFallthroughAsync(c, "stop", c.Rest).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        var guild = ContextGuild(c) ?? _voice.FindAny()?.GuildId;
-        if (guild is null || (_voice.Find(guild.Value) is null && !_engine.IsStreaming(guild.Value)))
-        {
-            await c.ReplyAsync("not in a voice channel").ConfigureAwait(false);
-            return;
-        }
-
-        await StopStreamAsync(guild.Value).ConfigureAwait(false);
-        await TeardownAsync(guild.Value).ConfigureAwait(false);
-        await _voice.LeaveAsync(guild.Value).ConfigureAwait(false);
-        await c.ReplyAsync("⏹ stopped and left the voice channel").ConfigureAwait(false);
     }
 
     private async Task SkipAsync(CommandContext c)

@@ -17,18 +17,16 @@ public sealed class VoiceModule(
     /// <summary>The empty-channel countdown task per guild (tests await it).</summary>
     internal System.Collections.Concurrent.ConcurrentDictionary<ulong, Task> EmptyCountdowns { get; } = new();
 
+    public const string StoppedReply = "⏹ stopped — still in voice (`!media leave` to leave)";
+
+    public const string LeftReply = "⏹ stopped and left the voice channel";
+
     /// <summary>How long a self "left voice" waits before tearing down: a move (leave + join) rejoins within it.</summary>
     public static readonly TimeSpan SelfLeftGrace = TimeSpan.FromSeconds(2);
 
     private readonly ILogger _log = logger ?? NullLogger<VoiceModule>.Instance;
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
-    public void Register(CommandRouter router)
-    {
-        router.Add("join", Role.Friend, JoinAsync);
-        router.Add("leave", Role.Friend, LeaveAsync);
-        router.Add("stop", Role.Friend, StopAsync);
-    }
 
     /// <summary><c>resolve_voice</c>: (guild, author's voice channel) for guild and DM messages.</summary>
     public static (ulong? Guild, ulong? Channel) ResolveAuthorVoice(IVoiceGateway gateway, ChatMessage message)
@@ -41,7 +39,8 @@ public sealed class VoiceModule(
         return gateway.FindUserVoice(message.AuthorId) is { } found ? (found.Guild, found.Channel) : (null, null);
     }
 
-    private async Task JoinAsync(CommandContext c)
+    /// <summary><c>!media join</c> / <c>!join</c>: join (or move to) the author's voice channel.</summary>
+    public async Task JoinAsync(CommandContext c)
     {
         var (guild, channel) = ResolveAuthorVoice(voice.Gateway, c.Message);
         if (guild is null || channel is null)
@@ -54,7 +53,8 @@ public sealed class VoiceModule(
         await c.ReplyAsync("joined!");
     }
 
-    private async Task LeaveAsync(CommandContext c)
+    /// <summary><c>!media leave</c> / <c>!leave</c>: stop the stream, discard the session and leave voice.</summary>
+    public async Task LeaveAsync(CommandContext c)
     {
         // Accept a stale link (kicked / dropped) too, so the stream and session can still be cleaned up.
         var link = c.GuildId is { } g ? voice.Find(g) : voice.FindAny();
@@ -68,10 +68,11 @@ public sealed class VoiceModule(
         _log.LogInformation("disconnecting from voice in guild {Guild}", guild);
         await streams.StopAsync(guild.Value, "leave");
         await voice.LeaveAsync(guild.Value);
-        await c.ReplyAsync("left!");
+        await c.ReplyAsync(LeftReply);
     }
 
-    private async Task StopAsync(CommandContext c)
+    /// <summary><c>!media stop</c> / <c>!stop</c>: stop the stream, stay in voice, keep the playlist.</summary>
+    public async Task StopAsync(CommandContext c)
     {
         var (guild, _) = ResolveAuthorVoice(voice.Gateway, c.Message);
         guild ??= c.GuildId ?? voice.FindAny()?.GuildId;
@@ -83,7 +84,7 @@ public sealed class VoiceModule(
 
         _log.LogInformation("stopping stream in guild {Guild}", guild);
         await streams.StopAsync(guild.Value, "stop");
-        await c.ReplyAsync("stopped");
+        await c.ReplyAsync(StoppedReply);
     }
 
     /// <summary>

@@ -70,12 +70,12 @@ public sealed class MediaControlTests
     }
 
     [Fact]
-    public async Task Media_stop_stops_tears_down_and_leaves()
+    public async Task Media_leave_stops_tears_down_and_leaves()
     {
-        await _h.Send("!media stop");
+        await _h.Send("!media leave");
         Assert.Equal(["not in a voice channel"], _h.Texts);
         await PlayFilm();
-        await _h.Send("!media stop");
+        await _h.Send("!media leave");
         Assert.Equal(["⏹ stopped and left the voice channel"], _h.Texts);
         Assert.False(_h.Media.IsStreaming(5));
         Assert.False(_h.Gateway.Links[0].IsConnected);
@@ -216,7 +216,7 @@ public sealed class MediaControlTests
     {
         await PlayFilm();
         _h.Gateway.Links[0].IsConnected = false;   // kicked
-        await _h.Send("!media stop");
+        await _h.Send("!media leave");
         Assert.Equal(["⏹ stopped and left the voice channel"], _h.Texts);
         Assert.False(_h.Media.IsStreaming(5));
     }
@@ -270,6 +270,72 @@ public sealed class MediaControlTests
         Assert.Single(_h.Pipelines.Created);
         Assert.Contains(Slopsoil.Streaming.Engine.StreamEngine.ConnectionLostMessage, _h.Texts);
         Assert.DoesNotContain(_h.Texts, t => t.Contains("reconnecting", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Media_stop_stops_but_stays_in_voice_and_keeps_the_playlist()
+    {
+        await PlayFilm();
+        await _h.Send("!media queue other");
+        await _h.Send("!media stop");
+        Assert.Equal(Slopsoil.Commands.Voice.VoiceModule.StoppedReply, _h.Texts[^1]);
+        Assert.False(_h.Media.IsStreaming(5));
+        Assert.True(_h.Gateway.Links[0].IsConnected);
+        await _h.Send("!media playlist");
+        Assert.Equal("**Up next** (1/10):\n  `1` Other (2001)", _h.Texts[^1]);
+    }
+
+    [Theory]
+    [InlineData("!join", "!media join")]
+    [InlineData("!stop", "!media stop")]
+    [InlineData("!leave", "!media leave")]
+    [InlineData("!help", "!media help")]
+    [InlineData("!ping", "!media ping")]
+    public async Task Shortcuts_reply_exactly_like_their_media_command(string shortcut, string full)
+    {
+        await PlayFilm();
+        await _h.Send(full);
+        var viaFull = _h.Texts.ToList();
+        _h.Sender.Sent.Clear();
+        await PlayFilm();
+        await _h.Send(shortcut);
+        Assert.Equal(viaFull, _h.Texts);
+    }
+
+    [Fact]
+    public async Task Media_voice_words_followed_by_text_are_titles_but_shortcuts_ignore_extra_words()
+    {
+        _h.Library.Search["leave no trace"] = [MediaHarness.Movie("l", "Leave No Trace", 2018)];
+        await _h.Send("!media leave no trace");
+        Assert.Equal("Leave No Trace (2018)", _h.Current.Request.Title);
+        await _h.Send("!leave no trace");
+        Assert.Equal(Slopsoil.Commands.Voice.VoiceModule.LeftReply, _h.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task Help_and_ping_are_open_to_viewers_but_playback_is_not()
+    {
+        await _h.Send("!media help", author: 30);
+        await _h.Send("!ping", author: 30);
+        await _h.Send("!media help inception", author: 30); // extra words: still just help, never a search
+        await _h.Send("!media film", author: 30);           // silent: viewers can't play
+        await _h.Send("!join", author: 30);
+        Assert.Equal([MediaText.HelpText, "pong!", MediaText.HelpText], _h.Texts);
+        Assert.Empty(_h.Pipelines.Created);
+    }
+
+    [Theory]
+    [InlineData("!play bbc one")]
+    [InlineData("!channels")]
+    [InlineData("!search news")]
+    [InlineData("!add-source a b")]
+    [InlineData("!sources")]
+    [InlineData("!delete-source")]
+    [InlineData("!hello")]
+    public async Task Removed_commands_are_silent(string content)
+    {
+        await _h.Send(content, author: 10);
+        Assert.Empty(_h.Texts);
     }
 
     [Fact]

@@ -20,7 +20,6 @@ public sealed class RouterTests
         _router.Add("ping", Role.Viewer, c => c.ReplyAsync("pong!"));
         _router.Add("boom", Role.Viewer, _ => throw new InvalidOperationException("kaput"));
         _router.Add("slow", Role.Viewer, c => Task.Delay(Timeout.Infinite, c.Cancellation));
-        _router.AddUnavailablePlaceholders();
     }
 
     private CommandHandler Record(string name) => c =>
@@ -74,6 +73,15 @@ public sealed class RouterTests
     }
 
     [Fact]
+    public async Task A_groups_role_gates_only_its_own_handler()
+    {
+        _router.Add("grp", Role.Friend, Record("grp")).Sub("open", Role.Viewer, Record("open"));
+        await Send("!grp open now", 30);   // viewer: the open sub-command runs
+        await Send("!grp something", 30);  // viewer: the friend-only group handler stays silent
+        Assert.Equal(["open|now|5|7|30"], _calls);
+    }
+
+    [Fact]
     public async Task Subcommand_role_is_checked_too()
     {
         await Send("!media admin", 20);
@@ -86,23 +94,9 @@ public sealed class RouterTests
     public async Task Strangers_fail_the_global_check_even_for_viewer_commands()
     {
         await Send("!ping", 40);
-        await Send("!play x", 40);
         Assert.Empty(_sender.Sent);
         await Send("!ping", 30);
         Assert.Equal(["pong!"], _sender.Texts);
-    }
-
-    [Theory]
-    [InlineData("!play bbc one")]
-    [InlineData("!channels")]
-    [InlineData("!search news")]
-    [InlineData("!add-source a b")]
-    [InlineData("!sources")]
-    [InlineData("!delete-source")]
-    public async Task Non_subset_commands_say_they_are_unavailable(string content)
-    {
-        await Send(content, 30);
-        Assert.Equal((7UL, CommandRouter.UnavailableReply), Assert.Single(_sender.Sent));
     }
 
     [Fact]

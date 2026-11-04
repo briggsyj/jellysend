@@ -208,8 +208,7 @@ internal sealed class MediaHarness
         Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time);
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
-        Media.Register(Router);
-        new VoiceModule(Voice, Media).Register(Router);
+        Media.Register(Router, new VoiceModule(Voice, Media));
         Gateway.States[(5, 20)] = 50;
     }
 

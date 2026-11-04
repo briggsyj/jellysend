@@ -89,7 +89,8 @@ public sealed class MediaTextTests
             MediaText.AspectOptions.Select(o => o.Label));
         Assert.Null(MediaText.AspectOptions[0].Ratio);
         Assert.Equal(2.39, MediaText.AspectOptions[3].Ratio);
-        Assert.StartsWith("**🎬 Jellyfin — `!media`**\n\n**Play**", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.StartsWith("**🎬 slopsoil — `!media`**\n\n**Play**", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.Contains("Shortcuts: `!join` `!leave` `!stop` `!help` `!ping`", MediaText.HelpText, StringComparison.Ordinal);
         Assert.EndsWith("use `!media search <title>`.".Replace("use", "Use", StringComparison.Ordinal), MediaText.HelpText, StringComparison.Ordinal);
         Assert.Equal(10, MediaText.PlaylistMax);
     }

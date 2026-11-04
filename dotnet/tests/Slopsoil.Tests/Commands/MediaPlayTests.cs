@@ -39,9 +39,9 @@ public sealed class MediaPlayTests
     {
         _h.Library.HasUserCredentials = true;
         await _h.Send("!media help");
-        await _h.Send("!media help", guild: 9, author: 30 + 0); // friend 20 only — this one is silent
-        Assert.Single(_h.Texts);
+        await _h.Send("!media help", guild: 9, author: 30); // a viewer in a server whose name is unknown
         Assert.EndsWith("join **slopsoil · Movie Night** in a Jellyfin app to pause, play and seek this stream together.", _h.Texts[0], StringComparison.Ordinal);
+        Assert.EndsWith("join **slopsoil · <server name>** in a Jellyfin app to pause, play and seek this stream together.", _h.Texts[1], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -251,7 +251,7 @@ public sealed class MediaPlayTests
         var voice = new Slopsoil.Commands.Voice.VoiceManager(failing);
         var media = new MediaModule(h.Library, h.Engine, voice);
         var router = new CommandRouter(new FakeRoles(), h.Sender, new MessageHub());
-        media.Register(router);
+        media.Register(router, new Slopsoil.Commands.Voice.VoiceModule(voice, media));
         await router.DispatchAsync(new ChatMessage(5, 7, 20, "!media x"), TestContext.Current.CancellationToken);
         Assert.Equal("could not join the voice channel: no permission", h.Texts[^1]);
         Assert.Equal(["ps1"], h.Library.Stopped);

@@ -21,7 +21,7 @@ public static partial class MediaText
     ];
 
     public const string HelpText = """
-        **🎬 Jellyfin — `!media`**
+        **🎬 slopsoil — `!media`**
 
         **Play**
         `!media <movie>` — e.g. `!media inception`
@@ -30,17 +30,20 @@ public static partial class MediaText
         `!media <movie> 1:23:45` — start at a time (also `<show> s03e05 45m`)
 
         **Control**
-        `!media pause` · `!media play`
+        `!media pause` · `!media play` · `!media skip`
         `!media resume 1:23:45` — jump to a time (`1:23` = 1h 23m; also `45m`, `90s`)
-        `!media skip` · `!media stop` (stops and leaves voice)
+        `!media stop` — stop, stay in voice · `!media leave` — stop and leave
+        `!media join` — join your voice channel
         `!media aspect-ratio` — change the picture shape
+        `!media debug on` / `off` — diagnostics on the stream
 
         **Playlist** (max 10, plays in order)
         `!media queue <movie>` or `!media queue <show> s01e02`
         `!media playlist`
         `!media order <#> <new #>` · `!media remove <#>`
 
-        -# Title starts with queue, order or remove? Use `!media search <title>`.
+        Shortcuts: `!join` `!leave` `!stop` `!help` `!ping`
+        -# Title starts with a command word? Use `!media search <title>`.
         """;
 
     /// <summary>Appended to <see cref="HelpText"/> when SyncPlay is configured; <c>{0}</c> is the group name.</summary>

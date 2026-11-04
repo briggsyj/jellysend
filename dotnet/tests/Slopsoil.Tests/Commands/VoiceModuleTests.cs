@@ -17,7 +17,9 @@ public sealed class VoiceModuleTests
         _voice = new VoiceManager(_gateway);
         _module = new VoiceModule(_voice, _streams);
         _router = new CommandRouter(new FakeRoles(), _sender, new MessageHub());
-        _module.Register(_router);
+        _router.Add("join", Slopsoil.Common.Permissions.Role.Friend, _module.JoinAsync);
+        _router.Add("leave", Slopsoil.Common.Permissions.Role.Friend, _module.LeaveAsync);
+        _router.Add("stop", Slopsoil.Common.Permissions.Role.Friend, _module.StopAsync);
     }
 
     private Task Send(string content, ulong? guild = 5, ulong author = 20) =>
@@ -69,7 +71,7 @@ public sealed class VoiceModuleTests
         await Send("!join");
         _streams.Streaming.Add(5);
         await Send("!leave");
-        Assert.Equal(["not in a voice channel", "joined!", "left!"], _sender.Texts);
+        Assert.Equal(["not in a voice channel", "joined!", VoiceModule.LeftReply], _sender.Texts);
         Assert.Equal([(5UL, "leave")], _streams.Stops);
         Assert.False(_gateway.Links[0].IsConnected);
         Assert.Null(_voice.Get(5));
@@ -82,7 +84,7 @@ public sealed class VoiceModuleTests
         _gateway.States[(5, 20)] = 50;
         await Send("!join");
         await Send("!leave", guild: null);
-        Assert.Equal("left!", _sender.Texts.Last());
+        Assert.Equal(VoiceModule.LeftReply, _sender.Texts.Last());
     }
 
     [Fact]
@@ -94,7 +96,7 @@ public sealed class VoiceModuleTests
         await Send("!stop");
         _streams.Streaming.Add(5);
         await Send("!stop");
-        Assert.Equal(["nothing is playing", "joined!", "nothing is playing", "stopped"], _sender.Texts);
+        Assert.Equal(["nothing is playing", "joined!", "nothing is playing", VoiceModule.StoppedReply], _sender.Texts);
         Assert.Equal([(5UL, "stop")], _streams.Stops);
         Assert.NotNull(_voice.Get(5));
     }
@@ -338,7 +340,7 @@ public sealed class VoiceModuleTests
         await Send("!stop");
         _streams.Streaming.Add(5);
         await Send("!leave");
-        Assert.Equal(["joined!", "stopped", "left!"], _sender.Texts);
+        Assert.Equal(["joined!", VoiceModule.StoppedReply, VoiceModule.LeftReply], _sender.Texts);
         Assert.Equal([(5UL, "stop"), (5UL, "leave")], _streams.Stops);
     }
 }

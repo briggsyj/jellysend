@@ -192,10 +192,11 @@ docker compose pull && docker compose up -d
 
 Remove the line (and pull again) to go back to Python. What's different:
 
-- Included: `!media` (play, pickers, pause/play/resume/stop/skip, playlist, aspect-ratio, SyncPlay), `!join`, `!leave`,
-  `!stop`, `!help`, `!ping`, plus `.NET`-only `!media debug on|off` (diagnostics overlay burned into the stream).
+- Included: everything under `!media` — play (with pickers and `!media <title> 1:23:45`), pause/play/resume/skip,
+  `stop` (stay in voice) and `leave`, `join`, playlist, aspect-ratio, SyncPlay, `debug on|off` (diagnostics overlay),
+  `help`, `ping`. `!join`, `!leave`, `!stop`, `!help` and `!ping` are shortcuts for their `!media` versions.
 - Not included: TVheadend, IPTV sources and yt-dlp (`!play`, `!channels`, `!search`, `!add-source`, `!sources`,
-  `!delete-source` reply that they are not available). `TVHEADEND_*`, `YTDLP_FORMAT` and `TIMEZONE` are ignored.
+  `!delete-source` do nothing). `TVHEADEND_*`, `YTDLP_FORMAT` and `TIMEZONE` are ignored.
 - `SLOPSOIL_SPIKE=testpattern` runs a transport self-test instead of the bot: `!join` streams a test pattern and tone.
 - When everyone leaves the voice channel the stream keeps going for `EMPTY_CHANNEL_TIMEOUT_MINUTES` (default 20;
   `0` = stop and leave at once, as the Python bot does) and stops if nobody returns.
@@ -348,7 +349,7 @@ STREAM_AV_SYNC_MS=
 | `STREAM_FPS` | No | Override the preset frame rate, 1–60. Matching the source fps avoids wasteful frame duplication. |
 | `STREAM_VIDEO_BITRATE` | No | Override the preset video bitrate (used for `-b:v`/`-maxrate`/`-bufsize`, CBR), e.g. `2500k`. |
 | `STREAM_PACKET_PACE` | No | Spread each frame's RTP packets across this fraction of the frame interval instead of bursting them (default `0.0` = off; e.g. `0.75`). Can reduce freezes caused by dropped packet bursts on some networks. Clamped to 0.0–0.95. |
-| `STREAM_AV_SYNC_MS` | No | Lip-sync offset in ms (default `0`). Audio now follows the video clock automatically: after a pause, seek, aspect change or encoder restart, leftover audio is discarded, right after each start or seek, audio is lined up with the video within the first second (at most 300 ms of correction); after that, drift is corrected only when it stays above 120 ms for over a second — gently, one 20 ms step every 250 ms, at most 300 ms per episode — so short lags that catch up on their own are left alone. This setting is the constant offset that tracking aims for, for any delay Discord's players add. **Positive** plays audio earlier (fixes "audio behind"); **negative** plays it later (fixes "audio ahead"). Clamped to ±5000. |
+| `STREAM_AV_SYNC_MS` | No | Lip-sync fine-tune in ms (default `0`). **.NET edition:** audio and video are sent from one clock, so they are in sync on the wire; use this only for delay Discord's players add. **Positive** plays audio earlier (fixes "audio behind"); **negative** plays it later (fixes "audio ahead"). Clamped to ±5000. (The Python bot uses it as the target of its audio follower.) |
 
 TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, the `!channels`, `!search`, and TVheadend-backed `!play` commands are not loaded.
 

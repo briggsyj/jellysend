@@ -13,11 +13,6 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
 {
     public const char Prefix = '!';
 
-    /// <summary>FR-044: commands of the full Python bot that this edition does not have.</summary>
-    public static readonly IReadOnlyList<string> UnavailableCommands = ["play", "channels", "search", "add-source", "sources", "delete-source"];
-
-    public const string UnavailableReply = "That command is not available in the .NET edition (Jellyfin only).";
-
     private readonly Dictionary<string, Command> _commands = new(StringComparer.Ordinal);
 
     public MessageHub Hub => hub;
@@ -37,15 +32,6 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
         return command;
     }
 
-    /// <summary>Register the FR-044 placeholders (any non-None role sees the reply).</summary>
-    public void AddUnavailablePlaceholders()
-    {
-        foreach (var name in UnavailableCommands)
-        {
-            Add(name, Role.None, c => c.ReplyAsync(UnavailableReply));
-        }
-    }
-
     /// <summary>Hand a message to waiters, then run it if it is a command. Returns the handler's task (completed when not a command).</summary>
     public Task DispatchAsync(ChatMessage message, CancellationToken ct)
     {
@@ -62,25 +48,19 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
             return Task.CompletedTask;
         }
 
-        // Global check (bot.add_check(has_any_role)) then the command's own role.
-        if (!RoleResolver.Satisfies(roles, message.AuthorId, Role.Viewer) || !RoleResolver.Satisfies(roles, message.AuthorId, command.Role))
+        // Global check (bot.add_check(has_any_role)), then the role of whatever actually runs: a group's role gates
+        // only its own handler, each sub-command has its own (so `!media help` can be open to viewers).
+        if (!RoleResolver.Satisfies(roles, message.AuthorId, Role.Viewer))
         {
             return Task.CompletedTask;
         }
 
         var context = new CommandContext(message, rest, sender, hub, ct);
         var (sub, subRest) = SplitFirst(rest);
-        if (command.TryGetSubcommand(sub, out var subcommand))
-        {
-            if (!RoleResolver.Satisfies(roles, message.AuthorId, subcommand.Role))
-            {
-                return Task.CompletedTask;
-            }
-
-            return RunAsync(subcommand, context.WithRest(subRest, sub));
-        }
-
-        return RunAsync(command, context);
+        var (target, targetContext) = command.TryGetSubcommand(sub, out var subcommand)
+            ? (subcommand, context.WithRest(subRest, sub))
+            : (command, context);
+        return RoleResolver.Satisfies(roles, message.AuthorId, target.Role) ? RunAsync(target, targetContext) : Task.CompletedTask;
     }
 
     private async Task RunAsync(Command command, CommandContext context)
