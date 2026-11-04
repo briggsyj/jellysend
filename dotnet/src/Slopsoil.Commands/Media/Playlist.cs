@@ -91,7 +91,7 @@ public sealed class Playlist<T>(Func<T, string> label)
         var posText = split < 0 ? "" : trimmed[(split + 1)..];
         if (target.Length == 0 || !IsDecimal(posText))
         {
-            return "usage: `!media order <# or title> <new position>`";
+            return "usage: `!order <# or title> <new #>`";
         }
 
         lock (_lock)
@@ -124,7 +124,7 @@ public sealed class Playlist<T>(Func<T, string> label)
     {
         if (target.Trim().Length == 0)
         {
-            return "usage: `!media remove <# or title>`";
+            return "usage: `!remove <# or title>`";
         }
 
         lock (_lock)
@@ -168,7 +168,7 @@ public sealed class Playlist<T>(Func<T, string> label)
         {
             0 => (-1, $"nothing in the playlist matches `{target}`"),
             1 => (matches[0], null),
-            _ => (-1, $"`{target}` matches several items — use its number from `!media playlist`"),
+            _ => (-1, $"`{target}` matches several items — use its number from `!playlist`"),
         };
     }
 

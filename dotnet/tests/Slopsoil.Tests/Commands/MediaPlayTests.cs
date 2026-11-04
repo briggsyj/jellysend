@@ -14,7 +14,7 @@ public sealed class MediaPlayTests
     public async Task Single_match_plays_in_the_authors_channel()
     {
         _h.Library.Search["inception"] = [MediaHarness.Movie("m1", "Inception")];
-        await _h.Send("!media inception");
+        await _h.Send("!play inception");
 
         Assert.Equal(["checking stream…", "📺 **Inception (2010)** (go-live)"], _h.Texts);
         var p = _h.Current;
@@ -48,7 +48,7 @@ public sealed class MediaPlayTests
     public async Task Unconfigured_library_says_so_but_help_still_works()
     {
         var h = new MediaHarness(configured: false);
-        await h.Send("!media inception");
+        await h.Send("!play inception");
         await h.Send("!media queue inception");
         await h.Send("!media");
         Assert.StartsWith("Jellyfin is not configured.", h.Texts[0], StringComparison.Ordinal);
@@ -60,7 +60,7 @@ public sealed class MediaPlayTests
     public async Task Picker_lists_results_and_plays_the_choice()
     {
         _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien", 1979), MediaHarness.Movie("a2", "Aliens", 1986)];
-        var run = _h.Start("!media alien");
+        var run = _h.Start("!play alien");
         await _h.UntilReply("Found 2 result(s) for `alien`. Pick a number:\n\n  `1` [Movie] Alien (1979)\n  `2` [Movie] Aliens (1986)");
         await _h.Answer("2");
         await run;
@@ -71,7 +71,7 @@ public sealed class MediaPlayTests
     public async Task Picker_timeout_cancels()
     {
         _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien"), MediaHarness.Movie("a2", "Aliens")];
-        var run = _h.Start("!media alien");
+        var run = _h.Start("!play alien");
         await _h.Until(() => _h.Texts.Count == 1);
         // The picker may not be waiting yet: keep advancing the fake clock until it gives up.
         while (!run.IsCompleted)
@@ -91,7 +91,7 @@ public sealed class MediaPlayTests
         _h.Library.Search["office"] = [new MediaItem { Id = "s1", Name = "The Office", Type = "Series" }];
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1", Name = "Season 1" }, new MediaItem { Id = "se2", Name = "Season 2" }];
         _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "The Office", 2, 1, "The Dundies"), new MediaItem { Id = "e2", Name = "Special", Type = "Episode", SeriesName = "The Office" }];
-        var run = _h.Start("!media office");
+        var run = _h.Start("!play office");
         await _h.UntilReply("**The Office** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
         await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` Special");
@@ -106,7 +106,7 @@ public sealed class MediaPlayTests
         _h.Library.Search["show"] = [new MediaItem { Id = "s1", Type = "Series" }];
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1" }];
         _h.Library.Episodes["se1"] = [new MediaItem { Id = "e1", Name = "Pilot", Type = "Episode", SeriesName = "Show" }];
-        var run = _h.Start("!media show");
+        var run = _h.Start("!play show");
         await _h.UntilReply("**Unknown — Unknown**. Pick an episode:\n\n  `1` Pilot");
         await _h.Answer("1");
         await run;
@@ -118,7 +118,7 @@ public sealed class MediaPlayTests
     [InlineData("zzz", "nothing found in Jellyfin for `zzz`")]
     public async Task Nothing_found(string query, string reply)
     {
-        await _h.Send($"!media {query}");
+        await _h.Send($"!play {query}");
         Assert.Equal([reply], _h.Texts);
     }
 
@@ -126,7 +126,7 @@ public sealed class MediaPlayTests
     public async Task Episode_code_finds_the_episode_directly()
     {
         _h.Library.Search["the office 2x3"] = [MediaHarness.Episode("e", "The Office", 2, 3, "Office Olympics")];
-        await _h.Send("!media The Office S02E03");
+        await _h.Send("!play The Office S02E03");
         Assert.Equal("The Office — S02E03 — Office Olympics", _h.Current.Request.Title);
     }
 
@@ -134,11 +134,11 @@ public sealed class MediaPlayTests
     public async Task Search_errors_distinguish_unreachable()
     {
         _h.Library.SearchError = new JellyfinException("Jellyfin request failed", new HttpRequestException("connection refused"));
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         _h.Library.SearchError = new JellyfinException("Jellyfin /Items → HTTP 500");
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         _h.Library.SearchError = new JellyfinException("bad JSON");
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         Assert.Equal(
             ["could not reach Jellyfin: Jellyfin request failed", "could not reach Jellyfin: Jellyfin /Items → HTTP 500", "Jellyfin search failed: bad JSON"],
             _h.Texts); // Python: HTTPError is a URLError → "could not reach"
@@ -153,10 +153,10 @@ public sealed class MediaPlayTests
         _h.Library.Seasons["eps"] = [new MediaItem { Id = "bad", Name = "S1" }];
         _h.Library.Search["noeps"] = [new MediaItem { Id = "noeps", Name = "NoEps", Type = "Series" }];
         _h.Library.Seasons["noeps"] = [new MediaItem { Id = "x", Name = "S1" }];
-        await _h.Send("!media bad");
-        await _h.Send("!media empty");
-        await _h.Send("!media eps");
-        await _h.Send("!media noeps");
+        await _h.Send("!play bad");
+        await _h.Send("!play empty");
+        await _h.Send("!play eps");
+        await _h.Send("!play noeps");
         Assert.Equal(
             ["failed to fetch seasons: seasons down", "no seasons found for **Empty**", "failed to fetch episodes: episodes down", "no episodes found for **S1** of **NoEps**"],
             _h.Texts);
@@ -167,7 +167,7 @@ public sealed class MediaPlayTests
     {
         _h.Gateway.States.Clear();
         _h.Library.Search["inception"] = [MediaHarness.Movie("m1", "Inception")];
-        await _h.Send("!media inception");
+        await _h.Send("!play inception");
         Assert.Equal(["you're not in a voice channel"], _h.Texts);
     }
 
@@ -176,16 +176,16 @@ public sealed class MediaPlayTests
     {
         _h.Library.Search["x"] = [MediaHarness.Movie("m1", "X", null)];
         _h.Library.NoPlayback = true;
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         _h.Library.NoPlayback = false;
 
         _h.Library.UnknownMetadata = true;
-        await _h.Send("!media x");                       // probe fails
+        await _h.Send("!play x");                       // probe fails
         _h.Library.Probe = new ProbeResult("vp9", 24, "p", false, 1, 1, false, null);
-        await _h.Send("!media x");                       // probed codec unsupported
+        await _h.Send("!play x");                       // probed codec unsupported
         _h.Library.UnknownMetadata = false;
         _h.Library.Codec = "av1";
-        await _h.Send("!media x");                       // PlaybackInfo codec unsupported
+        await _h.Send("!play x");                       // PlaybackInfo codec unsupported
 
         Assert.Equal(
             [
@@ -204,7 +204,7 @@ public sealed class MediaPlayTests
         _h.Library.Search["x"] = [MediaHarness.Movie("m1", "X")];
         _h.Library.UnknownMetadata = true;
         _h.Library.Probe = new ProbeResult("hevc", 24, "main", false, 1920, 1080, false, null);
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         Assert.False(_h.Current.Request.HasAudio);
     }
 
@@ -213,7 +213,7 @@ public sealed class MediaPlayTests
     {
         _h.Library.Search["x"] = [MediaHarness.Movie("m1", "X")];
         _h.Connector.Next.Enqueue(_ => Task.FromException<IGoLiveLink>(new TimeoutException("slow")));
-        await _h.Send("!media x");
+        await _h.Send("!play x");
         Assert.Equal("go-live connection failed: slow", _h.Texts[^1]);
         Assert.Equal(["ps1"], _h.Library.Stopped);
         await _h.Send("!media playlist");
@@ -225,21 +225,23 @@ public sealed class MediaPlayTests
     {
         _h.Library.Search["a"] = [MediaHarness.Movie("a", "A")];
         _h.Library.Search["b"] = [MediaHarness.Movie("b", "B")];
-        await _h.Send("!media a");
-        await _h.Send("!media b");
+        await _h.Send("!play a");
+        await _h.Send("!play b");
         Assert.Equal(["ps1"], _h.Library.Stopped);
         Assert.Equal(1, _h.Pipelines.Created[0].Stops);
     }
 
     [Fact]
-    public async Task Search_subcommand_and_title_fallthrough()
+    public async Task Old_title_and_search_forms_point_to_play()
     {
+        await _h.Send("!media stop-making-sense");
+        await _h.Send("!media search inception");
+        Assert.StartsWith("-# `!media <title>` is now `!play <title>` — e.g. `!play stop-making-sense`\n\n**🎬 slopsoil**", _h.Texts[0], StringComparison.Ordinal);
+        Assert.StartsWith("-# `!media search` is gone: use `!play <title>`\n\n**🎬 slopsoil**", _h.Texts[1], StringComparison.Ordinal);
+        Assert.Empty(_h.Pipelines.Created);
         _h.Library.Search["queue"] = [MediaHarness.Movie("q", "Queue")];
-        _h.Library.Search["stop making sense"] = [MediaHarness.Movie("s", "Stop Making Sense", 1984)];
-        await _h.Send("!media search queue");
+        await _h.Send("!play queue");
         Assert.Equal("Queue (2010)", _h.Current.Request.Title);
-        await _h.Send("!media stop making sense");
-        Assert.Equal("Stop Making Sense (1984)", _h.Current.Request.Title);
     }
 
     [Fact]
@@ -252,7 +254,7 @@ public sealed class MediaPlayTests
         var media = new MediaModule(h.Library, h.Engine, voice);
         var router = new CommandRouter(new FakeRoles(), h.Sender, new MessageHub());
         media.Register(router, new Slopsoil.Commands.Voice.VoiceModule(voice, media));
-        await router.DispatchAsync(new ChatMessage(5, 7, 20, "!media x"), TestContext.Current.CancellationToken);
+        await router.DispatchAsync(new ChatMessage(5, 7, 20, "!play x"), TestContext.Current.CancellationToken);
         Assert.Equal("could not join the voice channel: no permission", h.Texts[^1]);
         Assert.Equal(["ps1"], h.Library.Stopped);
     }

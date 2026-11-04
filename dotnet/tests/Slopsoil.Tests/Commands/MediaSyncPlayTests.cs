@@ -16,7 +16,7 @@ public sealed class MediaSyncPlayTests
 
     private async Task<FakeSyncPlay> PlayAndSync(double shownAt = 12)
     {
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         _h.Current.Fake.Position = shownAt;
         _h.Current.Fake.FirstFrame.SetResult();
         await _h.Drain();
@@ -36,7 +36,7 @@ public sealed class MediaSyncPlayTests
     {
         var g = await PlayAndSync();
         await _h.Send("!media pause");
-        await _h.Send("!media resume 0:10");
+        await _h.Send("!time 0:10");
         await _h.Send("!media pause");
         await _h.Send("!media play");
         Assert.Equal(["open slopsoil · Movie Night", "queue f 12", "pause", "seek 600", "unpause", "pause", "unpause"], g.Calls);
@@ -116,7 +116,7 @@ public sealed class MediaSyncPlayTests
     {
         var g = await PlayAndSync();
         _h.Library.Search["film2"] = [MediaHarness.Movie("f2", "Film2", 2002)];
-        await _h.Send("!media film2");
+        await _h.Send("!play film2");
         _h.Current.Fake.FirstFrame.SetResult();
         await _h.Drain();
         Assert.Single(_h.Library.Groups);
@@ -129,7 +129,7 @@ public sealed class MediaSyncPlayTests
     public async Task Open_failure_means_no_group()
     {
         _h.Library.FailSyncOpen = true;
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         _h.Current.Fake.FirstFrame.SetResult();
         await _h.Drain();
         Assert.Equal(["open slopsoil · Movie Night", "close"], _h.Library.Groups[0].Calls);
@@ -140,9 +140,9 @@ public sealed class MediaSyncPlayTests
     [Fact]
     public async Task Replaced_before_the_first_frame_is_not_queued()
     {
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         var first = _h.Current;
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         first.Fake.FirstFrame.SetResult();
         _h.Current.Fake.FirstFrame.SetResult();
         await _h.Drain();
@@ -153,7 +153,7 @@ public sealed class MediaSyncPlayTests
     public async Task Without_a_login_nothing_is_synced()
     {
         _h.Library.HasUserCredentials = false;
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         await _h.Drain();
         Assert.Empty(_h.Library.Groups);
     }

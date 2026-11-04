@@ -39,7 +39,8 @@ public sealed class RouterTests
     [InlineData("!media ar 2", "aspect|2")]
     [InlineData("!media aspect-ratio", "aspect|")]
     [InlineData("!media", "media|")]
-    [InlineData("!media Pause", "media|Pause")] // sub-commands are case-sensitive like discord.py
+    [InlineData("!media Pause", "pause|")] // names are case-insensitive (casual users, phone auto-capitals)
+    [InlineData("!MEDIA ar 2", "aspect|2")]
     public async Task Groups_route_to_subcommands_or_the_group_handler(string content, string expected)
     {
         await Send(content);
@@ -50,7 +51,6 @@ public sealed class RouterTests
     [InlineData("hello")]
     [InlineData("!")]
     [InlineData("!unknown thing")]
-    [InlineData("!MEDIA x")]
     [InlineData("media !x")]
     public async Task Non_commands_are_ignored(string content)
     {

@@ -24,7 +24,7 @@ public sealed class MediaDirectStreamTests
     [Fact]
     public async Task Original_file_is_streamed_with_jellyfins_default_audio_and_no_hls_resolve()
     {
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         var r = _h.Current.Request;
         Assert.Equal("http://jf/Videos/f/stream?static=true&api_key=SECRET", r.Url);
         Assert.Equal(2, r.AudioStreamIndex);   // the default track, not the first (commentary)
@@ -36,7 +36,7 @@ public sealed class MediaDirectStreamTests
     public async Task Source_frame_rate_reaches_the_stream_request()
     {
         _h.Library.FrameRate = 23.976;
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         Assert.Equal(23.976, _h.Current.Request.SourceFps);
     }
 
@@ -45,7 +45,7 @@ public sealed class MediaDirectStreamTests
     {
         _h.Library.UnknownMetadata = true;
         _h.Library.Probe = new("h264", 25.0, "high", false, 1920, 1080, true, "aac");
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         Assert.Equal(25.0, _h.Current.Request.SourceFps);
     }
 
@@ -53,14 +53,14 @@ public sealed class MediaDirectStreamTests
     public async Task Codecs_the_transcode_path_rejects_are_fine_when_direct()
     {
         _h.Library.Codec = "av1";
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         Assert.Equal("av1", _h.Current.Request.SourceCodec);
     }
 
     [Fact]
     public async Task Audio_choice_maps_the_input_stream_and_subtitles_switch_to_jellyfins_transcode()
     {
-        await _h.Send("!media film");
+        await _h.Send("!play film");
         await _h.Send("!media audio 3");
         Assert.Equal(3, _h.Current.Request.AudioStreamIndex);
         Assert.StartsWith("http://jf/Videos/f/stream?static=true", _h.Current.Request.Url, StringComparison.Ordinal);

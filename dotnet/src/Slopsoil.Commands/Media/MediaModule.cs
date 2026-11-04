@@ -77,45 +77,42 @@ public sealed class MediaModule : IStreamControl
     internal ConcurrentDictionary<Task, byte> Background { get; } = new();
 
     /// <summary>
-    /// Register <c>!media</c> and its sub-commands, plus the top-level shortcuts — each shortcut runs exactly its
-    /// <c>!media</c> equivalent (<c>!join</c>, <c>!leave</c>, <c>!stop</c>, <c>!help</c>, <c>!ping</c>).
+    /// Register every command twice (spec 008): as <c>!media &lt;name&gt;</c> and as the shortcut <c>!&lt;name&gt;</c>, with
+    /// the same aliases and role. <c>!media</c> on its own (or with an unknown word) shows the help.
     /// </summary>
     public void Register(CommandRouter router, VoiceModule voice)
     {
-        // `!media leave no trace` is a title; the `!leave` shortcut ignores extra words.
-        CommandHandler OrTitle(string word, CommandHandler handler) => async c =>
+        var handlers = new Dictionary<string, CommandHandler>(StringComparer.Ordinal)
         {
-            if (!await TitleFallthroughAsync(c, word, c.Rest).ConfigureAwait(false))
-            {
-                await handler(c).ConfigureAwait(false);
-            }
+            ["play"] = PlayAsync,
+            ["pause"] = PauseAsync,
+            ["time"] = TimeAsync,
+            ["skip"] = SkipAsync,
+            ["stop"] = voice.StopAsync,
+            ["leave"] = voice.LeaveAsync,
+            ["join"] = voice.JoinAsync,
+            ["queue"] = QueueAsync,
+            ["playlist"] = PlaylistAsync,
+            ["order"] = OrderAsync,
+            ["remove"] = RemoveAsync,
+            ["subtitles"] = SubtitlesAsync,
+            ["audio"] = AudioTrackAsync,
+            ["aspect-ratio"] = AspectAsync,
+            ["debug"] = DebugAsync,
+            ["help"] = SendHelpAsync,
+            ["ping"] = PingAsync,
         };
 
-        router.Add("media", Role.Friend, MediaAsync)
-            .Sub("search", Role.Friend, c => c.Rest.Trim().Length == 0 ? Task.CompletedTask : MediaAsync(c))
-            .Sub("help", Role.Viewer, SendHelpAsync)
-            .Sub("ping", Role.Viewer, PingAsync)
-            .Sub("join", Role.Friend, OrTitle("join", voice.JoinAsync))
-            .Sub("leave", Role.Friend, OrTitle("leave", voice.LeaveAsync))
-            .Sub("stop", Role.Friend, OrTitle("stop", voice.StopAsync))
-            .Sub("pause", Role.Friend, PauseAsync)
-            .Sub("play", Role.Friend, PlayAsync)
-            .Sub("resume", Role.Friend, ResumeAsync)
-            .Sub("skip", Role.Friend, SkipAsync)
-            .Sub("queue", Role.Friend, QueueAsync)
-            .Sub("order", Role.Friend, OrderAsync)
-            .Sub("remove", Role.Friend, RemoveAsync)
-            .Sub("aspect-ratio", Role.Friend, AspectAsync, "aspect", "ar")
-            .Sub("playlist", Role.Friend, PlaylistAsync)
-            .Sub("debug", Role.Friend, DebugAsync)
-            .Sub("subtitles", Role.Friend, SubtitlesAsync, "subs", "sub")
-            .Sub("audio", Role.Friend, AudioTrackAsync);
-
-        router.Add("join", Role.Friend, voice.JoinAsync);
-        router.Add("leave", Role.Friend, voice.LeaveAsync);
-        router.Add("stop", Role.Friend, voice.StopAsync);
-        router.Add("help", Role.Viewer, SendHelpAsync);
-        router.Add("ping", Role.Viewer, PingAsync);
+        var media = router.Add("media", Role.Friend, MediaGroupAsync);
+        foreach (var info in CommandCatalog.All)
+        {
+            var handler = handlers[info.Name];
+            CommandHandler run = info.NeedsArgs
+                ? c => c.Rest.Length == 0 ? c.ReplyAsync(info.HelpText()) : handler(c)
+                : handler;
+            media.Sub(info.Name, info.Role, run, info.Aliases);
+            router.Add(info.Name, info.Role, run, info.Aliases);
+        }
     }
 
     private static Task PingAsync(CommandContext c) => c.ReplyAsync("pong!");
@@ -146,46 +143,42 @@ public sealed class MediaModule : IStreamControl
 
     // ── Commands ─────────────────────────────────────────────────────────────
 
-    private async Task MediaAsync(CommandContext c) => await MediaQueryAsync(c, c.Rest).ConfigureAwait(false);
-
-    private async Task MediaQueryAsync(CommandContext c, string query)
+    /// <summary>
+    /// <c>!media</c> without a known sub-command: the help, after a hint when the words were an old command
+    /// (<c>!media &lt;title&gt;</c>, <c>!media search</c>, <c>!media resume</c>).
+    /// </summary>
+    private async Task MediaGroupAsync(CommandContext c)
     {
-        if (query.Trim().Length == 0)
+        var (word, _) = CommandRouter.SplitFirst(c.Rest);
+        var hint = word.ToLowerInvariant() switch
         {
-            await SendHelpAsync(c).ConfigureAwait(false);
-            return;
-        }
+            "" => null,
+            "resume" => "-# `!media resume` is gone: `!play` resumes, `!time <time>` jumps\n\n",
+            "search" => "-# `!media search` is gone: use `!play <title>`\n\n",
+            _ => $"-# `!media <title>` is now `!play <title>` — e.g. `!play {c.Rest.Trim()}`\n\n",
+        };
+        await SendHelpTextAsync(c, hint).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Play what <paramref name="query"/> names (spec 008): search its title (an episode or a season when given), then
+    /// start at its time. When the recognised formats find nothing, the whole text is searched as a title instead
+    /// (<c>!play 9 to 5</c>, a title that looks like a time), unless the title was quoted.
+    /// </summary>
+    private async Task PlayQueryAsync(CommandContext c, PlayQuery query)
+    {
         if (!await RequireLibraryAsync(c).ConfigureAwait(false))
         {
             return;
         }
 
-        // `!media <title> <time>` (spec 002): start the chosen item at the time.
-        var (title, startAt) = MediaText.SplitTrailingTime(query);
-        if (startAt is not { } start)
-        {
-            if (await ResolveAsync(c, query).ConfigureAwait(false) is { } plain)
-            {
-                await PlayItemAsync(c, plain).ConfigureAwait(false);
-            }
-
-            return;
-        }
-
-        // FR-004: a title that genuinely ends in a time-like word still plays (from the beginning).
-        var (item, fellBack) = await ResolveWithFallbackAsync(c, title, query).ConfigureAwait(false);
+        var (item, fellBack) = await ResolveWithFallbackAsync(c, query).ConfigureAwait(false);
         if (item is null)
         {
             return;
         }
 
-        if (fellBack)
-        {
-            await PlayItemAsync(c, item).ConfigureAwait(false);
-            return;
-        }
-
+        var start = fellBack ? 0 : query.Start ?? 0;
         if (item.RuntimeSeconds is { } runtime && start >= runtime)
         {
             await c.ReplyAsync($"{MediaText.FormatTimestamp(start)} is past the end ({MediaText.FormatTimestamp(runtime)})").ConfigureAwait(false);
@@ -200,40 +193,63 @@ public sealed class MediaModule : IStreamControl
         await PlayItemAsync(c, item, start).ConfigureAwait(false);
     }
 
-    /// <summary>Search <paramref name="query"/>; if it finds nothing at all, search <paramref name="fallback"/> instead.</summary>
-    private async Task<(MediaItem? Item, bool FellBack)> ResolveWithFallbackAsync(CommandContext c, string query, string fallback)
+    /// <summary>Search <paramref name="query"/>; if its formats found nothing at all, search the whole text as a title.</summary>
+    private async Task<(MediaItem? Item, bool FellBack)> ResolveWithFallbackAsync(CommandContext c, PlayQuery query)
     {
-        var quiet = new QuietMiss();
+        var plain = query.AsPlainTitle();
+        var canFallBack = !query.Quoted && (query.HasFormats || query.Title.Length == 0) && plain.Title.Length > 0
+            && !string.Equals(plain.Title, query.Title, StringComparison.Ordinal);
+        if (query.Title.Length == 0)
+        {
+            return (await ResolveAsync(c, plain).ConfigureAwait(false), true); // `!play s01e02`: only formats, so a title
+        }
+
+        var quiet = canFallBack ? new QuietMiss() : null;
         var item = await ResolveAsync(c, query, quiet).ConfigureAwait(false);
-        if (item is not null || !quiet.NothingFound)
+        if (item is not null || quiet is not { NothingFound: true })
         {
             return (item, false); // found, or cancelled/failed in a picker or on an error (already replied)
         }
 
-        return (await ResolveAsync(c, fallback).ConfigureAwait(false), true);
+        // Neither found anything: report the miss as asked (`S01E02 of `show` not found`), not the whole-text search.
+        var second = new QuietMiss();
+        var fallback = await ResolveAsync(c, plain, second).ConfigureAwait(false);
+        if (fallback is null && second.NothingFound)
+        {
+            await c.ReplyAsync(NotFoundText(query)).ConfigureAwait(false);
+        }
+
+        return (fallback, true);
     }
 
-    /// <summary>Lets the first, title-only search of a fall-back pair skip its "nothing found" reply.</summary>
+    private static string NotFoundText(PlayQuery query) => query is { Season: { } s, Episode: { } e }
+        ? $"S{s:00}E{e:00} of `{query.Title}` not found in Jellyfin"
+        : $"nothing found in Jellyfin for `{query.Text}`";
+
+    /// <summary>Lets the first, formats-applied search of a fall-back pair skip its "nothing found" reply.</summary>
     private sealed class QuietMiss
     {
         public bool NothingFound { get; set; }
     }
 
-    /// <summary><c>!media stop making sense</c> is a title, not <c>stop</c> + junk: search it.</summary>
-    private async Task<bool> TitleFallthroughAsync(CommandContext c, string word, string rest)
-    {
-        if (rest.Trim().Length == 0)
-        {
-            return false;
-        }
-
-        await MediaQueryAsync(c, $"{word} {rest.Trim()}").ConfigureAwait(false);
-        return true;
-    }
-
+    /// <summary><c>!help</c> — all commands; <c>!help &lt;command&gt;</c> — that one.</summary>
     private async Task SendHelpAsync(CommandContext c)
     {
-        var text = MediaText.HelpText;
+        var arg = c.Rest.Trim();
+        if (arg.Length == 0)
+        {
+            await SendHelpTextAsync(c, null).ConfigureAwait(false);
+            return;
+        }
+
+        await c.ReplyAsync(CommandCatalog.Find(arg) is { } info
+            ? info.HelpText()
+            : $"no command `{arg.TrimStart('!')}` — `!help` lists them all").ConfigureAwait(false);
+    }
+
+    private async Task SendHelpTextAsync(CommandContext c, string? prefix)
+    {
+        var text = (prefix ?? "") + MediaText.HelpText;
         if (_library is { HasUserCredentials: true })
         {
             var guild = ContextGuild(c);
@@ -246,11 +262,6 @@ public sealed class MediaModule : IStreamControl
 
     private async Task PauseAsync(CommandContext c)
     {
-        if (await TitleFallthroughAsync(c, "pause", c.Rest).ConfigureAwait(false))
-        {
-            return;
-        }
-
         var guild = ContextGuild(c);
         var player = guild is { } g ? _engine.GetPlayback(g) : null;
         if (guild is null || player is null)
@@ -261,7 +272,7 @@ public sealed class MediaModule : IStreamControl
 
         if (player.IsPaused)
         {
-            await c.ReplyAsync("already paused — `!media play` to carry on").ConfigureAwait(false);
+            await c.ReplyAsync("already paused — `!play` to carry on").ConfigureAwait(false);
             return;
         }
 
@@ -270,14 +281,26 @@ public sealed class MediaModule : IStreamControl
         await SyncCallAsync(guild.Value, (s, ct) => s.PauseAsync(ct), "pause").ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// <c>!play</c>: bare — resume, or start the playlist; a time alone while something plays — jump to it;
+    /// anything else — search and play (spec 008).
+    /// </summary>
     private async Task PlayAsync(CommandContext c)
     {
-        if (await TitleFallthroughAsync(c, "play", c.Rest).ConfigureAwait(false))
+        if (c.Rest.Length == 0)
         {
+            await PlayOrStartPlaylistAsync(c).ConfigureAwait(false);
             return;
         }
 
-        await PlayOrStartPlaylistAsync(c).ConfigureAwait(false);
+        var query = PlayQuery.Parse(c.Rest);
+        if (query is { Title.Length: 0, Season: null, Start: { } jump } && ContextGuild(c) is { } guild && _engine.GetPlayback(guild) is { } player)
+        {
+            await JumpAsync(c, guild, player, jump).ConfigureAwait(false);
+            return;
+        }
+
+        await PlayQueryAsync(c, query).ConfigureAwait(false);
     }
 
     private async Task PlayOrStartPlaylistAsync(CommandContext c)
@@ -310,27 +333,15 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        await c.ReplyAsync("nothing is paused — use `!media <title>` to play something").ConfigureAwait(false);
+        await c.ReplyAsync("nothing is paused — use `!play <title>` to play something").ConfigureAwait(false);
     }
 
-    private async Task ResumeAsync(CommandContext c)
+    /// <summary><c>!time</c> — where the stream is; <c>!time &lt;time&gt;</c> — jump there.</summary>
+    private async Task TimeAsync(CommandContext c)
     {
         var text = c.Rest;
-        if (text.Trim().Length == 0)
-        {
-            await PlayOrStartPlaylistAsync(c).ConfigureAwait(false);
-            return;
-        }
-
-        var seconds = MediaText.ParseTimestamp(text);
-        if (seconds is null && !text.Any(char.IsDigit))
-        {
-            // `!media resume the movie` — a title, not a time.
-            await TitleFallthroughAsync(c, "resume", text).ConfigureAwait(false);
-            return;
-        }
-
-        if (seconds is null)
+        var seconds = text.Length > 0 ? MediaText.ParseTimestamp(text) : null;
+        if (text.Length > 0 && seconds is null)
         {
             await c.ReplyAsync($"`{text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`").ConfigureAwait(false);
             return;
@@ -344,31 +355,39 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var runtime = _states.TryGetValue(guild.Value, out var state) ? state.Now?.Item.RuntimeSeconds : null;
+        if (seconds is null)
+        {
+            var runtime = _states.TryGetValue(guild.Value, out var now) ? now.Now?.Item.RuntimeSeconds : null;
+            var total = runtime is { } rt ? $" / {MediaText.FormatTimestamp(rt)}" : "";
+            await c.ReplyAsync($"⏱ {MediaText.FormatTimestamp(player.Position)}{total}{(player.IsPaused ? " (paused)" : "")}").ConfigureAwait(false);
+            return;
+        }
+
+        await JumpAsync(c, guild.Value, player, seconds.Value).ConfigureAwait(false);
+    }
+
+    private async Task JumpAsync(CommandContext c, ulong guild, IPlayback player, double seconds)
+    {
+        var runtime = _states.TryGetValue(guild, out var state) ? state.Now?.Item.RuntimeSeconds : null;
         if (runtime is { } total && seconds >= total)
         {
-            await c.ReplyAsync($"{MediaText.FormatTimestamp(seconds.Value)} is past the end ({MediaText.FormatTimestamp(total)})").ConfigureAwait(false);
+            await c.ReplyAsync($"{MediaText.FormatTimestamp(seconds)} is past the end ({MediaText.FormatTimestamp(total)})").ConfigureAwait(false);
             return;
         }
 
         var wasPaused = player.IsPaused;
-        player.Seek(seconds.Value);
+        player.Seek(seconds);
         player.Resume();
-        await c.ReplyAsync($"⏩ jumping to {MediaText.FormatTimestamp(seconds.Value)}").ConfigureAwait(false);
-        await SyncCallAsync(guild.Value, (s, ct) => s.SeekAsync(seconds.Value, ct), "seek").ConfigureAwait(false);
+        await c.ReplyAsync($"⏩ jumping to {MediaText.FormatTimestamp(seconds)}").ConfigureAwait(false);
+        await SyncCallAsync(guild, (s, ct) => s.SeekAsync(seconds, ct), "seek").ConfigureAwait(false);
         if (wasPaused)
         {
-            await SyncCallAsync(guild.Value, (s, ct) => s.UnpauseAsync(ct), "unpause").ConfigureAwait(false);
+            await SyncCallAsync(guild, (s, ct) => s.UnpauseAsync(ct), "unpause").ConfigureAwait(false);
         }
     }
 
     private async Task SkipAsync(CommandContext c)
     {
-        if (await TitleFallthroughAsync(c, "skip", c.Rest).ConfigureAwait(false))
-        {
-            return;
-        }
-
         var guild = ContextGuild(c);
         GuildState? state = null;
         if (guild is null || !_states.TryGetValue(guild.Value, out state) || (state.Queue.Count == 0 && state.Now is null))
@@ -401,13 +420,8 @@ public sealed class MediaModule : IStreamControl
 
     private async Task QueueAsync(CommandContext c)
     {
-        var query = c.Rest;
-        if (query.Trim().Length == 0)
-        {
-            await c.ReplyAsync("usage: `!media queue <movie>` or `!media queue <show> sXXeYY`").ConfigureAwait(false);
-            return;
-        }
-
+        // Spec 002 FR-013: queued items start from the beginning — a time-like word stays part of the title.
+        var query = PlayQuery.Parse(c.Rest, withTime: false);
         if (!await RequireLibraryAsync(c).ConfigureAwait(false))
         {
             return;
@@ -427,7 +441,7 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var item = await ResolveAsync(c, query).ConfigureAwait(false);
+        var (item, _) = await ResolveWithFallbackAsync(c, query).ConfigureAwait(false);
         if (item is null)
         {
             return;
@@ -495,31 +509,24 @@ public sealed class MediaModule : IStreamControl
 
         double? current = _aspect.TryGetValue(guild.Value, out var a) ? a : null;
         var choice = c.Rest.Trim();
-        int index;
-        if (choice.Length > 0)
+        var named = choice.Length > 0 ? MediaText.FindAspect(choice) : null;
+        if (named is null && choice.Length > 0 && choice.All(char.IsAsciiDigit))
         {
-            if (!choice.Any(char.IsDigit))
-            {
-                // `!media ar rahman` / `!media aspect of …` — a title, not a pick.
-                var word = c.InvokedWith.Length > 0 ? c.InvokedWith : "aspect-ratio";
-                if (await TitleFallthroughAsync(c, word, choice).ConfigureAwait(false))
-                {
-                    return;
-                }
-            }
+            await c.ReplyAsync($"pick a number between 1 and {MediaText.AspectOptions.Count} — see `!ar`").ConfigureAwait(false);
+            return;
+        }
 
-            if (!int.TryParse(choice, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n)
-                || n < 1 || n > MediaText.AspectOptions.Count)
-            {
-                await c.ReplyAsync($"pick a number between 1 and {MediaText.AspectOptions.Count} — see `!media aspect-ratio`").ConfigureAwait(false);
-                return;
-            }
-
-            index = n - 1;
+        int index;
+        if (named is { } found)
+        {
+            index = found;
         }
         else
         {
-            var lines = new List<string> { "**Aspect ratio** — reply with a number:" };
+            var lines = new List<string>
+            {
+                (choice.Length > 0 ? $"`{choice}` isn't a picture shape. " : "") + "**Aspect ratio** — reply with a number or name:",
+            };
             for (var i = 0; i < MediaText.AspectOptions.Count; i++)
             {
                 var option = MediaText.AspectOptions[i];
@@ -528,7 +535,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
-            if (await NumberPrompt.AskAsync(c, MediaText.AspectOptions.Count).ConfigureAwait(false) is not { } picked)
+            if (await NumberPrompt.AskAsync(c, MediaText.AspectOptions.Count, text => MediaText.FindAspect(text) + 1).ConfigureAwait(false) is not { } picked)
             {
                 return;
             }
@@ -564,11 +571,6 @@ public sealed class MediaModule : IStreamControl
 
     private async Task PlaylistAsync(CommandContext c)
     {
-        if (await TitleFallthroughAsync(c, "playlist", c.Rest).ConfigureAwait(false))
-        {
-            return;
-        }
-
         var guild = ContextGuild(c);
         GuildState? state = null;
         if (guild is { } g)
@@ -593,7 +595,7 @@ public sealed class MediaModule : IStreamControl
         }
         else if (lines.Count > 0)
         {
-            lines.Add("_playlist is empty — add with `!media queue <title>`_");
+            lines.Add("_playlist is empty — add with `!queue <title>`_");
         }
 
         await c.ReplyAsync(lines.Count == 0 ? "nothing playing and the playlist is empty" : string.Join('\n', lines)).ConfigureAwait(false);
@@ -606,7 +608,7 @@ public sealed class MediaModule : IStreamControl
         var lower = arg.ToLowerInvariant();
         if (arg.Length > 0 && lower is not ("on" or "off"))
         {
-            await TitleFallthroughAsync(c, "debug", arg).ConfigureAwait(false);
+            await c.ReplyAsync(CommandCatalog.Find("debug")!.HelpText()).ConfigureAwait(false);
             return;
         }
 
@@ -663,10 +665,10 @@ public sealed class MediaModule : IStreamControl
         return true;
     }
 
-    private async Task<MediaItem?> ResolveAsync(CommandContext c, string query, QuietMiss? quiet = null)
+    private async Task<MediaItem?> ResolveAsync(CommandContext c, PlayQuery query, QuietMiss? quiet = null)
     {
         var library = _library!;
-        var (show, season, episode) = MediaText.ParseEpisodeQuery(query);
+        var (show, season, episode) = (query.Title, query.Season, query.Episode);
         _log.LogInformation("Jellyfin search for {Show} by {Author} (season={Season} episode={Episode})", show, c.AuthorId, season, episode);
 
         IReadOnlyList<MediaItem> results;
@@ -675,6 +677,10 @@ public sealed class MediaModule : IStreamControl
             results = season is { } s && episode is { } e
                 ? await library.FindEpisodeAsync(show, s, e, c.Cancellation).ConfigureAwait(false)
                 : await library.SearchAsync(show, c.Cancellation).ConfigureAwait(false);
+            if (season is not null && episode is null && results.Any(r => r.Type == "Series"))
+            {
+                results = [.. results.Where(r => r.Type == "Series")]; // `<show> s3`: the shows, not same-named films
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
         {
@@ -693,9 +699,7 @@ public sealed class MediaModule : IStreamControl
                 return null;
             }
 
-            await c.ReplyAsync(season is { } ns && episode is { } ne
-                ? $"S{ns:00}E{ne:00} of `{show}` not found in Jellyfin"
-                : $"nothing found in Jellyfin for `{query}`").ConfigureAwait(false);
+            await c.ReplyAsync(NotFoundText(query)).ConfigureAwait(false);
             return null;
         }
 
@@ -706,7 +710,7 @@ public sealed class MediaModule : IStreamControl
         }
         else
         {
-            var lines = new List<string> { $"Found {results.Count} result(s) for `{query}`. Pick a number:\n" };
+            var lines = new List<string> { $"Found {results.Count} result(s) for `{query.Describe()}`. Pick a number:\n" };
             lines.AddRange(results.Select((it, i) => $"  `{i + 1}` [{it.Type ?? ""}] {MediaLabels.Format(it)}"));
             await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
             if (await NumberPrompt.AskAsync(c, results.Count).ConfigureAwait(false) is not { } choice)
@@ -717,10 +721,11 @@ public sealed class MediaModule : IStreamControl
             item = results[choice - 1];
         }
 
-        return item.Type == "Series" ? await PickSeasonThenEpisodeAsync(c, item).ConfigureAwait(false) : item;
+        return item.Type == "Series" ? await PickSeasonThenEpisodeAsync(c, item, episode is null ? season : null).ConfigureAwait(false) : item;
     }
 
-    private async Task<MediaItem?> PickSeasonThenEpisodeAsync(CommandContext c, MediaItem series)
+    /// <summary>Pick a season, then an episode; <paramref name="season"/> given (<c>&lt;show&gt; s3</c>) skips the season pick.</summary>
+    private async Task<MediaItem?> PickSeasonThenEpisodeAsync(CommandContext c, MediaItem series, int? season = null)
     {
         var name = series.Name ?? "Unknown";
         IReadOnlyList<MediaItem> seasons;
@@ -741,12 +746,23 @@ public sealed class MediaModule : IStreamControl
             return null;
         }
 
-        if (seasons.Count == 1)
+        string? missing = null;
+        if (season is { } wanted)
+        {
+            if (seasons.FirstOrDefault(s => s.IndexNumber == wanted) is { } chosen)
+            {
+                return await PickEpisodeAsync(c, series.Id, name, chosen).ConfigureAwait(false);
+            }
+
+            missing = $"**{name}** has no season {wanted}. ";
+        }
+
+        if (seasons.Count == 1 && missing is null)
         {
             return await PickEpisodeAsync(c, series.Id, name, seasons[0]).ConfigureAwait(false);
         }
 
-        var lines = new List<string> { $"**{name}** — {seasons.Count} seasons. Pick a season:\n" };
+        var lines = new List<string> { $"{missing}**{name}** — {seasons.Count} season{(seasons.Count == 1 ? "" : "s")}. Pick a season:\n" };
         lines.AddRange(seasons.Select((s, i) => $"  `{i + 1}` {s.Name ?? $"Season {i + 1}"}"));
         await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
         if (await NumberPrompt.AskAsync(c, seasons.Count).ConfigureAwait(false) is not { } choice)
@@ -1442,14 +1458,6 @@ public sealed class MediaModule : IStreamControl
     private async Task PickTrackAsync(CommandContext c, bool audio)
     {
         var arg = c.Rest.Trim();
-        var off = !audio && arg.Equals("off", StringComparison.OrdinalIgnoreCase);
-        var word = c.InvokedWith.Length > 0 ? c.InvokedWith : audio ? "audio" : "subtitles";
-        if (arg.Length > 0 && !off && !arg.All(char.IsAsciiDigit))
-        {
-            await TitleFallthroughAsync(c, word, arg).ConfigureAwait(false); // `!media audio of the past` is a title
-            return;
-        }
-
         var guild = ContextGuild(c);
         if (guild is null || !_states.TryGetValue(guild.Value, out var state) || state.Now is not { } now || _engine.GetPlayback(guild.Value) is null)
         {
@@ -1458,7 +1466,7 @@ public sealed class MediaModule : IStreamControl
         }
 
         var tracks = now.Stream.Tracks.Where(t => t.IsAudio == audio).ToList();
-        if (tracks.Count == 0 && !off)
+        if (tracks.Count == 0 && (audio || !TrackMatch.IsOff(arg)))
         {
             await c.ReplyAsync(audio ? "this item has no audio tracks to choose from" : "this item has no subtitles").ConfigureAwait(false);
             return;
@@ -1476,24 +1484,22 @@ public sealed class MediaModule : IStreamControl
             ? now.Stream.Selection.AudioIndex ?? tracks.FirstOrDefault(t => t.IsDefault)?.Index ?? tracks[0].Index
             : now.Stream.Selection.SubtitleIndex;
 
-        int choice;
-        if (off)
+        var named = arg.Length > 0 ? TrackMatch.Find(options, arg, audio) : null;
+        if (named is null && arg.Length > 0 && arg.All(char.IsAsciiDigit))
         {
-            choice = 0;
+            await c.ReplyAsync($"pick a number between 1 and {options.Count} — see `!{(audio ? "audio" : "subs")}`").ConfigureAwait(false);
+            return;
         }
-        else if (arg.Length > 0)
-        {
-            if (!int.TryParse(arg, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) || n < 1 || n > options.Count)
-            {
-                await c.ReplyAsync($"pick a number between 1 and {options.Count} — see `!media {(audio ? "audio" : "subtitles")}`").ConfigureAwait(false);
-                return;
-            }
 
-            choice = n - 1;
+        int choice;
+        if (named is { } found)
+        {
+            choice = found;
         }
         else
         {
-            var lines = new List<string> { $"**{(audio ? "Audio track" : "Subtitles")}** — reply with a number:" };
+            var title = audio ? "Audio track" : "Subtitles";
+            var lines = new List<string> { (arg.Length > 0 ? $"no {(audio ? "audio track" : "subtitles")} match `{arg}`. " : "") + $"**{title}** — reply with a number or language:" };
             for (var i = 0; i < options.Count; i++)
             {
                 var label = options[i] is { } t ? TrackLabel(t) : "Off";
@@ -1502,7 +1508,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
-            if (await NumberPrompt.AskAsync(c, options.Count).ConfigureAwait(false) is not { } picked)
+            if (await NumberPrompt.AskAsync(c, options.Count, text => TrackMatch.Find(options, text, audio) + 1).ConfigureAwait(false) is not { } picked)
             {
                 return;
             }

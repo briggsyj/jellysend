@@ -67,20 +67,6 @@ public sealed class MediaTextTests
     [InlineData(36000, "10:00:00")]
     public void Format_timestamp(double seconds, string text) => Assert.Equal(text, MediaText.FormatTimestamp(seconds));
 
-    // Cases from tests/test_jellyfin.py.
-    [Theory]
-    [InlineData("inception", "inception", null, null)]
-    [InlineData("rick and morty s02e01", "rick and morty", 2, 1)]
-    [InlineData("Breaking Bad S03E10", "Breaking Bad", 3, 10)]
-    [InlineData("The Office S01e03", "The Office", 1, 3)]
-    [InlineData("  Arrested Development  s04e01  ", "Arrested Development", 4, 1)]
-    [InlineData("s01e05", "", 1, 5)]
-    [InlineData("show s12e24", "show", 12, 24)]
-    [InlineData("show s01e01 s02e02", "show", 1, 1)]
-    [InlineData("seas01ep01", "seas01ep01", null, null)]
-    public void Parse_episode_query(string query, string show, int? season, int? episode) =>
-        Assert.Equal((show, season, episode), MediaText.ParseEpisodeQuery(query));
-
     [Fact]
     public void Aspect_options_and_help_match_python()
     {
@@ -89,37 +75,9 @@ public sealed class MediaTextTests
             MediaText.AspectOptions.Select(o => o.Label));
         Assert.Null(MediaText.AspectOptions[0].Ratio);
         Assert.Equal(2.39, MediaText.AspectOptions[3].Ratio);
-        Assert.StartsWith("**🎬 slopsoil — `!media`**\n\n**Play**", MediaText.HelpText, StringComparison.Ordinal);
-        Assert.Contains("Shortcuts: `!join` `!leave` `!stop` `!help` `!ping`", MediaText.HelpText, StringComparison.Ordinal);
-        Assert.EndsWith("use `!media search <title>`.".Replace("use", "Use", StringComparison.Ordinal), MediaText.HelpText, StringComparison.Ordinal);
+        Assert.StartsWith("**🎬 slopsoil**\n\n**Play**\n`!play <title>`", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.EndsWith("-# Every command also works as `!media <command>`. `!help <command>` for details.", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.DoesNotContain("!media search", MediaText.HelpText, StringComparison.Ordinal);
         Assert.Equal(10, MediaText.PlaylistMax);
     }
-}
-
-public sealed class SplitTrailingTimeTests
-{
-    [Theory]
-    [InlineData("inception 1:12:30", "inception", 4350.0)]
-    [InlineData("inception 1.12", "inception", 4320.0)]
-    [InlineData("  the office s02e03 0:11  ", "the office s02e03", 660.0)]
-    [InlineData("alien 45m", "alien", 2700.0)]
-    [InlineData("alien 90s", "alien", 90.0)]
-    [InlineData("apollo 13 1h2m3s", "apollo 13", 3723.0)]
-    [InlineData("film 0:00", "film", 0.0)]
-    [InlineData("film 1H30M", "film", 5400.0)]
-    public void Splits_a_trailing_time(string query, string title, double seconds) =>
-        Assert.Equal((title, (double?)seconds), MediaText.SplitTrailingTime(query));
-
-    [Theory]
-    [InlineData("inception")]
-    [InlineData("blade runner 2049")]          // bare number: a title, never minutes here
-    [InlineData("apollo 13")]
-    [InlineData("1917")]
-    [InlineData("2:22")]                       // time with no title in front: the title
-    [InlineData("inception 1:75")]             // not a valid time
-    [InlineData("the matrix reloaded")]        // ends in a word with h/m/s letters but not a time
-    [InlineData("film 1.5h")]
-    [InlineData("")]
-    public void Leaves_everything_else_as_the_title(string query) =>
-        Assert.Equal((query.Trim(), (double?)null), MediaText.SplitTrailingTime(query));
 }

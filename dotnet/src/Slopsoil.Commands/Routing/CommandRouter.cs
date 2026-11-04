@@ -6,14 +6,14 @@ public delegate Task CommandHandler(CommandContext context);
 
 /// <summary>
 /// <c>!</c>-prefixed command dispatch (discord.py <c>commands.Bot</c> subset): commands with aliases,
-/// groups whose first word may name a sub-command (else the group's own handler gets the whole rest),
+/// groups whose first word may name a sub-command (else the group's own handler gets the whole rest), names case-insensitive,
 /// a global "has any role" check and per-command role checks — failures are silent, as in Python.
 /// </summary>
 public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, MessageHub hub, Action<string, Exception>? onError = null)
 {
     public const char Prefix = '!';
 
-    private readonly Dictionary<string, Command> _commands = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Command> _commands = new(StringComparer.OrdinalIgnoreCase);
 
     public MessageHub Hub => hub;
 
@@ -95,7 +95,7 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
 /// <summary>A registered command, optionally a group with sub-commands.</summary>
 public sealed class Command(string name, Role role, CommandHandler handler)
 {
-    private readonly Dictionary<string, Command> _subcommands = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Command> _subcommands = new(StringComparer.OrdinalIgnoreCase);
 
     public string Name { get; } = name;
 

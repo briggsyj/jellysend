@@ -8,14 +8,20 @@ public static class NumberPrompt
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-    /// <summary>The choice, or null after replying "timed out — cancelled", "cancelled" or an out-of-range message.</summary>
-    public static async Task<int?> AskAsync(CommandContext context, int max)
+    /// <summary>
+    /// The choice, or null after replying "timed out — cancelled", "cancelled" or an out-of-range message.
+    /// <paramref name="match"/> also accepts a reply that names an option (spec 008: <c>english</c>, <c>16:9</c>) — it
+    /// returns the 1-based choice, or null for chat that names nothing (ignored, like any other chat).
+    /// </summary>
+    public static async Task<int?> AskAsync(CommandContext context, int max, Func<string, int?>? match = null)
     {
+        int? Named(string text) => match?.Invoke(text) is { } n && n >= 1 && n <= max ? n : null;
+
         bool Check(ChatMessage m)
         {
             var text = m.Content.Trim();
             return m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId
-                && (IsDecimal(text) || text.StartsWith(CommandRouter.Prefix));
+                && (IsDecimal(text) || text.StartsWith(CommandRouter.Prefix) || Named(text) is not null);
         }
 
         var reply = await context.Hub.WaitForAsync(Check, Timeout, context.Cancellation).ConfigureAwait(false);
@@ -31,6 +37,11 @@ public static class NumberPrompt
             // A new command cancels the prompt but still runs through the router.
             await context.ReplyAsync("cancelled").ConfigureAwait(false);
             return null;
+        }
+
+        if (!IsDecimal(content) && Named(content) is { } named)
+        {
+            return named;
         }
 
         if (!int.TryParse(content, NumberStyles.None, CultureInfo.InvariantCulture, out var choice) || choice < 1 || choice > max)

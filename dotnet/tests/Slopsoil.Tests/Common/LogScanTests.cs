@@ -47,12 +47,12 @@ public sealed class LogScanTests : IDisposable
 
         Task Send(string text) => router.DispatchAsync(new ChatMessage(5, 7, 20, text), TestContext.Current.CancellationToken);
 
-        await Send("!media film");
+        await Send("!play film");
         var playback = engine.GetPlayback(5);
         Assert.NotNull(playback);
         await playback.FirstFrameSent.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
         await Send("!media pause");
-        await Send("!media resume 0:00:10");
+        await Send("!time 0:00:10");
         await Task.Delay(500, TestContext.Current.CancellationToken);
         await Send("!media debug on");
         await Task.Delay(1500, TestContext.Current.CancellationToken);

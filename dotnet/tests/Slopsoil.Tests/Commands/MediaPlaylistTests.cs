@@ -23,29 +23,29 @@ public sealed class MediaPlaylistTests
         Assert.Equal("A", _h.Current.Request.Title);
         await _h.Send("!media queue b");
         await _h.Send("!media queue c");
-        Assert.Equal(["usage: `!media queue <movie>` or `!media queue <show> sXXeYY`", "checking stream…", "📺 **A** (go-live)", "➕ queued **B** at #1", "➕ queued **C** at #2"], _h.Texts);
+        Assert.Equal([CommandCatalog.Find("queue")!.HelpText(), "checking stream…", "📺 **A** (go-live)", "➕ queued **B** at #1", "➕ queued **C** at #2"], _h.Texts);
     }
 
     [Fact]
     public async Task Playlist_shows_now_playing_and_up_next()
     {
         _h.Library.Search["long"] = [MediaHarness.Movie("long", "Long", 2000, 90L * 60 * 10_000_000)];
-        await _h.Send("!media long");
+        await _h.Send("!play long");
         _h.Current.Fake.Position = 61;
         await _h.Send("!media playlist");
-        Assert.Equal("**Now playing:** Long (2000) — 0:01:01 / 1:30:00\n_playlist is empty — add with `!media queue <title>`_", _h.Texts[^1]);
+        Assert.Equal("**Now playing:** Long (2000) — 0:01:01 / 1:30:00\n_playlist is empty — add with `!queue <title>`_", _h.Texts[^1]);
         await _h.Send("!media queue b");
         await _h.Send("!media pause");
         await _h.Send("!media playlist");
         Assert.Equal("**Now playing:** Long (2000) — 0:01:01 / 1:30:00 (paused)\n**Up next** (1/10):\n  `1` B", _h.Texts[^1]);
-        await _h.Send("!media playlist please");  // words → title search
-        Assert.Equal("nothing found in Jellyfin for `playlist please`", _h.Texts[^1]);
+        await _h.Send("!playlist please");         // extra words are ignored
+        Assert.Equal(_h.Texts[^2], _h.Texts[^1]);
     }
 
     [Fact]
     public async Task Playlist_caps_at_ten()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         foreach (var n in "bcdefghijk")
         {
             await _h.Send($"!media queue {n}");
@@ -59,7 +59,7 @@ public sealed class MediaPlaylistTests
     public async Task Order_and_remove()
     {
         await _h.Send("!media order 1 1");
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!media queue c");
         await _h.Send("!media order 2 1");
@@ -73,7 +73,7 @@ public sealed class MediaPlaylistTests
     [Fact]
     public async Task Natural_end_auto_advances_in_order()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!media queue c");
         _h.Current.End(PipelineEndReason.Natural);
@@ -93,7 +93,7 @@ public sealed class MediaPlaylistTests
     public async Task Skip()
     {
         await _h.Send("!media skip");
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!media skip");
         Assert.Equal("B", _h.Current.Request.Title);
@@ -109,7 +109,7 @@ public sealed class MediaPlaylistTests
     [Fact]
     public async Task Play_starts_a_waiting_playlist_and_skip_rejoins_voice()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!media queue c");
         await _h.Send("!stop");                 // stream stops, playlist stays
@@ -124,7 +124,7 @@ public sealed class MediaPlaylistTests
     [Fact]
     public async Task Queue_while_idle_with_a_waiting_playlist_starts_from_its_head()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!stop");
         _h.Sender.Sent.Clear();
@@ -136,7 +136,7 @@ public sealed class MediaPlaylistTests
     [Fact]
     public async Task Failed_start_puts_the_item_back()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!stop");
         _h.Library.NoPlayback = true;
@@ -148,7 +148,7 @@ public sealed class MediaPlaylistTests
     [Fact]
     public async Task Auto_advance_skips_items_that_fail_to_start()
     {
-        await _h.Send("!media a");
+        await _h.Send("!play a");
         await _h.Send("!media queue b");
         await _h.Send("!media queue c");
         _h.Library.Search["b"] = [MediaHarness.Movie("b", "B", null)];

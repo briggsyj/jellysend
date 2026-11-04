@@ -17,7 +17,7 @@ public sealed class VoiceModule(
     /// <summary>The empty-channel countdown task per guild (tests await it).</summary>
     internal System.Collections.Concurrent.ConcurrentDictionary<ulong, Task> EmptyCountdowns { get; } = new();
 
-    public const string StoppedReply = "⏹ stopped — still in voice (`!media leave` to leave)";
+    public const string StoppedReply = "⏹ stopped — still in voice (`!leave` to leave)";
 
     public const string LeftReply = "⏹ stopped and left the voice channel";
 
