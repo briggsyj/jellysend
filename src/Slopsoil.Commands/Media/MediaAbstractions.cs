@@ -21,7 +21,8 @@ public interface IMediaLibrary
     Task<MediaItem?> GetItemAsync(string itemId, CancellationToken ct);
 
     /// <summary>Start a playback session with <paramref name="tracks"/> (null: default audio, no subtitles).</summary>
-    Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct);
+    /// <param name="allowDirect">False forces Jellyfin's transcode (spec 012: the original already failed to start).</param>
+    Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true);
 
     Task StopEncodingAsync(string? playSessionId, CancellationToken ct);
 

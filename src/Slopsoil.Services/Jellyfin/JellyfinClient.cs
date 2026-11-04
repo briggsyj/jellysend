@@ -104,6 +104,12 @@ public sealed class JellyfinClient : IDisposable
     public bool PreferDirectStream { get; init; }
 
     /// <summary>
+    /// Spec 011: whether the bot's FFmpeg can decode a source's formats. A direct stream it cannot decode (e.g. HEVC
+    /// on Fedora's ffmpeg-free) falls back to Jellyfin's transcode. Null = every format is assumed decodable.
+    /// </summary>
+    public Func<DirectStreamFormat, bool>? CanDecode { get; set; }
+
+    /// <summary>
     /// Sign in with the configured username/password for <paramref name="deviceId"/>. Each device id gets its own
     /// Jellyfin session, which matters for SyncPlay (a session can only be in one group; use <c>slopsoil-&lt;guildId&gt;</c>).
     /// </summary>
@@ -214,7 +220,7 @@ public sealed class JellyfinClient : IDisposable
     /// can override the body's -1 and burn subtitles in) and <c>api_key</c> appended so FFmpeg can fetch segments.
     /// Returns null when the request fails or yields no usable source (logged).
     /// </summary>
-    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default)
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default, bool allowDirect = true)
     {
         tracks ??= TrackSelection.Default;
         var subtitle = tracks.SubtitleIndex ?? -1;
@@ -282,7 +288,7 @@ public sealed class JellyfinClient : IDisposable
         }
 
         var source = sources[0];
-        if (PreferDirectStream && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId)
+        if (PreferDirectStream && allowDirect && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId && Decodable(itemId, source, tracks))
         {
             var (directAudio, directCodec) = StreamMetadata(source, transcoding: false);
             if (directCodec is not null)
@@ -333,6 +339,58 @@ public sealed class JellyfinClient : IDisposable
             Selection = tracks,
             FrameRate = FrameRateOf(source),
         };
+    }
+
+    private bool Decodable(string itemId, JsonElement source, TrackSelection tracks)
+    {
+        if (CanDecode is not { } canDecode)
+        {
+            return true;
+        }
+
+        var format = FormatOf(source, tracks.AudioIndex);
+        if (canDecode(format))
+        {
+            return true;
+        }
+
+        _log.LogInformation(
+            "Jellyfin: the bot's FFmpeg cannot decode item {ItemId} ({Format}); using Jellyfin's transcode instead of the original file",
+            itemId, format);
+        return false;
+    }
+
+    /// <summary>
+    /// The formats a direct stream of <paramref name="source"/> would hand FFmpeg: the first video stream and the
+    /// audio track that would play (<paramref name="audioIndex"/>, else Jellyfin's default, else the first).
+    /// </summary>
+    internal static DirectStreamFormat FormatOf(JsonElement source, int? audioIndex)
+    {
+        if (source.ValueKind != JsonValueKind.Object
+            || !source.TryGetProperty("MediaStreams", out var streams)
+            || streams.ValueKind != JsonValueKind.Array)
+        {
+            return new DirectStreamFormat(null, null, false, null);
+        }
+
+        var all = streams.EnumerateArray().Where(s => s.ValueKind == JsonValueKind.Object).ToList();
+        var video = all.Find(s => NonEmptyString(s, "Type") == "Video");
+        var audios = all.Where(s => NonEmptyString(s, "Type") == "Audio").ToList();
+        var audio = audios.Find(s => audioIndex is { } i && s.TryGetProperty("Index", out var x) && x.TryGetInt32(out var n) && n == i);
+        if (audio.ValueKind != JsonValueKind.Object)
+        {
+            audio = audios.Find(s => s.TryGetProperty("IsDefault", out var d) && d.ValueKind == JsonValueKind.True);
+        }
+
+        if (audio.ValueKind != JsonValueKind.Object && audios.Count > 0)
+        {
+            audio = audios[0];
+        }
+
+        int? bitDepth = video.ValueKind == JsonValueKind.Object && video.TryGetProperty("BitDepth", out var b) && b.TryGetInt32(out var depth) ? depth : null;
+        var interlaced = video.ValueKind == JsonValueKind.Object && video.TryGetProperty("IsInterlaced", out var il) && il.ValueKind == JsonValueKind.True;
+        return new DirectStreamFormat(
+            NonEmptyString(video, "Codec")?.ToLowerInvariant(), bitDepth, interlaced, NonEmptyString(audio, "Codec")?.ToLowerInvariant());
     }
 
     /// <summary>

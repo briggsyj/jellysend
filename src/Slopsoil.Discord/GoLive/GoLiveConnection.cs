@@ -162,6 +162,7 @@ public sealed class GoLiveConnection : IAsyncDisposable
             // The go-live DAVE group id is rtc_server_id - 1 (golive.py reinit_dave_session).
             var info = new VoiceServerInfo(endpoint, ServerId, userId, _sessionId, token, ServerId - 1)
             {
+                Label = "stream",
                 // Viewers of the stream are the members of the voice channel it is in.
                 ChannelMembers = _options.ChannelMembers is { } members ? () => members(GuildId, ChannelId) : null,
             };

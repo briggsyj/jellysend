@@ -53,6 +53,12 @@ public sealed class MediaModule : IStreamControl
     // Preferences: aspect survives leaving voice; debug is cleared on leave.
     private readonly ConcurrentDictionary<ulong, double> _aspect = new();
 
+    /// <summary>
+    /// Items whose original file failed to start as a direct stream (spec 012): they always go through Jellyfin's
+    /// transcode from then on (until the bot restarts).
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _directFailed = new();
+
     /// <summary>Per guild: output height chosen with <c>!resolution</c> (spec 010); absent = the configured one.</summary>
     private readonly ConcurrentDictionary<ulong, int> _height = new();
     private readonly ConcurrentDictionary<ulong, bool> _debug = new();
@@ -960,12 +966,13 @@ public sealed class MediaModule : IStreamControl
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
 
         await send("checking stream…").ConfigureAwait(false);
-        var stream = await library.StartPlaybackAsync(item.Id, tracks, CancellationToken.None).ConfigureAwait(false);
+        var allowDirect = !_directFailed.ContainsKey(item.Id);
+        var stream = await library.StartPlaybackAsync(item.Id, tracks, CancellationToken.None, allowDirect).ConfigureAwait(false);
         if (stream is not null && tracks is null && ResolveTracks(guild, stream.Tracks) is { } preferred && preferred != stream.Selection)
         {
             // The remembered subtitle/audio language picks other tracks: reopen the session with them (spec 005).
             await library.StopEncodingAsync(stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
-            stream = await library.StartPlaybackAsync(item.Id, preferred, CancellationToken.None).ConfigureAwait(false);
+            stream = await library.StartPlaybackAsync(item.Id, preferred, CancellationToken.None, allowDirect).ConfigureAwait(false);
         }
 
         if (stream is null)
@@ -1066,6 +1073,13 @@ public sealed class MediaModule : IStreamControl
             SourceFps = sourceFps,
         };
 
+        _log.LogInformation(
+            "starting {Label}: {Mode}, video {Codec}, audio {Audio}, source {Fps} fps, from {Start:0.0}s, tracks {Tracks}, height {Height}",
+            label, stream.IsDirect ? "original file" : "Jellyfin transcode", codec,
+            !hasAudio ? "none" : request.AudioStreamIndex is { } ai ? $"input stream {ai}" : "default",
+            request.SourceFps?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "?", start,
+            stream.Selection, request.OutputHeight?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "configured");
+
         bool started;
         try
         {
@@ -1135,6 +1149,37 @@ public sealed class MediaModule : IStreamControl
             }
 
             var finished = state.Now;
+            if (end.Reason == PipelineEndReason.Failed && !end.FirstFrameSent && finished is { Stream.IsDirect: true }
+                && _voice.Get(guild) is { } retryLink
+                && _directFailed.TryAdd(finished.Item.Id, 0))
+            {
+                // Spec 012: the original file never produced a frame (a format the bot's FFmpeg can't handle, a bad
+                // seek, …): play the same item through Jellyfin's transcode, which decodes everything.
+                _log.LogWarning(
+                    "direct stream of {Item} failed before its first frame ({Error}); retrying through Jellyfin's transcode",
+                    finished.Item.Id, end.Error);
+                await state.Send("↻ retrying through Jellyfin's transcode…").ConfigureAwait(false);
+                await _library!.StopEncodingAsync(finished.Stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
+                StartResult retried;
+                try
+                {
+                    retried = await StartItemHoldingLockAsync(
+                        guild, state, retryLink.ChannelId, finished.Item, end.Position ?? 0, sync: false, tracks: finished.Stream.Selection).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "retrying {Item} through Jellyfin's transcode failed", finished.Item.Id);
+                    retried = StartResult.Failed;
+                }
+
+                if (retried != StartResult.Failed)
+                {
+                    return;
+                }
+
+                finished = state.Now;
+            }
+
             if (end.Reason == PipelineEndReason.ConnectionLost && finished is not null && finished.Reconnects < MaxReconnects
                 && _voice.Get(guild) is { } link
                 && _voice.Gateway.GetVoiceChannel(guild, _voice.Gateway.SelfId) == link.ChannelId)

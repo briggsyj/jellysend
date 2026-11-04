@@ -22,6 +22,9 @@ public sealed record VoiceServerInfo(
     /// add proposal for a user it doesn't recognise, and that viewer could never decrypt.
     /// </summary>
     public Func<IEnumerable<ulong>>? ChannelMembers { get; init; }
+
+    /// <summary>Which connection this is in the logs: <c>voice</c> (the channel) or <c>stream</c> (go-live).</summary>
+    public string Label { get; init; } = "voice";
 }
 
 /// <summary>
@@ -306,7 +309,7 @@ public sealed class VoiceSession : IAsyncDisposable
                 if (frame.IsClose)
                 {
                     CloseCode = frame.CloseCode;
-                    Log($"voice ws closed by server ({frame.CloseCode})");
+                    Log($"voice ws closed by server ({frame.CloseCode}{(string.IsNullOrEmpty(frame.CloseReason) ? "" : $" \"{frame.CloseReason}\"")}) — {VoiceCloseCodes.Describe(frame.CloseCode)}");
                     _handshake.TrySetException(new VoiceConnectionException(
                         $"voice websocket closed ({frame.CloseCode})", frame.CloseCode));
                     return;
@@ -342,6 +345,11 @@ public sealed class VoiceSession : IAsyncDisposable
         var root = doc.RootElement;
         var op = root.GetProperty("op").GetInt32();
         var d = root.TryGetProperty("d", out var dv) ? dv : default;
+        if (op is not VoiceOp.HeartbeatAck)
+        {
+            Trace($"← op {op} {VoiceOp.Name(op)}{VoiceTrace.Summary(op, d)}");
+        }
+
         if (root.TryGetProperty("seq", out var seq) && seq.TryGetInt32(out var s))
         {
             Volatile.Write(ref _seqAck, s);
@@ -529,6 +537,7 @@ public sealed class VoiceSession : IAsyncDisposable
 
         Volatile.Write(ref _seqAck, BinaryPrimitives.ReadUInt16BigEndian(memory.Span));
         var op = memory.Span[2];
+        Trace($"← op {op} {VoiceOp.Name(op)} (binary, {memory.Length} bytes)");
         var dave = DaveSession;
         if (dave is null)
         {
@@ -671,6 +680,11 @@ public sealed class VoiceSession : IAsyncDisposable
     private async Task SendJsonAsync(int op, JsonNode data, CancellationToken ct)
     {
         var json = new JsonObject { ["op"] = op, ["d"] = data }.ToJsonString();
+        if (op is not VoiceOp.Heartbeat)
+        {
+            Trace($"→ op {op} {VoiceOp.Name(op)}");
+        }
+
         await _sendLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -687,6 +701,7 @@ public sealed class VoiceSession : IAsyncDisposable
     {
         var frame = new byte[payload.Length + 1];
         frame[0] = (byte)op;
+        Trace($"→ op {op} {VoiceOp.Name(op)} (binary, {frame.Length} bytes)");
         payload.CopyTo(frame, 1);
         await _sendLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -699,5 +714,8 @@ public sealed class VoiceSession : IAsyncDisposable
         }
     }
 
-    private void Log(string message) => _options.Log?.Invoke(message);
+    private void Log(string message) => _options.Log?.Invoke($"[{_info.Label} {_info.ServerId}] {message}");
+
+    /// <summary>Per-op trace (spec 012): every voice-gateway op in and out except heartbeats, never payload secrets.</summary>
+    private void Trace(string message) => _options.Trace?.Invoke($"[{_info.Label} {_info.ServerId}] {message}");
 }

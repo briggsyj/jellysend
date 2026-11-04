@@ -137,11 +137,15 @@ internal sealed class FakeLibrary : IMediaLibrary
     /// <summary>Every StartPlaybackAsync call: (item, tracks requested).</summary>
     public List<(string Item, TrackSelection? Tracks)> PlaybackCalls { get; } = [];
 
-    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct)
+    /// <summary>The allowDirect argument of each StartPlaybackAsync call, in order (spec 012).</summary>
+    public List<bool> AllowDirectCalls { get; } = [];
+
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true)
     {
         lock (PlaybackCalls)
         {
             PlaybackCalls.Add((itemId, tracks));
+            AllowDirectCalls.Add(allowDirect);
         }
 
         PlaybackEntered.TrySetResult();
@@ -156,8 +160,8 @@ internal sealed class FakeLibrary : IMediaLibrary
             Tracks = Tracks.TryGetValue(itemId, out var t) ? t : [],
             FrameRate = FrameRate,
             Selection = tracks ?? TrackSelection.Default,
-            IsDirect = Direct && tracks?.SubtitleIndex is null,
-            Url = Direct && tracks?.SubtitleIndex is null ? $"http://jf/Videos/{itemId}/stream?static=true&api_key=SECRET" : stream.Url,
+            IsDirect = Direct && allowDirect && tracks?.SubtitleIndex is null,
+            Url = Direct && allowDirect && tracks?.SubtitleIndex is null ? $"http://jf/Videos/{itemId}/stream?static=true&api_key=SECRET" : stream.Url,
         };
     }
 

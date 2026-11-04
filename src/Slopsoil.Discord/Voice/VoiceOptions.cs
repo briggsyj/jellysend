@@ -31,6 +31,9 @@ public sealed class VoiceOptions
     /// <summary>Optional diagnostic sink (never receives tokens or keys).</summary>
     public Action<string>? Log { get; init; }
 
+    /// <summary>Optional per-op trace sink: every voice-gateway op in and out (no tokens, keys or MLS payloads).</summary>
+    public Action<string>? Trace { get; init; }
+
     internal int EffectiveMaxDaveProtocolVersion => DaveSessionFactory is null ? 0 : MaxDaveProtocolVersion;
 }
 

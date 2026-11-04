@@ -94,6 +94,16 @@ public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? Has
     public double? FrameRate { get; init; }
 }
 
+/// <summary>
+/// What a direct stream would hand the bot's FFmpeg (spec 011): video codec / bit depth / interlacing and the audio
+/// codec that would play, lower-case as Jellyfin (ffprobe) names them. Null codec = no such stream or not reported.
+/// </summary>
+public sealed record DirectStreamFormat(string? VideoCodec, int? VideoBitDepth, bool Interlaced, string? AudioCodec)
+{
+    public override string ToString() =>
+        $"video {VideoCodec ?? "?"}{(VideoBitDepth is { } d ? $" {d}-bit" : "")}{(Interlaced ? " interlaced" : "")}, audio {AudioCodec ?? "none"}";
+}
+
 /// <summary>An audio or subtitle track of a media source (from PlaybackInfo's MediaStreams).</summary>
 /// <param name="Index">Jellyfin stream index (what <c>AudioStreamIndex</c> / <c>SubtitleStreamIndex</c> take).</param>
 /// <param name="IsAudio">Audio track; otherwise a subtitle track.</param>

@@ -8,12 +8,14 @@ using Slopsoil.Commands.Routing;
 using Slopsoil.Commands.Voice;
 using Slopsoil.Discord.Dave;
 using Slopsoil.Discord.Gateway;
+using Slopsoil.Discord.Native;
 using Slopsoil.Discord.Rest;
 using Slopsoil.Discord.Transport;
 using Slopsoil.Discord.Voice;
 using Slopsoil.Services.Jellyfin;
 using Slopsoil.Services.Media;
 using Slopsoil.Streaming.Engine;
+using Slopsoil.Streaming.Video;
 
 namespace Slopsoil.Host;
 
@@ -27,6 +29,19 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // libdave logs every MLS message (multi-kilobyte hex) to stdout by default: route it through the logger,
+        // verbose/info at Debug (hidden unless Logging__LogLevel__Slopsoil.Dave=Debug), warnings and errors as such.
+        var daveLog = loggers.CreateLogger("Slopsoil.Dave");
+        DaveLogging.Install((severity, text) => daveLog.Log(
+            severity switch
+            {
+                DaveLogSeverity.Error => LogLevel.Error,
+                DaveLogSeverity.Warning => LogLevel.Warning,
+                _ => LogLevel.Debug,
+            },
+            "{Message}",
+            text));
+
         var token = options.DiscordToken!;
         var properties = new ClientProperties();
         var gatewayLog = loggers.CreateLogger<GatewayClient>();
@@ -52,6 +67,11 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         // Jellyfin.
         using var jellyfinHttp = new HttpClient();
         using var jellyfin = JellyfinClient.FromOptions(options, jellyfinHttp, loggers.CreateLogger<JellyfinClient>());
+        if (jellyfin is not null && DecoderSet.Detect(Slopsoil.Streaming.Process.SystemProcessRunner.Instance, loggers.CreateLogger<DecoderSet>()) is { } decoders)
+        {
+            // Spec 011: originals the bot's FFmpeg cannot decode go through Jellyfin's transcode.
+            jellyfin.CanDecode = f => decoders.CanDecodeVideo(f.VideoCodec, f.VideoBitDepth, f.Interlaced) && decoders.CanDecodeAudio(f.AudioCodec);
+        }
         IMediaLibrary? library = jellyfin is null
             ? null
             : new JellyfinLibrary(
@@ -88,6 +108,15 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         gateway.Dispatch += directory.Apply;
         gateway.Dispatch += guildNames.Apply;
         gateway.Dispatch += OnDispatch;
+        var gatewayTrace = loggers.CreateLogger("Slopsoil.Gateway.Voice");
+        gateway.Dispatch += (type, data) =>
+        {
+            // Spec 012: the bot's own voice / screenshare events, which explain disconnects (never tokens).
+            if (GatewayVoiceTrace.Describe(type, data, gateway.UserId, gateway.SessionId) is { } line)
+            {
+                gatewayTrace.LogInformation("{Event}", line);
+            }
+        };
         gateway.VoiceStates.Changed += (guild, user, before, after) =>
             _ = Task.Run(() => voiceModule.OnVoiceStateChangedAsync(guild, user, before, after), CancellationToken.None);
 
@@ -176,6 +205,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             MaxDaveProtocolVersion = daveVersion,
             ChannelMembers = (guild, channel) => gateway.VoiceStates.GetGuild(guild).Where(kv => kv.Value == channel).Select(kv => kv.Key),
             Log = m => log.LogInformation("{Message}", m),
+            Trace = m => log.LogInformation("{Message}", m),
         };
     }
 

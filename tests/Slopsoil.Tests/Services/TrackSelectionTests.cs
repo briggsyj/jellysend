@@ -157,4 +157,71 @@ public sealed class DirectStreamTests
         Assert.False(s!.IsDirect);
         Assert.Contains("SubtitleStreamIndex=2", s.Url, StringComparison.Ordinal);
     }
+
+    // ── spec 011: fall back to Jellyfin's transcode when the bot's FFmpeg cannot decode the original ──
+
+    [Fact]
+    public async Task Undecodable_originals_use_jellyfins_transcode()
+    {
+        Respond(FileSource());
+        var formats = new List<DirectStreamFormat>();
+        var client = Client();
+        client.CanDecode = f =>
+        {
+            formats.Add(f);
+            return f.VideoCodec != "hevc";
+        };
+        var s = await client.StartPlaybackAsync("i", null, Ct);
+        Assert.False(s!.IsDirect);
+        Assert.Contains("/t.m3u8", s.Url, StringComparison.Ordinal);
+        Assert.Equal([new DirectStreamFormat("hevc", null, false, "truehd")], formats);
+    }
+
+    [Fact]
+    public async Task Disallowing_direct_forces_jellyfins_transcode()
+    {
+        Respond(FileSource());
+        var s = await Client().StartPlaybackAsync("i", null, Ct, allowDirect: false);
+        Assert.False(s!.IsDirect);
+        Assert.Contains("/t.m3u8", s.Url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Decodable_originals_stay_direct()
+    {
+        Respond(FileSource());
+        var client = Client();
+        client.CanDecode = _ => true;
+        Assert.True((await client.StartPlaybackAsync("i", null, Ct))!.IsDirect);
+    }
+
+    [Fact]
+    public void Format_describes_the_video_and_the_audio_that_would_play()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse("""
+            {"MediaStreams": [
+              {"Type": "Video", "Index": 0, "Codec": "H264", "BitDepth": 10, "IsInterlaced": true},
+              {"Type": "Audio", "Index": 1, "Codec": "aac"},
+              {"Type": "Audio", "Index": 2, "Codec": "EAC3", "IsDefault": true},
+              {"Type": "Audio", "Index": 3, "Codec": "ac3"}
+            ]}
+            """);
+        var source = doc.RootElement;
+        Assert.Equal(new DirectStreamFormat("h264", 10, true, "eac3"), JellyfinClient.FormatOf(source, null)); // default track
+        Assert.Equal(new DirectStreamFormat("h264", 10, true, "ac3"), JellyfinClient.FormatOf(source, 3));      // chosen track
+        Assert.Equal("video h264 10-bit interlaced, audio eac3", JellyfinClient.FormatOf(source, 9).ToString());
+    }
+
+    [Theory]
+    [InlineData("""{"MediaStreams": [{"Type": "Audio", "Codec": "flac"}, {"Type": "Audio", "Codec": "aac"}]}""", null, "flac")]
+    [InlineData("""{"MediaStreams": [{"Type": "Video", "Codec": "av1"}]}""", "av1", null)]
+    [InlineData("""{"MediaStreams": "x"}""", null, null)]
+    [InlineData("""[]""", null, null)]
+    public void Format_handles_missing_streams(string json, string? video, string? audio)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var f = JellyfinClient.FormatOf(doc.RootElement, null);
+        Assert.Equal((video, audio), (f.VideoCodec, f.AudioCodec));
+        Assert.Equal("video ?, audio none", new DirectStreamFormat(null, null, false, null).ToString());
+    }
 }
