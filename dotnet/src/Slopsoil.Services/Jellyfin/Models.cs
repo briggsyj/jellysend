@@ -80,6 +80,12 @@ public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? Has
 
     /// <summary>The tracks this session was started with.</summary>
     public TrackSelection Selection { get; init; } = TrackSelection.Default;
+
+    /// <summary>
+    /// Spec 006: <see cref="Url"/> is Jellyfin's static stream of the original file (no Jellyfin transcode); the
+    /// caller selects the audio track itself (<see cref="TrackSelection.AudioIndex"/> = input stream index).
+    /// </summary>
+    public bool IsDirect { get; init; }
 }
 
 /// <summary>An audio or subtitle track of a media source (from PlaybackInfo's MediaStreams).</summary>

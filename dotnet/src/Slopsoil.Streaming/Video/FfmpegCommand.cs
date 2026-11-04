@@ -23,6 +23,9 @@ public sealed record FfmpegCommandOptions
     /// <summary>The source has an audio track; otherwise silence is generated so the FIFO always has a writer.</summary>
     public bool HasAudio { get; init; } = true;
 
+    /// <summary>Absolute input stream index of the audio to play (direct stream, spec 006); null = the first audio stream.</summary>
+    public int? AudioStreamIndex { get; init; }
+
     public long ProbeSize { get; init; } = 2_000_000;
 
     /// <summary>Input seek in seconds (<c>-ss</c> before <c>-i</c>); none when ≤ 0.</summary>
@@ -101,7 +104,7 @@ public static class FfmpegCommand
 
         args.AddRange(
         [
-            "-map", o.HasAudio ? "0:a:0" : "1:a:0",
+            "-map", !o.HasAudio ? "1:a:0" : o.AudioStreamIndex is { } audio ? $"0:{audio.ToString(CultureInfo.InvariantCulture)}" : "0:a:0",
             // One media timeline (spec 004 FR-001): the raw PCM has no timestamps, so pad/trim it to output time 0
             // (sample 0 = video frame 0 = the -ss point) and fill timestamp gaps with silence. Without this a
             // source whose audio starts 0.5 s after its video plays 0.5 s early.

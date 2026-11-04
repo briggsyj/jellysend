@@ -114,6 +114,20 @@ public sealed class OptionsTests
         }
     }
 
+    [Theory]
+    [InlineData(null, true, 0)]
+    [InlineData("false", false, 0)]
+    [InlineData("0", false, 0)]
+    [InlineData("YES", true, 0)]
+    [InlineData("off", false, 0)]
+    [InlineData("maybe", true, 1)]
+    public void Jellyfin_direct_stream(string? raw, bool expected, int warnings)
+    {
+        var o = raw is null ? Parse() : Parse(("JELLYFIN_DIRECT_STREAM", raw));
+        Assert.Equal(expected, o.JellyfinDirectStream);
+        Assert.Equal(warnings, _warnings.Count);
+    }
+
     [Fact]
     public void Allowed_ids_skip_non_digits_like_isdigit()
     {

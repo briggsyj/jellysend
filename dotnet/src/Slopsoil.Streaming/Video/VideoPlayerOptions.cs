@@ -21,6 +21,9 @@ public sealed record VideoPlayerOptions
     /// <summary>The source has an audio track (else FFmpeg generates silence into the FIFO).</summary>
     public bool HasAudio { get; init; } = true;
 
+    /// <summary>Absolute input stream index of the audio to play; null = the first audio stream.</summary>
+    public int? AudioStreamIndex { get; init; }
+
     public long ProbeSize { get; init; } = 2_000_000;
 
     /// <summary>Media position to start at, seconds.</summary>

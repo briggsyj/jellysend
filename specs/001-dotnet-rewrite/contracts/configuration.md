@@ -17,6 +17,7 @@ variables are ignored without error so an existing `.env` works unchanged.
 | `STREAM_PACKET_PACE` | no | `0.0` | 0.0–0.95 |
 | `STREAM_AV_SYNC_MS` | no | `0` | ±5000; .NET: constant offset of the audio schedule on the shared playout clock (positive = audio earlier) |
 | `STREAM_BUFFER_SECONDS` | no | `5` | .NET only (spec 004): read-ahead of FFmpeg's video and audio before/while playing (pre-roll at start and after each seek); 0–30, fractional allowed, 0 = no read-ahead; invalid → warning + 5 |
+| `JELLYFIN_DIRECT_STREAM` | no | `true` | .NET only (spec 006): play the original file and transcode once in the bot; Jellyfin transcodes only for subtitles / non-file sources |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | no | `20` | .NET only (spec 003): stop + leave after the voice channel stayed empty this long; 0–1440, 0 = immediately |
 | `TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE` | — | — | accepted and ignored in this edition |
 

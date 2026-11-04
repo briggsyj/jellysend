@@ -54,6 +54,12 @@ public sealed partial record SlopsoilOptions
     /// <summary>Default of <see cref="StreamBufferSeconds"/> (spec 004).</summary>
     public const double DefaultStreamBufferSeconds = 5.0;
 
+    /// <summary>
+    /// Spec 006: play the original file from Jellyfin and transcode once in the bot (subtitles still use Jellyfin's
+    /// transcode with burn-in). False = always let Jellyfin transcode to HLS first.
+    /// </summary>
+    public bool JellyfinDirectStream { get; init; } = true;
+
     /// <summary>Read-ahead of FFmpeg's output before and during playout, seconds (0–30; 0 = no read-ahead).</summary>
     public double StreamBufferSeconds { get; init; } = DefaultStreamBufferSeconds;
 
@@ -205,6 +211,7 @@ public sealed partial record SlopsoilOptions
             PacketPace = pace,
             AvSyncMs = sync,
             StreamBufferSeconds = buffer,
+            JellyfinDirectStream = ParseBool(Get("JELLYFIN_DIRECT_STREAM"), true, "JELLYFIN_DIRECT_STREAM", warn),
             EmptyChannelTimeout = emptyTimeout,
         };
     }
@@ -214,8 +221,24 @@ public sealed partial record SlopsoilOptions
         $"SlopsoilOptions {{ Jellyfin = {JellyfinUrl ?? "(unset)"}, SyncPlay = {SyncPlayConfigured}, Admins = {AllowedUserIds.Count}, "
         + $"Resolution = {Resolution}, Fps = {Fps.ToString(CultureInfo.InvariantCulture)}, Bitrate = {VideoBitrate}, "
         + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs}, "
-        + $"StreamBufferSeconds = {StreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}, "
+        + $"StreamBufferSeconds = {StreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}, DirectStream = {JellyfinDirectStream}, "
         + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min }}";
+
+    private static bool ParseBool(string? raw, bool fallback, string name, Action<string>? warn)
+    {
+        switch (raw?.ToLowerInvariant())
+        {
+            case null:
+                return fallback;
+            case "1" or "true" or "yes" or "on":
+                return true;
+            case "0" or "false" or "no" or "off":
+                return false;
+            default:
+                warn?.Invoke($"{name}='{raw}' invalid (want true/false); using {(fallback ? "true" : "false")}");
+                return fallback;
+        }
+    }
 
     // Python float(): decimal or exponent, no thousands separators; also rejects NaN/inf like the range checks would.
     private static bool TryDouble(string s, out double value) =>

@@ -41,6 +41,9 @@ public sealed record StreamRequest
 
     public bool HasAudio { get; init; } = true;
 
+    /// <summary>Absolute input stream index of the audio to play (direct stream of the original file); null = first.</summary>
+    public int? AudioStreamIndex { get; init; }
+
     public bool? Live { get; init; } = true;
 
     public long ProbeSize { get; init; } = 2_000_000;

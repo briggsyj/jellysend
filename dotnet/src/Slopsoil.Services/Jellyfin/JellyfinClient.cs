@@ -92,7 +92,16 @@ public sealed class JellyfinClient : IDisposable
     public static JellyfinClient? FromOptions(SlopsoilOptions options, HttpClient? http = null, ILogger? logger = null, TimeProvider? time = null) =>
         options.JellyfinConfigured
             ? new JellyfinClient(options.JellyfinUrl!, options.JellyfinApiKey, options.JellyfinUsername, options.JellyfinPassword, http, logger, time)
+            {
+                PreferDirectStream = options.JellyfinDirectStream,
+            }
             : null;
+
+    /// <summary>
+    /// Spec 006: when no subtitles are selected and the source is a plain file, return Jellyfin's static stream of the
+    /// original (the bot then transcodes once) instead of Jellyfin's HLS transcode.
+    /// </summary>
+    public bool PreferDirectStream { get; init; }
 
     /// <summary>
     /// Sign in with the configured username/password for <paramref name="deviceId"/>. Each device id gets its own
@@ -272,8 +281,28 @@ public sealed class JellyfinClient : IDisposable
             return null;
         }
 
-        // Prefer the HLS transcoding URL (H.264/AAC); fall back to the direct stream.
         var source = sources[0];
+        if (PreferDirectStream && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId)
+        {
+            var (directAudio, directCodec) = StreamMetadata(source, transcoding: false);
+            if (directCodec is not null)
+            {
+                var direct = $"{BaseUrl}/Videos/{Uri.EscapeDataString(itemId)}/stream?{Query(("static", "true"), ("MediaSourceId", sourceId))}";
+                return new PlaybackStream(
+                    $"{direct}&api_key={_token}",
+                    NonEmptyString(result, "PlaySessionId"),
+                    directAudio,
+                    directCodec,
+                    RuntimeOf(source))
+                {
+                    Tracks = ParseTracks(source),
+                    Selection = tracks,
+                    IsDirect = true,
+                };
+            }
+        }
+
+        // Jellyfin's HLS transcoding URL (H.264/AAC); fall back to its direct stream URL.
         var transcodingUrl = NonEmptyString(source, "TranscodingUrl");
         var raw = transcodingUrl ?? NonEmptyString(source, "DirectStreamUrl");
         if (raw is null)
@@ -303,6 +332,24 @@ public sealed class JellyfinClient : IDisposable
             Selection = tracks,
         };
     }
+
+    /// <summary>
+    /// The media source id when the source can be streamed as the original file: a local file (not a Blu-ray/DVD
+    /// folder or ISO, not a remote/strm source). Null otherwise (spec 006 falls back to Jellyfin's transcode).
+    /// </summary>
+    internal static string? DirectSourceId(JsonElement source)
+    {
+        if (NonEmptyString(source, "Id") is not { } id || NonEmptyString(source, "Protocol") is not "File")
+        {
+            return null;
+        }
+
+        return NonEmptyString(source, "VideoType") is null or "VideoFile" && NonEmptyString(source, "IsoType") is null ? id : null;
+    }
+
+    private static double? RuntimeOf(JsonElement source) =>
+        source.ValueKind == JsonValueKind.Object && source.TryGetProperty("RunTimeTicks", out var rt) && rt.ValueKind == JsonValueKind.Number
+        && rt.TryGetInt64(out var t) && t > 0 ? JellyfinTicks.ToSeconds(t) : null;
 
     /// <summary>Audio and subtitle tracks of a media source, in index order (spec 005).</summary>
     internal static IReadOnlyList<MediaTrack> ParseTracks(JsonElement source)

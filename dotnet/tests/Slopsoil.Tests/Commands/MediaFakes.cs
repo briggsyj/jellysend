@@ -90,6 +90,11 @@ internal sealed class FakeLibrary : IMediaLibrary
 
     public string Codec { get; set; } = "h264";
 
+    /// <summary>Spec 006: sessions without subtitles come back as direct streams of the original file.</summary>
+    public bool Direct { get; set; }
+
+    public int Resolves { get; private set; }
+
     /// <summary>Playback URL for an item id (default: a Jellyfin-like URL carrying an API key).</summary>
     public Func<string, string> UrlFor { get; set; } = id => $"http://jf/videos/{id}/master.m3u8?api_key=SECRET";
 
@@ -147,6 +152,8 @@ internal sealed class FakeLibrary : IMediaLibrary
         {
             Tracks = Tracks.TryGetValue(itemId, out var t) ? t : [],
             Selection = tracks ?? TrackSelection.Default,
+            IsDirect = Direct && tracks?.SubtitleIndex is null,
+            Url = Direct && tracks?.SubtitleIndex is null ? $"http://jf/Videos/{itemId}/stream?static=true&api_key=SECRET" : stream.Url,
         };
     }
 
@@ -172,7 +179,11 @@ internal sealed class FakeLibrary : IMediaLibrary
         return Task.CompletedTask;
     }
 
-    public Task<string> ResolveVariantAsync(string url, CancellationToken ct) => Task.FromResult(url.Replace("master", "variant", StringComparison.Ordinal));
+    public Task<string> ResolveVariantAsync(string url, CancellationToken ct)
+    {
+        Resolves++;
+        return Task.FromResult(url.Replace("master", "variant", StringComparison.Ordinal));
+    }
 
     public Task<ProbeResult?> ProbeAsync(string url, CancellationToken ct) => Task.FromResult(Probe);
 

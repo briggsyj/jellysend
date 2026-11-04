@@ -896,8 +896,10 @@ public sealed class MediaModule : IStreamControl
             return Release(StartResult.Abandoned);
         }
 
-        _log.LogInformation("Jellyfin: stream URL: {Url}", Redactor.RedactUrl(stream.Url));
-        var url = await library.ResolveVariantAsync(stream.Url, CancellationToken.None).ConfigureAwait(false);
+        _log.LogInformation(
+            "Jellyfin: {Mode} URL: {Url}", stream.IsDirect ? "original file (direct stream)" : "transcoded stream", Redactor.RedactUrl(stream.Url));
+        // A direct stream is the original file over HTTP: no HLS variants to resolve (spec 006).
+        var url = stream.IsDirect ? stream.Url : await library.ResolveVariantAsync(stream.Url, CancellationToken.None).ConfigureAwait(false);
 
         string codec;
         bool hasAudio;
@@ -918,7 +920,9 @@ public sealed class MediaModule : IStreamControl
             (codec, hasAudio) = (info.Codec, info.HasAudio);
         }
 
-        if (!SupportedCodecs.Contains(codec))
+        // The transcode path only gets codecs Jellyfin can hand over; a direct stream is decoded by the bot's FFmpeg,
+        // which reads practically anything (av1, vp9, vc1, …).
+        if (!stream.IsDirect && !SupportedCodecs.Contains(codec))
         {
             await send($"unsupported video codec `{codec}` from Jellyfin for **{label}**").ConfigureAwait(false);
             return await Release(StartResult.Failed).ConfigureAwait(false);
@@ -954,6 +958,11 @@ public sealed class MediaModule : IStreamControl
             Url = url,
             Live = true,
             HasAudio = hasAudio,
+            // Direct stream: the bot picks the audio itself — the chosen track, else Jellyfin's default track (which is not
+            // always the file's first audio stream, e.g. a commentary track first).
+            AudioStreamIndex = stream.IsDirect
+                ? stream.Selection.AudioIndex ?? stream.Tracks.FirstOrDefault(t => t.IsAudio && t.IsDefault)?.Index
+                : null,
             ProbeSize = 10_000_000,
             StartOffset = start,
             Aspect = _aspect.TryGetValue(guild, out var aspect) ? aspect : null,

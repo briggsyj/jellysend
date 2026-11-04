@@ -628,6 +628,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
             Fps = Fps,
             Live = _options.Live,
             HasAudio = _options.HasAudio,
+            AudioStreamIndex = _options.AudioStreamIndex,
             ProbeSize = _options.ProbeSize,
             Offset = SegmentOffset,
             Aspect = aspect,
