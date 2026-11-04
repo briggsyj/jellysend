@@ -178,6 +178,15 @@ public sealed class DirectStreamTests
     }
 
     [Fact]
+    public async Task Disallowing_direct_forces_jellyfins_transcode()
+    {
+        Respond(FileSource());
+        var s = await Client().StartPlaybackAsync("i", null, Ct, allowDirect: false);
+        Assert.False(s!.IsDirect);
+        Assert.Contains("/t.m3u8", s.Url, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Decodable_originals_stay_direct()
     {
         Respond(FileSource());

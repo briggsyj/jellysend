@@ -81,6 +81,8 @@ internal sealed class GoLiveConnector(GatewayClient gateway, VoiceManager voice,
 
         public Task Closed => connection.Session.Completion;
 
+        public int? CloseCode => connection.Session.CloseCode;
+
         public ValueTask DisposeAsync() => connection.DisposeAsync();
     }
 }
@@ -100,7 +102,8 @@ internal sealed class JellyfinLibrary(JellyfinClient client, HlsVariantResolver 
 
     public Task<MediaItem?> GetItemAsync(string itemId, CancellationToken ct) => client.GetItemAsync(itemId, ct);
 
-    public Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct) => client.StartPlaybackAsync(itemId, tracks, ct);
+    public Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true) =>
+        client.StartPlaybackAsync(itemId, tracks, ct, allowDirect);
 
     public Task StopEncodingAsync(string? playSessionId, CancellationToken ct) => client.StopEncodingAsync(playSessionId, ct);
 

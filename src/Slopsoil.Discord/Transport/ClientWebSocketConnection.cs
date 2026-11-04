@@ -44,6 +44,7 @@ public sealed class ClientWebSocketConnection : IWebSocketConnection
             if (result.MessageType == WebSocketMessageType.Close)
             {
                 var code = (int?)_socket.CloseStatus;
+                var reason = _socket.CloseStatusDescription;
                 try
                 {
                     // Complete the closing handshake; the peer may already be gone.
@@ -54,7 +55,7 @@ public sealed class ClientWebSocketConnection : IWebSocketConnection
                 {
                 }
 
-                return new WebSocketFrame(false, ReadOnlyMemory<byte>.Empty, IsClose: true, CloseCode: code);
+                return new WebSocketFrame(false, ReadOnlyMemory<byte>.Empty, IsClose: true, CloseCode: code, CloseReason: reason);
             }
 
             message.Advance(result.Count);

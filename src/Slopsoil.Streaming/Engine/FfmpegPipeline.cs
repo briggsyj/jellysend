@@ -219,18 +219,29 @@ internal sealed class FfmpegPipeline : IPipeline
     /// </summary>
     private async Task<StreamPcmSource?> OpenFifoAsync(string path)
     {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
         var open = Task.Run(() => StreamPcmSource.OpenFifo(path));
         // Give up early when the player already finished (FFmpeg failed before opening its outputs).
         var winner = await Task.WhenAny(open, Task.Delay(_fifoTimeout, _stop.Token), _player.Completion).ConfigureAwait(false);
         if (winner == open || open.IsCompletedSuccessfully)
         {
             // Opened (possibly at the same time as a very short clip already finished): use it.
-            return await open.ConfigureAwait(false);
+            var pcm = await open.ConfigureAwait(false);
+            _log.LogInformation("audio FIFO opened after {Elapsed:0.00}s", waited.Elapsed.TotalSeconds);
+            return pcm;
         }
 
         if (_player.Completion.IsCompleted)
         {
-            _log.LogWarning("FFmpeg exited before opening the audio FIFO");
+            _log.LogWarning(
+                "FFmpeg exited ({End}) before opening the audio FIFO after {Elapsed:0.0}s, {Frames} video frames read — see the ffmpeg lines above",
+                _player.Completion.Result, waited.Elapsed.TotalSeconds, _player.SegmentFrames);
+        }
+        else if (!_stop.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "FFmpeg is still running but did not open the audio FIFO within {Timeout:0} s ({Frames} video frames read so far)",
+                _fifoTimeout.TotalSeconds, _player.SegmentFrames);
         }
 
         try

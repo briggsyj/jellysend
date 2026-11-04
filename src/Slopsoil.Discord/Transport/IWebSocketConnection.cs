@@ -1,7 +1,7 @@
 namespace Slopsoil.Discord.Transport;
 
 /// <summary>A message received from a websocket.</summary>
-public readonly record struct WebSocketFrame(bool IsText, ReadOnlyMemory<byte> Data, bool IsClose = false, int? CloseCode = null)
+public readonly record struct WebSocketFrame(bool IsText, ReadOnlyMemory<byte> Data, bool IsClose = false, int? CloseCode = null, string? CloseReason = null)
 {
     public string Text => System.Text.Encoding.UTF8.GetString(Data.Span);
 }

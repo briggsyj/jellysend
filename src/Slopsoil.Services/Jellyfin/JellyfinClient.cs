@@ -220,7 +220,7 @@ public sealed class JellyfinClient : IDisposable
     /// can override the body's -1 and burn subtitles in) and <c>api_key</c> appended so FFmpeg can fetch segments.
     /// Returns null when the request fails or yields no usable source (logged).
     /// </summary>
-    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default)
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default, bool allowDirect = true)
     {
         tracks ??= TrackSelection.Default;
         var subtitle = tracks.SubtitleIndex ?? -1;
@@ -288,7 +288,7 @@ public sealed class JellyfinClient : IDisposable
         }
 
         var source = sources[0];
-        if (PreferDirectStream && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId && Decodable(itemId, source, tracks))
+        if (PreferDirectStream && allowDirect && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId && Decodable(itemId, source, tracks))
         {
             var (directAudio, directCodec) = StreamMetadata(source, transcoding: false);
             if (directCodec is not null)

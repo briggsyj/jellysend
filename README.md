@@ -147,7 +147,18 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
 
-libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__Slopsoil.Dave=Debug` to see it.
+### Logs
+
+Everything goes to the container's stdout (`docker compose logs -f slopsoil`). Each play attempt logs:
+- **The start:** the mode (original file or Jellyfin transcode), codecs, audio track, source frame rate and start time.
+- **FFmpeg:** the full FFmpeg command, any FFmpeg warnings or errors, when the audio FIFO opened, and when the first video frame was sent.
+- **Voice and screenshare:** every voice-gateway event, labelled `[voice …]` or `[stream …]`, with Discord's close codes explained.
+- **Self events:** the bot's own voice state, voice server and stream (`STREAM_*`) events.
+- **The end:** one line saying why the stream ended (reason, position, whether a frame was ever sent, and how the screenshare closed).
+
+If a direct stream of the original file fails before its first frame, the bot retries it once through Jellyfin's transcode and keeps using the transcode for that item.
+
+libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__Slopsoil.Dave=Debug` to see it. `Logging__LogLevel__Default=Debug` turns on debug logging everywhere.
 
 Variables the old Python bot used (`TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE`) are ignored, so an existing `.env` keeps working.
 

@@ -108,6 +108,15 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         gateway.Dispatch += directory.Apply;
         gateway.Dispatch += guildNames.Apply;
         gateway.Dispatch += OnDispatch;
+        var gatewayTrace = loggers.CreateLogger("Slopsoil.Gateway.Voice");
+        gateway.Dispatch += (type, data) =>
+        {
+            // Spec 012: the bot's own voice / screenshare events, which explain disconnects (never tokens).
+            if (GatewayVoiceTrace.Describe(type, data, gateway.UserId) is { } line)
+            {
+                gatewayTrace.LogInformation("{Event}", line);
+            }
+        };
         gateway.VoiceStates.Changed += (guild, user, before, after) =>
             _ = Task.Run(() => voiceModule.OnVoiceStateChangedAsync(guild, user, before, after), CancellationToken.None);
 
@@ -196,6 +205,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
             MaxDaveProtocolVersion = daveVersion,
             ChannelMembers = (guild, channel) => gateway.VoiceStates.GetGuild(guild).Where(kv => kv.Value == channel).Select(kv => kv.Key),
             Log = m => log.LogInformation("{Message}", m),
+            Trace = m => log.LogInformation("{Message}", m),
         };
     }
 

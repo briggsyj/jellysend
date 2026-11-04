@@ -138,6 +138,23 @@ public sealed class StreamEngineTests
         Assert.Equal([PipelineEndReason.Failed], _endReasons); // like Python: any unstopped end may auto-advance
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_end_reports_whether_a_frame_was_sent_and_where(bool sent)
+    {
+        await _engine.StartAsync(5, Req(), Send, OnEnd, Ct);
+        _pipelines.Created[0].Fake.Position = 3600;
+        if (sent)
+        {
+            _pipelines.Created[0].Fake.FirstFrame.TrySetResult();
+        }
+
+        _pipelines.Created[0].End(PipelineEndReason.Failed, "x");
+        await Until(() => _ends == 1);
+        Assert.Equal((sent, (double?)3600), (_lastEnd!.FirstFrameSent, _lastEnd.Position));
+    }
+
     [Fact]
     public async Task Go_live_connection_loss_stops_the_pipeline_and_reports_the_position()
     {

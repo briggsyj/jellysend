@@ -151,7 +151,12 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
             end = new PipelineEnd(PipelineEndReason.ConnectionLost, ConnectionLostMessage) { Position = position };
         }
 
-        _log.LogInformation("go-live stream {Title} ended: {Reason}", title, end.Reason);
+        end = end with { FirstFrameSent = pipeline.Playback.FirstFrameSent.IsCompletedSuccessfully, Position = end.Position ?? pipeline.Playback.Position };
+        var closeCode = session.Link!.Closed.IsCompleted ? session.Link.CloseCode : null;
+        _log.LogInformation(
+            "go-live stream {Title} ended: {Reason}{Error} at {Position:0.0}s, first frame {FirstFrame}, screenshare link {Link}",
+            title, end.Reason, end.Error is null ? "" : $" ({end.Error})", end.Position, end.FirstFrameSent ? "sent" : "never sent",
+            session.Link.Closed.IsCompleted ? $"closed by Discord ({closeCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no code"})" : "open");
         var unstopped = end.Reason != PipelineEndReason.Stopped && !session.Stopping;
         await CleanupAsync(guildId, session).ConfigureAwait(false);
         if (end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost && end.Error is not null && unstopped)

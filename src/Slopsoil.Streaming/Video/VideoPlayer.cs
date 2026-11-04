@@ -52,6 +52,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<VideoPlayerEnd> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _rtpFrames;
+    private readonly long _createdAt;
     private readonly PacketPacer? _pacer;
     private readonly int _prerollFrames;
 
@@ -101,6 +102,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         _aspect = options.Aspect;
         _debug = options.DebugOverlay;
         Fps = options.Fps;
+        _createdAt = _time.GetTimestamp();
         _pacer = options.PacketPace > 0 ? PacePacket : null;
         _prerollFrames = (int)Math.Round(Math.Clamp(options.BufferSeconds, 0.0, 30.0) * options.Fps);
         BufferCapacity = Math.Max(1, _prerollFrames);
@@ -899,7 +901,10 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
 
         _frameStart = _time.GetTimestamp();
         _sink.SendVideoFrame(frame, NextTimestampIncrement(), _pacer);
-        _firstFrame.TrySetResult();
+        if (_firstFrame.TrySetResult())
+        {
+            _log.LogInformation("first video frame sent {Elapsed:0.00}s after start", _time.GetElapsedTime(_createdAt).TotalSeconds);
+        }
         Volatile.Write(ref _segmentFrames, n + 1);
 
         var due = Ticks(Anchor?.Origin ?? origin, n + 1);

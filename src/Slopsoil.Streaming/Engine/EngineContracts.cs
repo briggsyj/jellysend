@@ -23,6 +23,9 @@ public interface IGoLiveLink : IAsyncDisposable
 
     /// <summary>Completes when the go-live media connection closed on its own (server restart, migration, kick).</summary>
     Task Closed => Task.Delay(Timeout.Infinite);
+
+    /// <summary>The close code the server sent on the go-live websocket, once it closed (diagnostics).</summary>
+    int? CloseCode => null;
 }
 
 /// <summary>Starts go-live in the guild's current voice channel (Host: VoiceConnection → GoLiveConnection).</summary>
@@ -119,6 +122,9 @@ public sealed record PipelineEnd(PipelineEndReason Reason, string? Error = null)
 {
     /// <summary>Playback position when the stream ended, when known.</summary>
     public double? Position { get; init; }
+
+    /// <summary>At least one video frame was sent (false: the stream never really started).</summary>
+    public bool FirstFrameSent { get; init; }
 }
 
 /// <summary>Video player + audio sender for one item over one go-live link.</summary>
