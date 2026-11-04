@@ -24,6 +24,7 @@ arguments shows its own help when run bare. Commands that take no arguments igno
 | `!subtitles` / `!subs` / `!sub` | Friend | optional `#`, language (`english`, `eng`, `en`), label word, or `off` | none or no match: picker (accepts numbers and names); burned in by Jellyfin |
 | `!audio` | Friend | optional `#` or language | as `!subs` for the audio track |
 | `!aspect-ratio` / `!aspect` / `!ar` | Friend | optional `#`, ratio (`16:9`, `2.39`, `21:9`) or name (`widescreen`, `scope`, `original`) | none or no match: picker: Original, 16:9, 4:3, 2.39:1, 1.85:1 |
+| `!resolution` / `!res` | Friend | optional `#`, `360p`/`480p`/`540p`/`720p`/`1080p` (also `480`, `1280x720`, `hd`), `default` | per guild output height (16:9 box; bitrate scaled down by pixel count, never above the configured one); restarts the playing stream at its position; none or no match: picker (spec 010) |
 | `!debug [on\|off]` | Friend | `on`, `off`, or none | on/off: diagnostics overlay (per guild); none: state + current diagnostics; other words: its help |
 | `!help [command]` | Viewer | optional command name | all commands, or one command's help |
 | `!ping` | Viewer | — | `pong!` |
@@ -38,4 +39,4 @@ a title (start from the beginning), unless the title was quoted.
 Removed: `!media <title>`, `!media search`, `!media resume` (hint replies).
 
 Roles: Admin (in `ALLOWED_USER_IDS`) ⊃ Friend (Discord friend) ⊃ Viewer (shares a guild) ⊃ None; the bot's
-own account always passes; failed checks are silent.
+own account always passes; a failed check on a known command replies `_quack_ no.` (spec 010); unknown commands are silent.
