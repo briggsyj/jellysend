@@ -35,7 +35,7 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | P1 | `!media` / `!media help` | help text (+ SyncPlay line with a login) | [ ] | [ ] |
 | P2 | `!media <movie>` (one match), in voice | `checking stream…` then picture + audio ≤ 15 s | [ ] | [ ] |
 | P3 | `!media <query>` (several matches) | numbered list `Name (Year)`; reply `2` plays it | [ ] | [ ] |
-| P4 | picker: no reply 10 s / reply `!ping` / reply `99` | `timed out — cancelled` / `cancelled` (and `pong!`) / `invalid selection — pick a number between 1 and N` | [ ] | [ ] |
+| P4 | picker: no reply 30 s (.NET; Python 10 s) / reply `!ping` / reply `99` | `timed out — cancelled` / `cancelled` (and `pong!`) / `invalid selection — pick a number between 1 and N` | [ ] | [ ] |
 | P5 | `!media <show>` | season list → episode list (`Series — SxxEyy — Name`) → plays | [ ] | [ ] |
 | P6 | `!media <show> s01e02` | plays that episode directly | [ ] | [ ] |
 | P7 | `!media zzzzqqq` | ``nothing found in Jellyfin for `zzzzqqq` `` | [ ] | [ ] |

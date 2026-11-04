@@ -3,10 +3,10 @@ using Slopsoil.Commands.Routing;
 
 namespace Slopsoil.Commands.Interaction;
 
-/// <summary>Port of <c>_wait_for_number</c>: the invoking user picks 1..max in the same channel within 10 s.</summary>
+/// <summary>Port of <c>_wait_for_number</c>: the invoking user picks 1..max in the same channel within 30 s (Python: 10 s).</summary>
 public static class NumberPrompt
 {
-    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     /// <summary>The choice, or null after replying "timed out — cancelled", "cancelled" or an out-of-range message.</summary>
     public static async Task<int?> AskAsync(CommandContext context, int max)

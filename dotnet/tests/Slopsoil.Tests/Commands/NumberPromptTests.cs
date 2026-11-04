@@ -65,7 +65,11 @@ public sealed class NumberPromptTests
         await Send("-1");
         Assert.False(_result.Task.IsCompleted);
 
-        _time.Advance(NumberPrompt.Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), NumberPrompt.Timeout);
+        _time.Advance(TimeSpan.FromSeconds(29));
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.False(_result.Task.IsCompleted);                 // still waiting just before 30 s
+        _time.Advance(TimeSpan.FromSeconds(1));
         await pick;
         Assert.Null(await _result.Task);
         Assert.Equal(["timed out — cancelled"], _sender.Texts);
