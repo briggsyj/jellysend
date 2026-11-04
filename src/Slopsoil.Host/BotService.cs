@@ -112,7 +112,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         gateway.Dispatch += (type, data) =>
         {
             // Spec 012: the bot's own voice / screenshare events, which explain disconnects (never tokens).
-            if (GatewayVoiceTrace.Describe(type, data, gateway.UserId) is { } line)
+            if (GatewayVoiceTrace.Describe(type, data, gateway.UserId, gateway.SessionId) is { } line)
             {
                 gatewayTrace.LogInformation("{Event}", line);
             }

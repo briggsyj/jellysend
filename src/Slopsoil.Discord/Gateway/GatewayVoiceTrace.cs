@@ -9,7 +9,9 @@ namespace Slopsoil.Discord.Gateway;
 /// </summary>
 public static class GatewayVoiceTrace
 {
-    public static string? Describe(string type, JsonElement d, ulong selfId)
+    /// <param name="ownSessionId">This bot's gateway session id: a self voice state with another session id means
+    /// another Discord client on the same account took the voice connection.</param>
+    public static string? Describe(string type, JsonElement d, ulong selfId, string? ownSessionId = null)
     {
         if (d.ValueKind != JsonValueKind.Object)
         {
@@ -24,9 +26,13 @@ public static class GatewayVoiceTrace
                     return null;
                 }
 
+                var session = Str(d, "session_id");
+                var other = !string.IsNullOrEmpty(ownSessionId) && session is not null && session != ownSessionId
+                    ? " — ANOTHER DISCORD CLIENT on this account (phone/desktop/browser) owns this voice state"
+                    : "";
                 return $"self VOICE_STATE_UPDATE guild={Str(d, "guild_id") ?? "-"} channel={Str(d, "channel_id") ?? "none (left)"} "
-                    + $"session={Short(Str(d, "session_id"))} self_stream={Bool(d, "self_stream")} self_video={Bool(d, "self_video")} "
-                    + $"mute={Bool(d, "mute")}/{Bool(d, "self_mute")} deaf={Bool(d, "deaf")}/{Bool(d, "self_deaf")}";
+                    + $"session={Short(session)} self_stream={Bool(d, "self_stream")} self_video={Bool(d, "self_video")} "
+                    + $"mute={Bool(d, "mute")}/{Bool(d, "self_mute")} deaf={Bool(d, "deaf")}/{Bool(d, "self_deaf")}{other}";
             case "VOICE_SERVER_UPDATE":
                 return $"VOICE_SERVER_UPDATE guild={Str(d, "guild_id") ?? "-"} endpoint={Str(d, "endpoint") ?? "null (awaiting)"}";
             case "STREAM_CREATE":

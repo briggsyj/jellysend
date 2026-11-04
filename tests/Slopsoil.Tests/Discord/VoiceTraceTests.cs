@@ -58,6 +58,14 @@ public sealed class VoiceTraceTests
     }
 
     [Fact]
+    public void A_voice_state_from_another_client_on_the_account_is_flagged()
+    {
+        var state = Json("""{"user_id": "7", "guild_id": "5", "channel_id": "9", "session_id": "phone-session-id"}""");
+        Assert.EndsWith("ANOTHER DISCORD CLIENT on this account (phone/desktop/browser) owns this voice state", GatewayVoiceTrace.Describe("VOICE_STATE_UPDATE", state, 7, "bot-session-id"));
+        Assert.DoesNotContain("ANOTHER", GatewayVoiceTrace.Describe("VOICE_STATE_UPDATE", state, 7, "phone-session-id"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Server_and_stream_events_never_carry_tokens()
     {
         var server = GatewayVoiceTrace.Describe("VOICE_SERVER_UPDATE", Json("""{"guild_id": "5", "endpoint": "c-syd.discord.media:443", "token": "SECRET"}"""), 7);
