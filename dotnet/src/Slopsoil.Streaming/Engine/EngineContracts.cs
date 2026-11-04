@@ -59,6 +59,9 @@ public sealed record StreamRequest
 
     /// <summary>Item runtime in seconds when known, for diagnostics.</summary>
     public double? RuntimeSeconds { get; init; }
+
+    /// <summary>Source video frame rate when known; the output follows it up to <c>STREAM_FPS</c> (spec 007).</summary>
+    public double? SourceFps { get; init; }
 }
 
 /// <summary>Live controls of a running stream (the video player, as the commands see it).</summary>

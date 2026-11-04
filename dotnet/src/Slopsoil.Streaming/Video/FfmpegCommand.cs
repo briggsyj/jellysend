@@ -91,7 +91,7 @@ public static class FfmpegCommand
             // Exact constant rate: the playout clock sends frame n at t0 + n/Fps. CFR also makes frame 0 output
             // time 0 (the segment start), duplicating the first picture when the video starts after the audio.
             "-fps_mode", "cfr",
-            "-r", o.Fps.ToString("G6", inv),
+            "-r", FrameRate.ToFfmpeg(o.Fps),
             "-g", Math.Max(1, (int)Math.Round(o.Fps)).ToString(inv),
             "-f", "h264", "pipe:1",
         ]);

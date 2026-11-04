@@ -177,6 +177,21 @@ public sealed class JellyfinClientTests
         Assert.True(_log.Has(LogLevel.Warning, "HTTP 400"));
     }
 
+    [Theory]
+    [InlineData("""{"MediaStreams": [{"Type": "Audio"}, {"Type": "Video", "AverageFrameRate": 23.976025, "RealFrameRate": 24}]}""", 23.976025)]
+    [InlineData("""{"MediaStreams": [{"Type": "Video", "RealFrameRate": 25}]}""", 25.0)]
+    [InlineData("""{"MediaStreams": [{"Type": "Video", "AverageFrameRate": 0, "RealFrameRate": 30}]}""", 30.0)]
+    [InlineData("""{"MediaStreams": [{"Type": "Video"}, {"Type": "Video", "RealFrameRate": 25}]}""", null)]
+    [InlineData("""{"MediaStreams": [1, {"Type": "Audio"}]}""", null)]
+    [InlineData("""{"MediaStreams": "x"}""", null)]
+    [InlineData("""{}""", null)]
+    [InlineData("""[]""", null)]
+    public void Frame_rate_comes_from_the_first_video_stream(string source, double? expected)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(source);
+        Assert.Equal(expected, JellyfinClient.FrameRateOf(doc.RootElement));
+    }
+
     public static TheoryData<string, bool?, string?> MetadataCases => new()
     {
         { """{"TranscodingUrl": "/t.m3u8?a=1", "MediaStreams": [{"Type": "Video"}, {"Type": "Audio"}]}""", true, "h264" },

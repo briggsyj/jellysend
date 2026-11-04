@@ -77,6 +77,9 @@ public sealed record StreamDiagnosticsSnapshot
 
     public string? SourceCodec { get; init; }
 
+    /// <summary>Source frame rate, when known (spec 007).</summary>
+    public double? SourceFps { get; init; }
+
     /// <summary>Playback position in seconds of the source media.</summary>
     public double Position { get; init; }
 
@@ -111,6 +114,7 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
     private TimeSpan _audioBuffered;
     private string _encoder = "?";
     private string? _sourceCodec;
+    private double? _sourceFps;
     private double? _runtime;
 
     public StreamDiagnostics(double fpsTarget, string resolution, string bitrate, TimeProvider? time = null)
@@ -143,13 +147,14 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
         }
     }
 
-    /// <summary>Source codec and runtime of the item now playing (from PlaybackInfo / ffprobe).</summary>
-    public void SetSource(string? codec, double? runtimeSeconds)
+    /// <summary>Source codec, runtime and frame rate of the item now playing (from PlaybackInfo / ffprobe).</summary>
+    public void SetSource(string? codec, double? runtimeSeconds, double? sourceFps = null)
     {
         lock (_lock)
         {
             _sourceCodec = codec;
             _runtime = runtimeSeconds;
+            _sourceFps = sourceFps;
         }
     }
 
@@ -236,6 +241,7 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
                 Resolution = Resolution,
                 Bitrate = Bitrate,
                 SourceCodec = _sourceCodec,
+                SourceFps = _sourceFps,
                 Position = position,
                 Runtime = _runtime,
                 Window = window,

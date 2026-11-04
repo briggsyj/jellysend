@@ -903,6 +903,7 @@ public sealed class MediaModule : IStreamControl
 
         string codec;
         bool hasAudio;
+        var sourceFps = stream.FrameRate;
         if (stream.HasAudio is { } audio && stream.VideoCodec is { } known)
         {
             // PlaybackInfo already told us: skip ffprobe (seconds, and a second server-side transcode).
@@ -918,6 +919,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             (codec, hasAudio) = (info.Codec, info.HasAudio);
+            sourceFps ??= info.Fps;
         }
 
         // The transcode path only gets codecs Jellyfin can hand over; a direct stream is decoded by the bot's FFmpeg,
@@ -969,6 +971,7 @@ public sealed class MediaModule : IStreamControl
             DebugOverlay = _debug.TryGetValue(guild, out var debug) && debug,
             SourceCodec = codec,
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
+            SourceFps = sourceFps,
         };
 
         bool started;

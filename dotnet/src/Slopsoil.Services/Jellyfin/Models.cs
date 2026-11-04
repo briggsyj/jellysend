@@ -86,6 +86,12 @@ public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? Has
     /// caller selects the audio track itself (<see cref="TrackSelection.AudioIndex"/> = input stream index).
     /// </summary>
     public bool IsDirect { get; init; }
+
+    /// <summary>
+    /// The source video's frame rate as Jellyfin reports it (average, else real rate); null when unknown. The stream
+    /// follows it up to <c>STREAM_FPS</c> (spec 007). A Jellyfin transcode keeps the source rate.
+    /// </summary>
+    public double? FrameRate { get; init; }
 }
 
 /// <summary>An audio or subtitle track of a media source (from PlaybackInfo's MediaStreams).</summary>

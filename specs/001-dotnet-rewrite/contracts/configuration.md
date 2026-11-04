@@ -12,7 +12,7 @@ variables are ignored without error so an existing `.env` works unchanged.
 | `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` | no | — | enables SyncPlay; lazy sign-in |
 | `STREAM_QUALITY` | no | `1080p` | presets 720p/1080p/4k |
 | `STREAM_RESOLUTION` | no | preset | `W:H` / `WxH` bounding box |
-| `STREAM_FPS` | no | preset | 1–60, fractional allowed |
+| `STREAM_FPS` | no | preset | 1–60, fractional allowed. A **ceiling** (spec 007): each stream follows the source frame rate at or below it, and evenly divides faster sources (60 → 30, 50 → 25). Unknown source rate → this value. |
 | `STREAM_VIDEO_BITRATE` | no | preset | e.g. `2000k` |
 | `STREAM_PACKET_PACE` | no | `0.0` | 0.0–0.95 |
 | `STREAM_AV_SYNC_MS` | no | `0` | ±5000; .NET: constant offset of the audio schedule on the shared playout clock (positive = audio earlier) |

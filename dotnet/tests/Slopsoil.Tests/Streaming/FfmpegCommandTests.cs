@@ -125,6 +125,9 @@ public sealed class FfmpegCommandTests
     [InlineData(29.97, "29.97", "30")]
     [InlineData(59.94, "59.94", "60")]
     [InlineData(23.976, "23.976", "24")]
+    [InlineData(24000.0 / 1001.0, "24000/1001", "24")]
+    [InlineData(30000.0 / 1001.0, "30000/1001", "30")]
+    [InlineData(25.0, "25", "25")]
     [InlineData(30.0, "30", "30")]
     [InlineData(0.4, "0.4", "1")]
     [InlineData(2.5, "2.5", "2")] // banker's rounding, like Python round()

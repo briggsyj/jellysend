@@ -51,7 +51,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private readonly CancellationTokenSource _stopCts = new();
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<VideoPlayerEnd> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly int _timestampIncrement;
+    private long _rtpFrames;
     private readonly PacketPacer? _pacer;
     private readonly int _prerollFrames;
 
@@ -101,7 +101,6 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         _aspect = options.Aspect;
         _debug = options.DebugOverlay;
         Fps = options.Fps;
-        _timestampIncrement = (int)Math.Round(RtpMediaSender.VideoClock / options.Fps);
         _pacer = options.PacketPace > 0 ? PacePacket : null;
         _prerollFrames = (int)Math.Round(Math.Clamp(options.BufferSeconds, 0.0, 30.0) * options.Fps);
         BufferCapacity = Math.Max(1, _prerollFrames);
@@ -899,7 +898,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         }
 
         _frameStart = _time.GetTimestamp();
-        _sink.SendVideoFrame(frame, _timestampIncrement, _pacer);
+        _sink.SendVideoFrame(frame, NextTimestampIncrement(), _pacer);
         _firstFrame.TrySetResult();
         Volatile.Write(ref _segmentFrames, n + 1);
 
@@ -915,6 +914,18 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     }
 
     private long MinWaitTicks => _time.TimestampFrequency / 1000;
+
+    /// <summary>
+    /// RTP ticks for the next frame: the difference of rounded exact frame times, so fractional rates
+    /// (24000/1001 → 3753.75 ticks) alternate 3754/3753… and the RTP clock never drifts from the frame clock.
+    /// </summary>
+    internal int NextTimestampIncrement()
+    {
+        var n = _rtpFrames++;
+        return (int)(RtpTicks(n + 1) - RtpTicks(n));
+    }
+
+    private long RtpTicks(long frame) => (long)Math.Round(frame * RtpMediaSender.VideoClock / Fps);
 
     private long Ticks(long origin, int frame) => origin + (long)(frame / Fps * _time.TimestampFrequency);
 

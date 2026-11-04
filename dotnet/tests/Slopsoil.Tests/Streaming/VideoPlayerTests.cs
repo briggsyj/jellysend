@@ -59,6 +59,18 @@ public sealed class VideoPlayerTests : IDisposable
 
     private static string Hex(byte[][] frame) => string.Join('|', frame.Select(Convert.ToHexString));
 
+    // ── RTP timestamps at fractional rates (spec 007) ────────────────────
+
+    [Fact]
+    public void Rtp_increments_track_the_exact_frame_clock_at_fractional_rates()
+    {
+        var player = Player(o => o with { Fps = 24000.0 / 1001.0 });
+        var increments = Enumerable.Range(0, 24_000).Select(_ => player.NextTimestampIncrement()).ToList();
+        Assert.All(increments, i => Assert.InRange(i, 3753, 3754));
+        // 24 000 frames at 24000/1001 fps = 1001 s = exactly 90 090 000 ticks: no drift.
+        Assert.Equal(90_090_000L, increments.Sum(i => (long)i));
+    }
+
     // ── frame grouping / natural end ─────────────────────────────────────
 
     [Theory]

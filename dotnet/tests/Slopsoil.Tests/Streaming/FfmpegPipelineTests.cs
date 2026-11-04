@@ -28,11 +28,11 @@ public sealed class FfmpegPipelineTests : IDisposable
         }
     }
 
-    private string MakeClip(double seconds)
+    private string MakeClip(double seconds, string rate = "30")
     {
         var path = Path.Combine(_dir, "clip.mp4");
         var info = new ProcessStartInfo("ffmpeg") { RedirectStandardError = true };
-        foreach (var a in (string[])["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", $"testsrc2=size=320x240:rate=30:duration={seconds}",
+        foreach (var a in (string[])["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", $"testsrc2=size=320x240:rate={rate}:duration={seconds}",
                      "-f", "lavfi", "-i", $"sine=frequency=440:sample_rate=48000:duration={seconds}", "-c:v", "libx264", "-c:a", "aac", "-shortest", path])
         {
             info.ArgumentList.Add(a);
@@ -51,6 +51,25 @@ public sealed class FfmpegPipelineTests : IDisposable
         ["STREAM_FPS"] = "30",
         ["STREAM_VIDEO_BITRATE"] = "500k",
     });
+
+    [Fact]
+    public async Task Film_rate_source_streams_at_its_own_rate_under_the_ceiling()
+    {
+        Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");
+        var clip = MakeClip(3, "24000/1001");
+        var factory = new FfmpegPipelineFactory(Options()) { TempDirectory = _dir };
+        var pipeline = factory.Create(new StreamRequest { Title = "film", Url = clip, Live = false, SourceFps = 23.976025 }, new CapturingLink());
+        pipeline.Start();
+
+        var end = await pipeline.Completion.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal(PipelineEndReason.Natural, end.Reason);
+        var snapshot = pipeline.Playback.DiagnosticsSnapshot()!;
+        Assert.Equal(24000.0 / 1001.0, snapshot.FpsTarget, 9);
+        Assert.Equal(24000.0 / 1001.0, snapshot.SourceFps!.Value, 9);
+        Assert.InRange(pipeline.Playback.Position, 2.7, 3.3); // 72 frames at 23.976, not 90 at 30
+        Assert.Contains("/23.98 fps (src 23.98)", pipeline.Playback.DiagnosticsText(), StringComparison.Ordinal);
+        await pipeline.StopAsync();
+    }
 
     [Fact]
     public async Task Plays_a_file_to_its_natural_end_with_audio_and_video_packets()

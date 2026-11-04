@@ -66,8 +66,10 @@ internal sealed class FfmpegPipeline : IPipeline
         _fifoTimeout = fifoTimeout;
         _loggers = loggers;
         _log = loggers.CreateLogger<FfmpegPipeline>();
-        _diagnostics = new StreamDiagnostics(options.Fps, options.Resolution, options.VideoBitrate);
-        _diagnostics.SetSource(request.SourceCodec, request.RuntimeSeconds);
+        // Spec 007: STREAM_FPS is a ceiling; the output follows the source rate (evenly divided when above it).
+        var fps = FrameRate.Choose(request.SourceFps, options.Fps);
+        _diagnostics = new StreamDiagnostics(fps, options.Resolution, options.VideoBitrate);
+        _diagnostics.SetSource(request.SourceCodec, request.RuntimeSeconds, FrameRate.Normalize(request.SourceFps));
         _sender = new RtpMediaSender(link.SendPacket, link.Mode, link.SecretKey, link.AudioSsrc, link.VideoSsrc, () => link.Dave) { Stats = _diagnostics };
         var playerOptions = new VideoPlayerOptions
         {
@@ -75,7 +77,7 @@ internal sealed class FfmpegPipeline : IPipeline
             Encoder = encoders.Primary,
             Fallback = encoders.Fallback,
             VideoSsrc = link.VideoSsrc,
-            Fps = options.Fps,
+            Fps = fps,
             Live = request.Live,
             HasAudio = request.HasAudio,
             AudioStreamIndex = request.AudioStreamIndex,

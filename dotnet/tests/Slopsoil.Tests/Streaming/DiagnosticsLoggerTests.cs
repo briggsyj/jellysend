@@ -36,7 +36,7 @@ public sealed class DiagnosticsLoggerTests
     public void Log_line_matches_the_python_video_stats_fields()
     {
         Assert.Equal(
-            "video stats: 29.9 fps (target 30) | late 2/299 frames (max 12 ms, total 20 ms) | ffmpeg read-block 5 ms / 10.0s "
+            "video stats: 29.9 fps (target 30, src ?) | late 2/299 frames (max 12 ms, total 20 ms) | ffmpeg read-block 5 ms / 10.0s "
             + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00",
             DiagnosticsFormat.LogLine(Sample));
     }
@@ -62,7 +62,7 @@ public sealed class DiagnosticsLoggerTests
     {
         var lines = DiagnosticsFormat.Overlay(Sample with { DriftMs = -7.2, VideoBufferSeconds = 2.5 }).Split('\n');
         Assert.Equal(5, lines.Length);
-        Assert.Equal("VIDEO   29.9/30 fps  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
+        Assert.Equal("VIDEO   29.9/30 fps (src ?)  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
         Assert.Equal("A/V     drift -7 ms  silence 1  skip 2", lines[1]);
         Assert.Equal("BUFFER  video 2.5 s  audio 5.0 s", lines[2]);
         Assert.Equal("STREAM  libx264 1920x1080 12000k  src hevc  1:02:03 / 1:30:00", lines[3]);
@@ -84,7 +84,7 @@ public sealed class DiagnosticsLoggerTests
         time.Advance(TimeSpan.FromSeconds(1));
         var first = Assert.Single(log.Entries);
         Assert.Equal(LogLevel.Information, first.Level);
-        Assert.StartsWith("video stats: 0.1 fps (target 30) | late 0/1 frames", first.Message);
+        Assert.StartsWith("video stats: 0.1 fps (target 30, src ?) | late 0/1 frames", first.Message);
 
         time.Advance(DiagnosticsLogger.Interval);
         Assert.Equal(2, log.Entries.Count);

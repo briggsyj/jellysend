@@ -33,6 +33,23 @@ public sealed class MediaDirectStreamTests
     }
 
     [Fact]
+    public async Task Source_frame_rate_reaches_the_stream_request()
+    {
+        _h.Library.FrameRate = 23.976;
+        await _h.Send("!media film");
+        Assert.Equal(23.976, _h.Current.Request.SourceFps);
+    }
+
+    [Fact]
+    public async Task Probed_frame_rate_is_used_when_jellyfin_reports_none()
+    {
+        _h.Library.UnknownMetadata = true;
+        _h.Library.Probe = new("h264", 25.0, "high", false, 1920, 1080, true, "aac");
+        await _h.Send("!media film");
+        Assert.Equal(25.0, _h.Current.Request.SourceFps);
+    }
+
+    [Fact]
     public async Task Codecs_the_transcode_path_rejects_are_fine_when_direct()
     {
         _h.Library.Codec = "av1";

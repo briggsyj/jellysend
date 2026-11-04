@@ -298,6 +298,7 @@ public sealed class JellyfinClient : IDisposable
                     Tracks = ParseTracks(source),
                     Selection = tracks,
                     IsDirect = true,
+                    FrameRate = FrameRateOf(source),
                 };
             }
         }
@@ -330,7 +331,42 @@ public sealed class JellyfinClient : IDisposable
         {
             Tracks = ParseTracks(source),
             Selection = tracks,
+            FrameRate = FrameRateOf(source),
         };
+    }
+
+    /// <summary>
+    /// The first video stream's frame rate: AverageFrameRate (right for variable-rate files), else RealFrameRate.
+    /// Null when absent or not positive.
+    /// </summary>
+    internal static double? FrameRateOf(JsonElement source)
+    {
+        if (source.ValueKind != JsonValueKind.Object
+            || !source.TryGetProperty("MediaStreams", out var streams)
+            || streams.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var s in streams.EnumerateArray())
+        {
+            if (s.ValueKind != JsonValueKind.Object || NonEmptyString(s, "Type") != "Video")
+            {
+                continue;
+            }
+
+            foreach (var name in (string[])["AverageFrameRate", "RealFrameRate"])
+            {
+                if (s.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var fps) && fps > 0)
+                {
+                    return fps;
+                }
+            }
+
+            return null;
+        }
+
+        return null;
     }
 
     /// <summary>

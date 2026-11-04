@@ -90,6 +90,9 @@ internal sealed class FakeLibrary : IMediaLibrary
 
     public string Codec { get; set; } = "h264";
 
+    /// <summary>Source frame rate PlaybackInfo reports (spec 007).</summary>
+    public double? FrameRate { get; set; }
+
     /// <summary>Spec 006: sessions without subtitles come back as direct streams of the original file.</summary>
     public bool Direct { get; set; }
 
@@ -151,6 +154,7 @@ internal sealed class FakeLibrary : IMediaLibrary
         return stream is null ? null : stream with
         {
             Tracks = Tracks.TryGetValue(itemId, out var t) ? t : [],
+            FrameRate = FrameRate,
             Selection = tracks ?? TrackSelection.Default,
             IsDirect = Direct && tracks?.SubtitleIndex is null,
             Url = Direct && tracks?.SubtitleIndex is null ? $"http://jf/Videos/{itemId}/stream?static=true&api_key=SECRET" : stream.Url,
