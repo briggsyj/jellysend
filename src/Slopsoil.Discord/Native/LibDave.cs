@@ -106,6 +106,9 @@ internal static unsafe partial class DaveNative
     internal static partial ushort daveMaxSupportedProtocolVersion();
 
     [LibraryImport(Lib)]
+    internal static partial void daveSetLogSinkCallback(delegate* unmanaged[Cdecl]<int, byte*, int, byte*, void> callback);
+
+    [LibraryImport(Lib)]
     internal static partial void daveFree(void* ptr);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
@@ -424,5 +427,61 @@ internal sealed class LibDaveNative : ILibDave
         }
 
         public void Dispose() => _handle.Dispose();
+    }
+}
+
+/// <summary>libdave's log severities (<c>DAVELoggingSeverity</c>).</summary>
+public enum DaveLogSeverity
+{
+    Verbose = 0,
+    Info = 1,
+    Warning = 2,
+    Error = 3,
+}
+
+/// <summary>
+/// Routes libdave's own logging (by default printed to stdout, including multi-kilobyte hex dumps of every MLS
+/// message) into the bot's logger, so it can be filtered by level.
+/// </summary>
+public static unsafe class DaveLogging
+{
+    private static Action<DaveLogSeverity, string>? _sink;
+
+    /// <summary>
+    /// Install <paramref name="sink"/> as libdave's log sink. Returns false when <c>libdave.so</c> is not present
+    /// (the sink then never fires).
+    /// </summary>
+    public static bool Install(Action<DaveLogSeverity, string> sink)
+    {
+        _sink = sink;
+        try
+        {
+            DaveNative.daveSetLogSinkCallback(&OnLog); // the module initializer already registered the resolver
+            return true;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            return false;
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static void OnLog(int severity, byte* file, int line, byte* message)
+    {
+        try
+        {
+            if (severity >= 4 || _sink is not { } sink)
+            {
+                return;
+            }
+
+            var source = Marshal.PtrToStringUTF8((IntPtr)file) ?? "?";
+            var text = Marshal.PtrToStringUTF8((IntPtr)message) ?? string.Empty;
+            sink((DaveLogSeverity)Math.Clamp(severity, 0, 3), $"({Path.GetFileName(source)}:{line}) {text}");
+        }
+        catch
+        {
+            // Exceptions must never unwind into native code.
+        }
     }
 }

@@ -137,7 +137,7 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `JELLYFIN_URL` | For playback | — | Jellyfin server URL, e.g. `http://192.168.1.100:8096`. |
 | `JELLYFIN_API_KEY` | Key or login | — | Jellyfin API key. |
 | `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` | No | — | Sign in as a Jellyfin user; enables SyncPlay group watch. |
-| `JELLYFIN_DIRECT_STREAM` | No | `true` | Play the original file and transcode once in the bot. `false` always uses Jellyfin's transcode. |
+| `JELLYFIN_DIRECT_STREAM` | No | `true` | Play the original file and transcode once in the bot. Files the bot's FFmpeg can't decode (in the image: HEVC, E-AC-3 audio, 10-bit or interlaced H.264) automatically use Jellyfin's transcode. `false` always uses Jellyfin's transcode. |
 | `STREAM_QUALITY` | No | `1080p` | Preset: `720p` (30 fps, 10000k), `1080p` (60 fps, 12000k) or `4k` (60 fps, 24000k). Discord caps resolution/fps per account. |
 | `STREAM_RESOLUTION` | No | preset | Bounding box `W:H` (or `WxH`). |
 | `STREAM_FPS` | No | preset | Frame-rate **ceiling**, 1–60. Each stream follows the source rate at or below it; faster sources are divided evenly (60 → 30, 50 → 25). |
@@ -146,6 +146,8 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
+
+libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__Slopsoil.Dave=Debug` to see it.
 
 Variables the old Python bot used (`TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE`) are ignored, so an existing `.env` keeps working.
 

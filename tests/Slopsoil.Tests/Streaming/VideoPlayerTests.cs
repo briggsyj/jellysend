@@ -429,7 +429,10 @@ public sealed class VideoPlayerTests : IDisposable
         player.Start();
         await Ended(player);
         var reads = (int)Math.Ceiling(Nals.Frames(2).Length / 8.0) + 1;
-        Assert.Equal(reads * 3, player.Diagnostics.Snapshot().ReadStallMs, 3);
+        // Every read blocks 3 ms. The playout thread's sleeps advance the same fake clock, so on a busy machine one
+        // can land inside a read and count toward its stall: allow at most those, never less than the reads.
+        var sleptMs = _time.Sleeps.Sum(d => d.TotalMilliseconds);
+        Assert.InRange(player.Diagnostics.Snapshot().ReadStallMs, reads * 3 - 0.001, (reads * 3) + sleptMs + 0.001);
     }
 
     // ── pause ────────────────────────────────────────────────────────────

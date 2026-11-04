@@ -8,12 +8,14 @@ using Slopsoil.Commands.Routing;
 using Slopsoil.Commands.Voice;
 using Slopsoil.Discord.Dave;
 using Slopsoil.Discord.Gateway;
+using Slopsoil.Discord.Native;
 using Slopsoil.Discord.Rest;
 using Slopsoil.Discord.Transport;
 using Slopsoil.Discord.Voice;
 using Slopsoil.Services.Jellyfin;
 using Slopsoil.Services.Media;
 using Slopsoil.Streaming.Engine;
+using Slopsoil.Streaming.Video;
 
 namespace Slopsoil.Host;
 
@@ -27,6 +29,19 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // libdave logs every MLS message (multi-kilobyte hex) to stdout by default: route it through the logger,
+        // verbose/info at Debug (hidden unless Logging__LogLevel__Slopsoil.Dave=Debug), warnings and errors as such.
+        var daveLog = loggers.CreateLogger("Slopsoil.Dave");
+        DaveLogging.Install((severity, text) => daveLog.Log(
+            severity switch
+            {
+                DaveLogSeverity.Error => LogLevel.Error,
+                DaveLogSeverity.Warning => LogLevel.Warning,
+                _ => LogLevel.Debug,
+            },
+            "{Message}",
+            text));
+
         var token = options.DiscordToken!;
         var properties = new ClientProperties();
         var gatewayLog = loggers.CreateLogger<GatewayClient>();
@@ -52,6 +67,11 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         // Jellyfin.
         using var jellyfinHttp = new HttpClient();
         using var jellyfin = JellyfinClient.FromOptions(options, jellyfinHttp, loggers.CreateLogger<JellyfinClient>());
+        if (jellyfin is not null && DecoderSet.Detect(Slopsoil.Streaming.Process.SystemProcessRunner.Instance, loggers.CreateLogger<DecoderSet>()) is { } decoders)
+        {
+            // Spec 011: originals the bot's FFmpeg cannot decode go through Jellyfin's transcode.
+            jellyfin.CanDecode = f => decoders.CanDecodeVideo(f.VideoCodec, f.VideoBitDepth, f.Interlaced) && decoders.CanDecodeAudio(f.AudioCodec);
+        }
         IMediaLibrary? library = jellyfin is null
             ? null
             : new JellyfinLibrary(
