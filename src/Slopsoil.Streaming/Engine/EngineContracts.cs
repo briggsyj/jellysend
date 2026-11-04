@@ -62,6 +62,12 @@ public sealed record StreamRequest
 
     /// <summary>Source video frame rate when known; the output follows it up to <c>STREAM_FPS</c> (spec 007).</summary>
     public double? SourceFps { get; init; }
+
+    /// <summary>
+    /// Output height chosen at runtime (spec 010, <c>!resolution</c>); null = the configured resolution. The box is
+    /// 16:9 for the height and the bitrate scales down with the pixel count.
+    /// </summary>
+    public int? OutputHeight { get; init; }
 }
 
 /// <summary>Live controls of a running stream (the video player, as the commands see it).</summary>

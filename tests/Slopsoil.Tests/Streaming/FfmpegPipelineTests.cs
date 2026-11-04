@@ -72,6 +72,27 @@ public sealed class FfmpegPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task Runtime_output_height_sets_the_box_and_bitrate()
+    {
+        Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");
+        var clip = MakeClip(1);
+        var factory = new FfmpegPipelineFactory(SlopsoilOptions.From(new Dictionary<string, string?>
+        {
+            ["STREAM_RESOLUTION"] = "1280:720",
+            ["STREAM_FPS"] = "30",
+            ["STREAM_VIDEO_BITRATE"] = "4000k",
+        })) { TempDirectory = _dir };
+        var pipeline = factory.Create(new StreamRequest { Title = "small", Url = clip, Live = false, OutputHeight = 360 }, new CapturingLink());
+        pipeline.Start();
+
+        var end = await pipeline.Completion.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal(PipelineEndReason.Natural, end.Reason);
+        var snapshot = pipeline.Playback.DiagnosticsSnapshot()!;
+        Assert.Equal(("640:360", "1000k"), (snapshot.Resolution, snapshot.Bitrate));
+        await pipeline.StopAsync();
+    }
+
+    [Fact]
     public async Task Plays_a_file_to_its_natural_end_with_audio_and_video_packets()
     {
         Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");

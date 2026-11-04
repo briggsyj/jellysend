@@ -248,3 +248,94 @@ public sealed class MediaCommandsTests
     [InlineData(" ", null)]
     public void Find_aspect(string text, int? index) => Assert.Equal(index, MediaText.FindAspect(text));
 }
+
+/// <summary>Spec 010: <c>!resolution</c> / <c>!res</c>.</summary>
+public sealed class MediaResolutionTests
+{
+    private readonly MediaHarness _h = new();
+
+    public MediaResolutionTests() => _h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
+
+    [Theory]
+    [InlineData("360p", 1)]
+    [InlineData("480", 2)]
+    [InlineData("540P", 3)]
+    [InlineData("1280x720", 4)]
+    [InlineData("1920:1080", 5)]
+    [InlineData("hd", 4)]
+    [InlineData("Full HD", 5)]
+    [InlineData("sd", 2)]
+    [InlineData("default", 0)]
+    [InlineData("1", 0)]
+    [InlineData("6", 5)]
+    [InlineData("7", null)]
+    [InlineData("1440p", null)]
+    [InlineData("big", null)]
+    [InlineData("", null)]
+    public void Find_resolution(string text, int? index) => Assert.Equal(index, MediaText.FindResolution(text));
+
+    [Fact]
+    public async Task Idle_choice_applies_to_the_next_item()
+    {
+        await _h.Send("!res 480p");
+        Assert.Equal(["📺 resolution set to **480p** — applies to the next item"], _h.Texts);
+        await _h.Send("!play film");
+        Assert.Equal(480, _h.Current.Request.OutputHeight);
+        await _h.Send("!media resolution 480");
+        Assert.Equal("📺 resolution set to **480p**", _h.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task Playing_choice_restarts_at_the_position_and_default_clears_it()
+    {
+        await _h.Send("!play film");
+        Assert.Null(_h.Current.Request.OutputHeight);
+        _h.Current.Fake.Position = 125;
+        _h.Sender.Sent.Clear();
+        await _h.Send("!res 720p");
+        Assert.Equal("📺 resolution set to **720p** — switching…", _h.Texts[0]);
+        Assert.Equal(2, _h.Pipelines.Created.Count);
+        Assert.Equal((720, 125.0), (_h.Current.Request.OutputHeight!.Value, _h.Current.Request.StartOffset));
+        await _h.Send("!res default");
+        Assert.Null(_h.Current.Request.OutputHeight);
+        Assert.Equal(3, _h.Pipelines.Created.Count);
+    }
+
+    [Fact]
+    public async Task Bare_shows_the_picker_which_takes_names()
+    {
+        await _h.Send("!res 540p");
+        var run = _h.Start("!res");
+        await _h.UntilReply("**Resolution** — reply with a number or name:\n`1` Default — the configured resolution\n`2` 360p\n`3` 480p\n`4` 540p  ← current\n`5` 720p\n`6` 1080p");
+        await _h.Answer("360p");
+        await run;
+        Assert.Equal("📺 resolution set to **360p** — applies to the next item", _h.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task Unknown_words_show_the_picker_and_bad_numbers_say_so()
+    {
+        await _h.Send("!res 9");
+        Assert.Equal(["pick a number between 1 and 6 — see `!res`"], _h.Texts);
+        var run = _h.Start("!res huge");
+        await _h.UntilReply("`huge` isn't a resolution. **Resolution** — reply with a number or name:\n`1` Default — the configured resolution  ← current\n`2` 360p\n`3` 480p\n`4` 540p\n`5` 720p\n`6` 1080p");
+        await _h.Answer("1");
+        await run;
+        Assert.Equal("📺 resolution set to **Default**", _h.Texts[^1]);
+    }
+
+    [Fact]
+    public async Task Needs_a_guild()
+    {
+        _h.Gateway.States.Clear();
+        await _h.Send("!res 480p", guild: null);
+        Assert.Equal(["you're not in a voice channel"], _h.Texts);
+    }
+
+    [Fact]
+    public async Task Viewers_get_a_quack()
+    {
+        await _h.Send("!res 480p", author: 30);
+        Assert.Equal(["_quack_ no."], _h.Texts);
+    }
+}

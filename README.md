@@ -191,6 +191,7 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
 | `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
+| `!res` / `!resolution` | Output resolution: `!res 360p`, `480p`, `540p`, `720p`, `1080p`, `!res default`. Lower resolutions also lower the bitrate; applies now and to later items. |
 | `!debug` | Stream stats; `!debug on` / `off` toggles the overlay |
 
 Pickers accept a number or a name, and time out after 30 seconds.
@@ -223,6 +224,8 @@ With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay gro
 | **Friend** | Users on the bot account's friends list — can use every command |
 | **Viewer** | Members of any guild the bot account is in — `!help` and `!ping` |
 | **None** | Everyone else |
+
+A command run by someone whose role doesn't allow it gets the reply `_quack_ no.`
 
 ---
 

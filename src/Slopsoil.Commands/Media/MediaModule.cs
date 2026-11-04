@@ -52,6 +52,9 @@ public sealed class MediaModule : IStreamControl
 
     // Preferences: aspect survives leaving voice; debug is cleared on leave.
     private readonly ConcurrentDictionary<ulong, double> _aspect = new();
+
+    /// <summary>Per guild: output height chosen with <c>!resolution</c> (spec 010); absent = the configured one.</summary>
+    private readonly ConcurrentDictionary<ulong, int> _height = new();
     private readonly ConcurrentDictionary<ulong, bool> _debug = new();
 
     // Spec 005: remembered subtitle/audio languages per guild; cleared on leave.
@@ -98,6 +101,7 @@ public sealed class MediaModule : IStreamControl
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
             ["aspect-ratio"] = AspectAsync,
+            ["resolution"] = ResolutionAsync,
             ["debug"] = DebugAsync,
             ["help"] = SendHelpAsync,
             ["ping"] = PingAsync,
@@ -569,6 +573,77 @@ public sealed class MediaModule : IStreamControl
         }
     }
 
+    /// <summary>
+    /// <c>!resolution</c> (<c>!res</c>, spec 010): the output height — <c>360p</c> … <c>1080p</c> or <c>default</c>
+    /// (the configured one). Per guild, remembered; restarts the playing stream at its position.
+    /// </summary>
+    private async Task ResolutionAsync(CommandContext c)
+    {
+        var guild = ContextGuild(c);
+        if (guild is null)
+        {
+            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            return;
+        }
+
+        int? current = _height.TryGetValue(guild.Value, out var h) ? h : null;
+        var arg = c.Rest.Trim();
+        var named = arg.Length > 0 ? MediaText.FindResolution(arg) : null;
+        if (named is null && arg.Length > 0 && arg.All(char.IsAsciiDigit) && arg.Length <= 1)
+        {
+            await c.ReplyAsync($"pick a number between 1 and {MediaText.ResolutionOptions.Count} — see `!res`").ConfigureAwait(false);
+            return;
+        }
+
+        int index;
+        if (named is { } found)
+        {
+            index = found;
+        }
+        else
+        {
+            var lines = new List<string>
+            {
+                (arg.Length > 0 ? $"`{arg}` isn't a resolution. " : "") + "**Resolution** — reply with a number or name:",
+            };
+            for (var i = 0; i < MediaText.ResolutionOptions.Count; i++)
+            {
+                var option = MediaText.ResolutionOptions[i];
+                var mark = option.Height == current ? "  ← current" : "";
+                lines.Add($"`{i + 1}` {option.Label}{mark}");
+            }
+
+            await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
+            if (await NumberPrompt.AskAsync(c, MediaText.ResolutionOptions.Count, text => MediaText.FindResolution(text) + 1).ConfigureAwait(false) is not { } picked)
+            {
+                return;
+            }
+
+            index = picked - 1;
+        }
+
+        var choice = MediaText.ResolutionOptions[index];
+        if (choice.Height is { } height)
+        {
+            _height[guild.Value] = height;
+        }
+        else
+        {
+            _height.TryRemove(guild.Value, out _);
+        }
+
+        var name = choice.Label.Split(" — ")[0];
+        _states.TryGetValue(guild.Value, out var state);
+        if (choice.Height == current || state?.Now is not { } now || _engine.GetPlayback(guild.Value) is not { IsSourceActive: true })
+        {
+            await c.ReplyAsync($"📺 resolution set to **{name}**" + (choice.Height == current ? "" : " — applies to the next item")).ConfigureAwait(false);
+            return;
+        }
+
+        await c.ReplyAsync($"📺 resolution set to **{name}** — switching…").ConfigureAwait(false);
+        await RestartWithTracksAsync(guild.Value, state, now, now.Stream.Selection).ConfigureAwait(false);
+    }
+
     private async Task PlaylistAsync(CommandContext c)
     {
         var guild = ContextGuild(c);
@@ -984,6 +1059,7 @@ public sealed class MediaModule : IStreamControl
             ProbeSize = 10_000_000,
             StartOffset = start,
             Aspect = _aspect.TryGetValue(guild, out var aspect) ? aspect : null,
+            OutputHeight = _height.TryGetValue(guild, out var height) ? height : null,
             DebugOverlay = _debug.TryGetValue(guild, out var debug) && debug,
             SourceCodec = codec,
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
@@ -1540,7 +1616,7 @@ public sealed class MediaModule : IStreamControl
     private static string TrackLabel(MediaTrack t) =>
         t.Label + (t.IsForced && !t.Label.Contains("forced", StringComparison.OrdinalIgnoreCase) ? " (forced)" : "");
 
-    /// <summary>Reopen the current item with other tracks at its current position (the screenshare stays up).</summary>
+    /// <summary>Reopen the current item (other tracks, or a new resolution) at its current position.</summary>
     private async Task RestartWithTracksAsync(ulong guild, GuildState state, NowPlaying now, TrackSelection selection)
     {
         await state.StartLock.WaitAsync().ConfigureAwait(false);

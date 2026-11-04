@@ -66,6 +66,11 @@ public static class CommandCatalog
             `!ar` — list the picture shapes and pick one
             `!ar <shape or #>` — e.g. `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original`
             """),
+        new("resolution", ["res"], Role.Friend, """
+            `!res` — list the resolutions and pick one
+            `!res <height>` — `360p`, `480p`, `540p`, `720p`, `1080p`; `!res default` — back to the configured one
+            Lower resolutions also lower the bitrate. Applies now, and to later items.
+            """),
         new("debug", [], Role.Friend, """
             `!debug` — stream stats now
             `!debug on` / `!debug off` — stats overlay on the stream

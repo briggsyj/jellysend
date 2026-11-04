@@ -20,6 +20,15 @@ public sealed record EncoderConfig(string Name, IReadOnlyList<string> PreInput, 
 
     public bool IsHardware => Name is Nvenc or Vaapi;
 
+    /// <summary>The same encoder for another output box and bitrate (spec 010: runtime <c>!resolution</c>).</summary>
+    public EncoderConfig For(string resolution, string bitrate) => Name switch
+    {
+        Nvenc => ForNvenc(resolution, bitrate),
+        Vaapi => ForVaapi(resolution, bitrate),
+        Libx264 => ForLibx264(resolution, bitrate),
+        _ => ForLibopenh264(resolution, bitrate),
+    };
+
     public static EncoderConfig ForNvenc(string resolution, string bitrate) => new(
         Nvenc,
         [],

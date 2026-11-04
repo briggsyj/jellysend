@@ -65,11 +65,35 @@ public sealed class RouterTests
     [InlineData(30UL, false)]
     [InlineData(40UL, false)]
     [InlineData(1UL, true)]
-    public async Task Role_checks_are_silent(ulong author, bool runs)
+    public async Task Failed_role_checks_say_no(ulong author, bool runs)
     {
         await Send("!media x", author);
         Assert.Equal(runs, _calls.Count == 1);
+        Assert.Equal(runs ? [] : [(7UL, CommandRouter.DeniedReply)], _sender.Sent);
+        Assert.Equal("_quack_ no.", CommandRouter.DeniedReply);
+    }
+
+    [Fact]
+    public async Task Unknown_commands_stay_silent_for_everyone()
+    {
+        await Send("!nope", 40);
+        await Send("!nope", 30);
+        await Send("not a command", 40);
         Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task A_failing_denied_reply_is_reported_not_thrown()
+    {
+        var router = new CommandRouter(new FakeRoles(), new ThrowingSender(), new MessageHub(), (name, ex) => _errors.Add($"{name}: {ex.Message}"));
+        router.Add("x", Role.Admin, Record("x"));
+        await router.DispatchAsync(new ChatMessage(5, 7, 30, "!x"), TestContext.Current.CancellationToken);
+        Assert.Equal(["denied reply: send failed"], _errors);
+    }
+
+    private sealed class ThrowingSender : IMessageSender
+    {
+        public Task SendAsync(ulong channelId, string content, CancellationToken ct) => throw new InvalidOperationException("send failed");
     }
 
     [Fact]
@@ -77,8 +101,9 @@ public sealed class RouterTests
     {
         _router.Add("grp", Role.Friend, Record("grp")).Sub("open", Role.Viewer, Record("open"));
         await Send("!grp open now", 30);   // viewer: the open sub-command runs
-        await Send("!grp something", 30);  // viewer: the friend-only group handler stays silent
+        await Send("!grp something", 30);  // viewer: the friend-only group handler says no
         Assert.Equal(["open|now|5|7|30"], _calls);
+        Assert.Equal([CommandRouter.DeniedReply], _sender.Texts);
     }
 
     [Fact]
@@ -86,6 +111,7 @@ public sealed class RouterTests
     {
         await Send("!media admin", 20);
         Assert.Empty(_calls);
+        Assert.Equal([CommandRouter.DeniedReply], _sender.Texts);
         await Send("!media admin", 10);
         Assert.Single(_calls);
     }
@@ -94,9 +120,9 @@ public sealed class RouterTests
     public async Task Strangers_fail_the_global_check_even_for_viewer_commands()
     {
         await Send("!ping", 40);
-        Assert.Empty(_sender.Sent);
+        Assert.Equal([CommandRouter.DeniedReply], _sender.Texts);
         await Send("!ping", 30);
-        Assert.Equal(["pong!"], _sender.Texts);
+        Assert.Equal([CommandRouter.DeniedReply, "pong!"], _sender.Texts);
     }
 
     [Fact]
