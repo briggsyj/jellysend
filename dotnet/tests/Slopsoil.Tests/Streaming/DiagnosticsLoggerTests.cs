@@ -19,6 +19,8 @@ public sealed class DiagnosticsLoggerTests
         DriftMs = 4.6,
         SilenceSteps = 1,
         SkipSteps = 2,
+        VideoBufferSeconds = 4.96,
+        AudioBufferSeconds = 5.02,
         Encoder = "libx264",
         Resolution = "1920:1080",
         Bitrate = "12000k",
@@ -35,7 +37,7 @@ public sealed class DiagnosticsLoggerTests
     {
         Assert.Equal(
             "video stats: 29.9 fps (target 30) | late 2/299 frames (max 12 ms, total 20 ms) | ffmpeg read-block 5 ms / 10.0s "
-            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00",
+            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00",
             DiagnosticsFormat.LogLine(Sample));
     }
 
@@ -56,14 +58,15 @@ public sealed class DiagnosticsLoggerTests
     }
 
     [Fact]
-    public void Overlay_has_the_four_groups()
+    public void Overlay_has_the_four_groups_and_the_buffer()
     {
-        var lines = DiagnosticsFormat.Overlay(Sample with { DriftMs = -7.2 }).Split('\n');
-        Assert.Equal(4, lines.Length);
+        var lines = DiagnosticsFormat.Overlay(Sample with { DriftMs = -7.2, VideoBufferSeconds = 2.5 }).Split('\n');
+        Assert.Equal(5, lines.Length);
         Assert.Equal("VIDEO   29.9/30 fps  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
         Assert.Equal("A/V     drift -7 ms  silence 1  skip 2", lines[1]);
-        Assert.Equal("STREAM  libx264 1920x1080 12000k  src hevc  1:02:03 / 1:30:00", lines[2]);
-        Assert.Equal("NETWORK drops 1  errors 3", lines[3]);
+        Assert.Equal("BUFFER  video 2.5 s  audio 5.0 s", lines[2]);
+        Assert.Equal("STREAM  libx264 1920x1080 12000k  src hevc  1:02:03 / 1:30:00", lines[3]);
+        Assert.Equal("NETWORK drops 1  errors 3", lines[4]);
         Assert.Contains("drift 0 ms", DiagnosticsFormat.Overlay(Sample with { DriftMs = 0.2 }));
     }
 

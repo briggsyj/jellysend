@@ -8,27 +8,36 @@ namespace Slopsoil.Streaming.Audio;
 /// <summary>Sends one encoded 20 ms Opus frame (normally <see cref="RtpMediaSender.SendOpus"/>).</summary>
 public delegate void OpusSink(ReadOnlySpan<byte> opus);
 
-/// <summary>Correction steps the follower has made: silence inserted, PCM frames dropped.</summary>
+/// <summary>Underrun handling so far: silence sent for empty slots, late PCM frames dropped.</summary>
 public readonly record struct AudioCorrections(long Silence, long Dropped);
 
 /// <summary>
-/// Go-live audio sender, a port of <c>golive.GoLiveAudioSender</c>: on a dedicated thread, reads 20 ms PCM
-/// frames from FFmpeg's audio FIFO, encodes them to Opus and sends them, paced to an absolute wall-clock
-/// schedule. When a media clock (the video player) is given, audio follows it per FR-054: settling
-/// alignment after each segment's first frame, correction of large persistent drift only, stale-audio
-/// drain on every FFmpeg restart, silence while a seek is pending or the new segment has no picture yet,
-/// and the pause gate.
+/// Go-live audio sender (spec 004): a reader thread buffers FFmpeg's PCM ahead of playout
+/// (<see cref="PcmReadAhead"/>); the sender thread encodes each 20 ms frame to Opus and sends frame <c>k</c> of a
+/// segment at <c>origin + k · 20 ms − STREAM_AV_SYNC_MS</c> on the video player's playout clock
+/// (<see cref="IMediaClock.Anchor"/>), so audio and video share one clock and no drift corrections exist (FR-004,
+/// FR-006). An empty buffer at a slot sends silence and the late frame is dropped when it arrives, so audio never
+/// falls behind the clock (FR-005). A pause holds both streams (the player shifts the origin); a seek, aspect or
+/// debug restart discards the old segment's audio and re-anchors on the new segment (FR-007).
+/// Without a clock the sender plays from its own origin (tests).
 /// </summary>
 public sealed class AudioSender
 {
+    /// <summary>Audio buffered beyond the video's read-ahead: FFmpeg emits audio a little ahead of video.</summary>
+    public static readonly TimeSpan Headroom = TimeSpan.FromSeconds(1);
+
     private const int FrameBytes = OpusEncoder.FrameBytes;
     private static readonly TimeSpan FrameDuration = TimeSpan.FromMilliseconds(20);
     private static readonly TimeSpan PausePoll = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan SourceGapPoll = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan AnchorPoll = TimeSpan.FromMilliseconds(2);
     private static readonly TimeSpan MinPacingWait = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>A frame this late (the sender thread was descheduled) is dropped instead of sent in a catch-up burst.</summary>
+    internal static readonly TimeSpan MaxLateness = TimeSpan.FromMilliseconds(200);
 
     private readonly IPcmSource _pcm;
     private readonly IMediaClock? _clock;
+    private readonly IAudioStats? _stats;
     private readonly OpusSink _send;
     private readonly int _avSyncMs;
     private readonly ILogger _log;
@@ -41,6 +50,9 @@ public sealed class AudioSender
     private readonly byte[] _silence = new byte[FrameBytes];
     private int _state; // 0 = new, 1 = started, 2 = finished
     private long _framesSent;
+    private long _silenceSent;
+    private long _dropped;
+    private volatile PcmReadAhead? _reader;
 
     /// <summary>Send through a go-live connection's <see cref="RtpMediaSender"/> (RTP, DAVE, transport crypto).</summary>
     public AudioSender(
@@ -51,19 +63,21 @@ public sealed class AudioSender
         int avSyncMs,
         ILogger? logger = null,
         TimeProvider? time = null,
-        Func<IAudioFrameEncoder>? encoderFactory = null)
-        : this(pcm, clock, stats, (sender ?? throw new ArgumentNullException(nameof(sender))).SendOpus, avSyncMs, logger, time, encoderFactory)
+        Func<IAudioFrameEncoder>? encoderFactory = null,
+        double bufferSeconds = 0)
+        : this(pcm, clock, stats, (sender ?? throw new ArgumentNullException(nameof(sender))).SendOpus, avSyncMs, logger, time, encoderFactory, bufferSeconds)
     {
     }
 
     /// <param name="pcm">FFmpeg's PCM output (the audio FIFO).</param>
-    /// <param name="clock">The video player's clock to follow; null free-runs on the wall clock.</param>
-    /// <param name="stats">Diagnostics sink for drift and correction steps.</param>
+    /// <param name="clock">The video player's playout clock; null plays from the sender's own origin.</param>
+    /// <param name="stats">Diagnostics sink for drift, buffer fill and underrun steps.</param>
     /// <param name="send">Where encoded frames go.</param>
     /// <param name="avSyncMs"><c>STREAM_AV_SYNC_MS</c>: positive advances audio, negative delays it (±5000).</param>
     /// <param name="logger">Defaults to a null logger.</param>
-    /// <param name="time">Pacing and follower clock; defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <param name="time">Pacing clock; must be the video player's (defaults to <see cref="TimeProvider.System"/>).</param>
     /// <param name="encoderFactory">Created on the sender thread; defaults to libopus.</param>
+    /// <param name="bufferSeconds"><c>STREAM_BUFFER_SECONDS</c>: PCM read ahead (plus <see cref="Headroom"/>).</param>
     public AudioSender(
         IPcmSource pcm,
         IMediaClock? clock,
@@ -72,38 +86,40 @@ public sealed class AudioSender
         int avSyncMs,
         ILogger? logger = null,
         TimeProvider? time = null,
-        Func<IAudioFrameEncoder>? encoderFactory = null)
+        Func<IAudioFrameEncoder>? encoderFactory = null,
+        double bufferSeconds = 0)
     {
         ArgumentNullException.ThrowIfNull(pcm);
         ArgumentNullException.ThrowIfNull(send);
         _pcm = pcm;
         _clock = clock;
+        _stats = stats;
         _send = send;
         _avSyncMs = Math.Clamp(avSyncMs, -5000, 5000);
         _log = logger ?? NullLogger.Instance;
         _time = time ?? TimeProvider.System;
         _encoderFactory = encoderFactory ?? (static () => new OpusFrameEncoder());
-        Follower = new AudioFollower(clock?.Fps ?? 0, clock?.RestartSeq ?? 0, clock?.SegmentOffset ?? 0, stats, _log);
-        FollowerNow = () => _time.GetTimestamp() / (double)_time.TimestampFrequency;
+        BufferCapacity = (int)Math.Ceiling((TimeSpan.FromSeconds(Math.Clamp(bufferSeconds, 0.0, 30.0)) + Headroom) / FrameDuration);
         _handle = clock?.RegisterAudioFollower();
     }
 
     /// <summary>Completes (never faults) once the sender has stopped: Stop, end of input, or an error (logged).</summary>
     public Task Completion => _completion.Task;
 
-    /// <summary>Correction steps so far (thread-safe).</summary>
-    public AudioCorrections Corrections => new(Follower.SilenceSteps, Follower.DroppedSteps);
+    /// <summary>Underrun steps so far (thread-safe).</summary>
+    public AudioCorrections Corrections => new(Interlocked.Read(ref _silenceSent), Interlocked.Read(ref _dropped));
 
     /// <summary>Opus frames handed to the sink.</summary>
     public long FramesSent => Interlocked.Read(ref _framesSent);
 
-    internal AudioFollower Follower { get; }
+    /// <summary>Most 20 ms PCM frames read ahead.</summary>
+    public int BufferCapacity { get; }
 
-    /// <summary>Monotonic seconds the follower measures persistence with (a seam for tests).</summary>
-    internal Func<double> FollowerNow { get; set; }
+    /// <summary>20 ms PCM frames buffered right now.</summary>
+    internal int BufferedFrames => _reader?.Count ?? 0;
 
-    /// <summary>Audio's media position (seconds) in the current segment.</summary>
-    internal double AudioPosition => Follower.AudioPosition;
+    /// <summary>The read-ahead is not about to buffer more on its own (ended, between writers, or full).</summary>
+    internal bool ReadAheadSettled => _reader?.Settled ?? false;
 
     /// <summary>Start the sender thread (once).</summary>
     public void Start()
@@ -120,6 +136,7 @@ public sealed class AudioSender
     public void Stop()
     {
         _stop.Cancel();
+        _reader?.Stop();
         if (Interlocked.CompareExchange(ref _state, 2, 0) == 0)
         {
             Finish();
@@ -146,7 +163,7 @@ public sealed class AudioSender
 
     private void Finish()
     {
-        // Don't leave the player waiting on a follower that's gone.
+        // Don't leave the player waiting on a sender that's gone.
         if (_handle is not null)
         {
             try
@@ -164,156 +181,229 @@ public sealed class AudioSender
         _completion.TrySetResult();
     }
 
-    /// <summary>The sender thread's body (<c>_send_audio</c>); runs synchronously on the caller in tests.</summary>
+    /// <summary>The sender thread's body; runs synchronously on the caller in tests.</summary>
     internal void SendLoop()
     {
         Interlocked.CompareExchange(ref _state, 1, 0); // running: Stop no longer finishes on its own
-        using var encoder = _encoderFactory();
-        var target = _avSyncMs / 1000.0; // desired audio-minus-video position
-
-        // Positive offset discards backlogged initial audio (fixes "audio behind"); negative holds the start.
-        if (_avSyncMs > 0)
+        var clock = _clock;
+        var reader = new PcmReadAhead(_pcm, BufferCapacity, () => clock?.IsSourceActive == true, _log);
+        _reader = reader;
+        reader.Start();
+        if (Stopping)
         {
-            for (var i = 0; i < _avSyncMs / 20; i++)
+            reader.Stop();
+        }
+
+        try
+        {
+            using var encoder = _encoderFactory();
+            _log.LogInformation(
+                "GoLiveAudio: starting audio transmission (av_sync_ms={AvSyncMs}, buffer {Frames} frames)", _avSyncMs, BufferCapacity);
+            Play(encoder, reader, clock);
+        }
+        finally
+        {
+            reader.Stop();
+            if (!reader.Join(TimeSpan.FromSeconds(1)))
             {
-                if (Stopping || _pcm.ReadFrame(_frame) < FrameBytes)
-                {
-                    break;
-                }
-
-                Follower.FrameConsumed();
+                _log.LogDebug("GoLiveAudio: PCM reader still blocked in a read; abandoning it");
             }
-        }
-        else if (_avSyncMs < 0)
-        {
-            WaitStop(TimeSpan.FromMilliseconds(-_avSyncMs));
-        }
 
-        _log.LogInformation("GoLiveAudio: starting audio transmission (av_sync_ms={AvSyncMs})", _avSyncMs);
-        var t0 = _time.GetTimestamp();
-        long loops = 0;
+            _stats?.AudioBuffered(TimeSpan.Zero);
+        }
+    }
+
+    private void Play(IAudioFrameEncoder encoder, PcmReadAhead reader, IMediaClock? clock)
+    {
+        var seq = clock?.RestartSeq ?? 0;
+        PlayoutAnchor? own = null; // the origin when there is no clock
+        long slot = 0;             // next 20 ms slot of the segment
+        long consumed = 0;         // PCM frames of the segment taken from the buffer (sent or dropped)
+        long sentInSegment = 0;
+        var avSyncTicks = (long)(_avSyncMs / 1000.0 * _time.TimestampFrequency);
+        var frameTicks = (long)(FrameDuration.TotalSeconds * _time.TimestampFrequency);
 
         while (!Stopping)
         {
-            var clock = _clock;
-            if (clock is not null && !clock.Pause.IsOpen)
+            PlayoutAnchor anchor;
+            if (clock is null)
             {
-                while (!WaitPauseOpen(clock.Pause))
+                if (own is null)
                 {
-                    if (Stopping)
+                    // Own origin once the read-ahead has filled (or the input ended): deterministic for tests.
+                    if (!reader.Settled)
+                    {
+                        _stop.Token.WaitHandle.WaitOne(1);
+                        continue;
+                    }
+
+                    own = new PlayoutAnchor(0, _time.GetTimestamp());
+                }
+
+                anchor = own;
+            }
+            else
+            {
+                if (clock.RestartSeq != seq)
+                {
+                    // FFmpeg restarted: drop the old segment's audio, then let the player start the new one (FR-007).
+                    seq = clock.RestartSeq;
+                    var cleared = reader.BeginDrain(_handle is null ? null : _handle.SignalDrained);
+                    _log.LogInformation(
+                        "GoLiveAudio: source restarted at {Offset:F1}s — dropped {Frames} buffered frames", clock.SegmentOffset, cleared);
+                    (slot, consumed, sentInSegment) = (0, 0, 0);
+                    continue;
+                }
+
+                if (clock.SeekPending)
+                {
+                    // The old FFmpeg is going away: its audio is stale. Keep reading it so FFmpeg never blocks on the FIFO.
+                    reader.BeginDrain(null);
+                    if (WaitStop(AnchorPoll))
                     {
                         return;
                     }
 
-                    // A seek/aspect change while paused restarts FFmpeg now; drain the old audio
-                    // before the new process fills the FIFO.
-                    CheckRestart();
+                    continue;
                 }
 
-                Follower.ResetPersistence();
-                t0 = _time.GetTimestamp(); // restart pacing after the pause
-                loops = 0;
-                continue;
-            }
-
-            if (CheckRestart())
-            {
-                // FFmpeg restarted: old audio dropped, position re-anchored.
-                t0 = _time.GetTimestamp();
-                loops = 0;
-                continue;
-            }
-
-            byte[]? pcm = null;
-            if (clock is not null && clock.SeekPending)
-            {
-                // Seek requested but the old FFmpeg isn't gone yet: its audio is stale, so play silence,
-                // but keep draining it without blocking or FFmpeg stalls on the full FIFO.
-                _pcm.DrainAvailable();
-                pcm = _silence;
-            }
-            else if (clock is not null && clock.SegmentFrames > 0)
-            {
-                switch (Follower.Follow(clock, target, FollowerNow()))
+                if (!clock.Pause.IsOpen)
                 {
-                    case FollowAction.Silence:
-                        pcm = _silence;
-                        break;
-                    case FollowAction.Skip:
-                        if (_pcm.ReadFrame(_frame) == FrameBytes)
-                        {
-                            Follower.CommitSkip();
-                        }
-
-                        break;
+                    WaitPauseOpen(clock.Pause); // the player moves the origin by the pause
+                    continue;
                 }
-            }
-            else if (clock is not null && Follower.TryWaitSilence())
-            {
-                // New segment's video hasn't produced a frame yet: wait in silence (bounded) so its
-                // audio starts with the picture instead of ahead of it.
-                pcm = _silence;
-            }
 
-            if (pcm is null)
-            {
-                if (_pcm.ReadFrame(_frame) < FrameBytes)
+                if (clock.Anchor is not { } current || current.Segment != seq)
                 {
-                    // Short read = the current FFmpeg closed the FIFO's write end. If the player is
-                    // restarting FFmpeg, wait for the new writer and resume.
-                    if (clock is not null && clock.IsSourceActive)
+                    // Pre-roll or restart: the segment's first frame is not due yet.
+                    if (reader.Ended && reader.Count == 0)
                     {
-                        if (WaitStop(SourceGapPoll))
-                        {
-                            break;
-                        }
-
-                        t0 = _time.GetTimestamp(); // reset pacing after the gap
-                        loops = 0;
-                        continue;
+                        return;
                     }
 
-                    break;
+                    if (WaitStop(AnchorPoll))
+                    {
+                        return;
+                    }
+
+                    continue;
                 }
 
-                Follower.FrameConsumed();
+                anchor = current;
+            }
+
+            if (reader.Ended && reader.Count == 0)
+            {
+                return; // end of input: nothing more to play
+            }
+
+            var due = anchor.Origin + (slot * frameTicks) - avSyncTicks;
+            var now = _time.GetTimestamp();
+            var early = TimeSpan.FromSeconds((double)(due - now) / _time.TimestampFrequency);
+            if (early > MinPacingWait)
+            {
+                // Wait for the slot, then look at the clock again (pause, restart).
+                if (WaitStop(early))
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            if (-early >= (sentInSegment == 0 ? FrameDuration : MaxLateness))
+            {
+                // The slot is long gone (positive av-sync at a segment start, or a thread stalled for longer than
+                // MaxLateness): skip it, and drop its frame now or when it arrives. Shorter stalls send late, in a
+                // burst, and so catch up without losing audio.
+                if (consumed == slot && reader.TryTake(_frame))
+                {
+                    consumed++;
+                    CountDrop(sentInSegment);
+                }
+
+                slot++;
+                continue;
+            }
+
+            // Pay the debt of earlier underruns: those frames' slots are gone (FR-005).
+            while (consumed < slot && reader.TryTake(_frame))
+            {
+                consumed++;
+                CountDrop(sentInSegment);
+            }
+
+            byte[] pcm;
+            if (consumed == slot && reader.TryTake(_frame))
+            {
+                consumed++;
                 pcm = _frame;
+            }
+            else if (reader.InGap || reader.Ended)
+            {
+                // This segment's audio is over (the writer closed the FIFO): nothing more will come for it.
+                if (reader.Ended && reader.Count == 0)
+                {
+                    return;
+                }
+
+                if (WaitStop(AnchorPoll))
+                {
+                    return;
+                }
+
+                continue;
+            }
+            else
+            {
+                // Underrun: keep the slot with silence; the late frame is dropped when it arrives.
+                pcm = _silence;
+                Interlocked.Increment(ref _silenceSent);
+                _stats?.AudioSilenceStep();
             }
 
             _send(encoder.Encode(pcm));
             Interlocked.Increment(ref _framesSent);
-            loops++;
-
-            // Wall-clock pacing to an absolute schedule, same as the video player.
-            var delay = (FrameDuration * loops) - _time.GetElapsedTime(t0);
-            if (delay > MinPacingWait && WaitStop(delay))
-            {
-                break;
-            }
+            sentInSegment++;
+            slot++;
+            ReportStats(clock, anchor, due, reader);
         }
     }
 
-    /// <summary>Handle an FFmpeg restart (drain + re-anchor + tell the player). True if one happened.</summary>
-    internal bool CheckRestart()
+    private void CountDrop(long sentInSegment)
     {
-        var clock = _clock;
-        if (clock is null)
+        if (sentInSegment == 0)
         {
-            return false;
+            return; // positive av-sync discarding the segment's first frames: by design, not a correction
         }
 
-        var seq = clock.RestartSeq;
-        if (seq == Follower.SeenSeq)
+        Interlocked.Increment(ref _dropped);
+        _stats?.AudioSkipStep();
+    }
+
+    /// <summary>
+    /// Drift = how far video is behind its schedule minus how far audio is (FR-006), both on the shared clock and
+    /// with the av-sync offset already in the audio schedule; plus the buffer fill.
+    /// </summary>
+    private void ReportStats(IMediaClock? clock, PlayoutAnchor anchor, long audioDue, PcmReadAhead reader)
+    {
+        if (_stats is null)
         {
-            return false;
+            return;
         }
 
-        var dropped = _pcm.DrainAvailable();
-        Follower.Rebase(seq, clock.SegmentOffset);
-        _handle?.SignalDrained();
-        _log.LogInformation(
-            "GoLiveAudio: source restarted at {Offset:F1}s — dropped {Dropped} stale bytes", Follower.SegmentBase, dropped);
-        return true;
+        _stats.AudioBuffered(reader.Count * FrameDuration);
+        if (clock is null || clock.Fps <= 0)
+        {
+            return;
+        }
+
+        var now = _time.GetTimestamp();
+        var freq = (double)_time.TimestampFrequency;
+        var videoDue = anchor.Origin + (long)(clock.SegmentFrames / clock.Fps * freq);
+        var videoBehind = Math.Max(0.0, (now - videoDue) / freq);
+        var audioBehind = Math.Max(0.0, (now - audioDue) / freq);
+        _stats.AudioDrift((videoBehind - audioBehind) * 1000.0);
     }
 
     /// <summary>Wait on the stop signal (Python's <c>_end.wait</c>): true if a stop has been requested.</summary>

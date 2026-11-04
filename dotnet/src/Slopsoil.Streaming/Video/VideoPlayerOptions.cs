@@ -32,6 +32,12 @@ public sealed record VideoPlayerOptions
     /// <summary>Burn the diagnostics overlay into the picture from the start.</summary>
     public bool DebugOverlay { get; init; }
 
+    /// <summary>
+    /// Read-ahead (<c>STREAM_BUFFER_SECONDS</c>, 0–30): access units buffered ahead of playout, and the pre-roll a
+    /// segment waits for before its first frame. 0 = no read-ahead (start with the first frame).
+    /// </summary>
+    public double BufferSeconds { get; init; }
+
     /// <summary>Fraction (0–0.95) of the frame interval to spread a frame's packets over; 0 bursts them.</summary>
     public double PacketPace { get; init; }
 

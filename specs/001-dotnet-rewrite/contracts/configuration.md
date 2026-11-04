@@ -15,7 +15,8 @@ variables are ignored without error so an existing `.env` works unchanged.
 | `STREAM_FPS` | no | preset | 1–60, fractional allowed |
 | `STREAM_VIDEO_BITRATE` | no | preset | e.g. `2000k` |
 | `STREAM_PACKET_PACE` | no | `0.0` | 0.0–0.95 |
-| `STREAM_AV_SYNC_MS` | no | `0` | ±5000, offset the follower holds |
+| `STREAM_AV_SYNC_MS` | no | `0` | ±5000; .NET: constant offset of the audio schedule on the shared playout clock (positive = audio earlier) |
+| `STREAM_BUFFER_SECONDS` | no | `5` | .NET only (spec 004): read-ahead of FFmpeg's video and audio before/while playing (pre-roll at start and after each seek); 0–30, fractional allowed, 0 = no read-ahead; invalid → warning + 5 |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | no | `20` | .NET only (spec 003): stop + leave after the voice channel stayed empty this long; 0–1440, 0 = immediately |
 | `TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE` | — | — | accepted and ignored in this edition |
 

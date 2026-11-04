@@ -41,6 +41,9 @@ public sealed class FfmpegPipelineFactory : IPipelineFactory
 /// <summary>One item over one go-live link (<c>engine._run_live</c>).</summary>
 internal sealed class FfmpegPipeline : IPipeline
 {
+    /// <summary>How long the audio may keep playing its buffer after the video reached the end of the input.</summary>
+    private static readonly TimeSpan NaturalDrain = TimeSpan.FromSeconds(2);
+
     private readonly VideoPlayer _player;
     private readonly RtpMediaSender _sender;
     private readonly StreamDiagnostics _diagnostics;
@@ -80,6 +83,7 @@ internal sealed class FfmpegPipeline : IPipeline
             Aspect = request.Aspect,
             DebugOverlay = request.DebugOverlay,
             PacketPace = options.PacketPace,
+            BufferSeconds = options.StreamBufferSeconds,
             Resolution = options.Resolution,
             Bitrate = options.VideoBitrate,
             TempDirectory = tempDirectory,
@@ -167,10 +171,18 @@ internal sealed class FfmpegPipeline : IPipeline
                     return;
                 }
 
-                _audio = new AudioSender(_pcm, _player, _diagnostics, _sender, _options.AvSyncMs, _loggers.CreateLogger<AudioSender>());
+                _audio = new AudioSender(
+                    _pcm, _player, _diagnostics, _sender, _options.AvSyncMs, _loggers.CreateLogger<AudioSender>(), bufferSeconds: _options.StreamBufferSeconds);
                 _audio.Start();
             }
+
             var end = await _player.Completion.ConfigureAwait(false);
+            if (end == VideoPlayerEnd.Natural)
+            {
+                // Let the audio play out what it has buffered up to the end of the input, as the video did.
+                await _audio.Completion.WaitAsync(NaturalDrain).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
+            }
+
             _audio.Stop();
             await _audio.Completion.WaitAsync(TimeSpan.FromSeconds(2)).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
             _pcm.Dispose();

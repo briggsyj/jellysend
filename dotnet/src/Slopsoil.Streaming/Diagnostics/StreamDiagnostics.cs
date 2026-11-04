@@ -28,6 +28,9 @@ public interface IVideoStats
 
     /// <summary>The encoder of the segment now running (changes on software fallback).</summary>
     void SetEncoder(string encoder);
+
+    /// <summary>Video read ahead of playout (frames buffered / fps).</summary>
+    void VideoBuffered(TimeSpan buffered);
 }
 
 /// <summary>
@@ -53,8 +56,14 @@ public sealed record StreamDiagnosticsSnapshot
 
     public long SendErrors { get; init; }
 
-    /// <summary>Latest audio-minus-video drift; null until the audio follower reports one.</summary>
+    /// <summary>Latest audio-minus-video send position on the shared playout clock; null until audio reports one.</summary>
     public double? DriftMs { get; init; }
+
+    /// <summary>Video buffered ahead of playout (seconds).</summary>
+    public double VideoBufferSeconds { get; init; }
+
+    /// <summary>Audio buffered ahead of playout (seconds).</summary>
+    public double AudioBufferSeconds { get; init; }
 
     public int SilenceSteps { get; init; }
 
@@ -98,6 +107,8 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
     private readonly long _start;
     private readonly Bucket[] _buckets = new Bucket[Buckets];
     private double? _driftMs;
+    private TimeSpan _videoBuffered;
+    private TimeSpan _audioBuffered;
     private string _encoder = "?";
     private string? _sourceCodec;
     private double? _runtime;
@@ -174,6 +185,22 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
         }
     }
 
+    public void VideoBuffered(TimeSpan buffered)
+    {
+        lock (_lock)
+        {
+            _videoBuffered = buffered;
+        }
+    }
+
+    public void AudioBuffered(TimeSpan buffered)
+    {
+        lock (_lock)
+        {
+            _audioBuffered = buffered;
+        }
+    }
+
     public StreamDiagnosticsSnapshot Snapshot()
     {
         var position = Clock?.Position ?? 0.0;
@@ -201,6 +228,8 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
                 SendDrops = sum.Drops,
                 SendErrors = sum.Errors,
                 DriftMs = _driftMs,
+                VideoBufferSeconds = _videoBuffered.TotalSeconds,
+                AudioBufferSeconds = _audioBuffered.TotalSeconds,
                 SilenceSteps = sum.Silence,
                 SkipSteps = sum.Skip,
                 Encoder = _encoder,

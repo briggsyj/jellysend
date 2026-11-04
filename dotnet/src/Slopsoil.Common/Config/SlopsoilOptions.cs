@@ -51,6 +51,12 @@ public sealed partial record SlopsoilOptions
     /// <summary>A/V offset in milliseconds (±5000).</summary>
     public int AvSyncMs { get; init; }
 
+    /// <summary>Default of <see cref="StreamBufferSeconds"/> (spec 004).</summary>
+    public const double DefaultStreamBufferSeconds = 5.0;
+
+    /// <summary>Read-ahead of FFmpeg's output before and during playout, seconds (0–30; 0 = no read-ahead).</summary>
+    public double StreamBufferSeconds { get; init; } = DefaultStreamBufferSeconds;
+
     /// <summary>Default of <see cref="EmptyChannelTimeout"/> (spec 003).</summary>
     public static readonly TimeSpan DefaultEmptyChannelTimeout = TimeSpan.FromMinutes(20);
 
@@ -148,6 +154,19 @@ public sealed partial record SlopsoilOptions
             }
         }
 
+        var buffer = DefaultStreamBufferSeconds;
+        if (Get("STREAM_BUFFER_SECONDS") is { } b)
+        {
+            if (TryDouble(b, out var seconds) && seconds is >= 0 and <= 30)
+            {
+                buffer = seconds;
+            }
+            else
+            {
+                warn?.Invoke($"STREAM_BUFFER_SECONDS='{b}' invalid (want 0-30); using 5");
+            }
+        }
+
         var emptyTimeout = DefaultEmptyChannelTimeout;
         if (Get("EMPTY_CHANNEL_TIMEOUT_MINUTES") is { } e)
         {
@@ -185,6 +204,7 @@ public sealed partial record SlopsoilOptions
             VideoBitrate = Get("STREAM_VIDEO_BITRATE") ?? quality.Bitrate,
             PacketPace = pace,
             AvSyncMs = sync,
+            StreamBufferSeconds = buffer,
             EmptyChannelTimeout = emptyTimeout,
         };
     }
@@ -194,6 +214,7 @@ public sealed partial record SlopsoilOptions
         $"SlopsoilOptions {{ Jellyfin = {JellyfinUrl ?? "(unset)"}, SyncPlay = {SyncPlayConfigured}, Admins = {AllowedUserIds.Count}, "
         + $"Resolution = {Resolution}, Fps = {Fps.ToString(CultureInfo.InvariantCulture)}, Bitrate = {VideoBitrate}, "
         + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs}, "
+        + $"StreamBufferSeconds = {StreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}, "
         + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min }}";
 
     // Python float(): decimal or exponent, no thousands separators; also rejects NaN/inf like the range checks would.

@@ -44,8 +44,11 @@ public sealed class FfmpegCommandTests
         Assert.Contains("0:a:0", cmd);
         Assert.DoesNotContain("anullsrc=r=48000:cl=stereo", cmd);
         Assert.Equal(
-            ["-map", "0:a:0", "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", "-f", "s16le", "/tmp/slopsoil_1001_audio.fifo"],
-            cmd.TakeLast(11));
+            ["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0", "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", "-f", "s16le", "/tmp/slopsoil_1001_audio.fifo"],
+            cmd.TakeLast(13));
+        // One media timeline (spec 004): constant-rate video from output time 0, before the rate.
+        Assert.Equal("cfr", Opt(cmd, "-fps_mode"));
+        Assert.Equal(IndexOf(cmd, "-r") - 2, IndexOf(cmd, "-fps_mode"));
     }
 
     [Fact]
@@ -91,6 +94,7 @@ public sealed class FfmpegCommandTests
         Assert.Equal("lavfi", cmd[IndexOf(cmd, "anullsrc=r=48000:cl=stereo") - 2]);
         Assert.True(IndexOf(cmd, "pipe:1") < IndexOf(cmd, "anullsrc=r=48000:cl=stereo"));
         Assert.True(IndexOf(cmd, "anullsrc=r=48000:cl=stereo") < IndexOf(cmd, "1:a:0"));
+        Assert.Equal(FfmpegCommand.AudioFilter, Opt(cmd, "-af")); // generated silence is aligned like real audio
     }
 
     [Fact]

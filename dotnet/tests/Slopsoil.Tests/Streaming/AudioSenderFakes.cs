@@ -9,6 +9,16 @@ internal sealed class FakeMediaClock : IMediaClock
 {
     public double Fps { get; set; }
 
+    /// <summary>The playout origin the audio sender schedules on (null = not anchored yet).</summary>
+    public PlayoutAnchor? Anchor { get => Volatile.Read(ref _anchor); set => Volatile.Write(ref _anchor, value); }
+
+    /// <summary>When set, <see cref="Anchor"/> is computed by this instead (e.g. once the read-ahead settled).</summary>
+    public Func<PlayoutAnchor?>? AnchorFn { get; set; }
+
+    private PlayoutAnchor? _anchor;
+
+    PlayoutAnchor? IMediaClock.Anchor => AnchorFn is { } fn ? fn() : Anchor;
+
     public Func<double> PositionFn { get; set; } = () => 0.0;
 
     public double Position => PositionFn();
@@ -74,6 +84,10 @@ internal sealed class FakeAudioStats : IAudioStats
     public void AudioSkipStep() => Skips++;
 
     public void AudioDrift(double milliseconds) => Drifts.Add(milliseconds);
+
+    public List<TimeSpan> Buffered { get; } = [];
+
+    public void AudioBuffered(TimeSpan buffered) => Buffered.Add(buffered);
 }
 
 /// <summary>Scripted PCM: each ReadFrame returns the next scripted chunk (or nothing once exhausted).</summary>

@@ -1,16 +1,33 @@
 namespace Slopsoil.Streaming.Contracts;
 
 /// <summary>
+/// The playout clock of one segment (spec 004 FR-004): video frame <c>n</c> is due at
+/// <c>Origin + n / Fps</c> and audio frame <c>k</c> at <c>Origin + k · 20 ms − STREAM_AV_SYNC_MS</c>.
+/// </summary>
+/// <param name="Segment">The <see cref="IMediaClock.RestartSeq"/> of the segment this origin belongs to.</param>
+/// <param name="Origin">
+/// <see cref="TimeProvider.GetTimestamp"/> of the player's time provider at which the segment's frame 0 is due;
+/// moved forward by every pause so both streams resume where they stopped.
+/// </param>
+public sealed record PlayoutAnchor(int Segment, long Origin);
+
+/// <summary>
 /// The video player's clock as the audio sender sees it (the <c>sync_source</c> in
 /// <c>golive.GoLiveAudioSender</c>). Implemented by <c>Video.VideoPlayer</c>; faked in audio tests.
 /// All members are safe to read from any thread.
 /// </summary>
 public interface IMediaClock
 {
+    /// <summary>
+    /// The current segment's playout origin, published when its first frame is due (after the pre-roll) and
+    /// pause-adjusted; null before that and after the player ended. Audio and video share the player's time provider.
+    /// </summary>
+    PlayoutAnchor? Anchor { get; }
+
     /// <summary>Output frame rate.</summary>
     double Fps { get; }
 
-    /// <summary>Master clock in media seconds: <c>SegmentOffset + SegmentFrames / Fps</c> (de-biasing is the follower's job).</summary>
+    /// <summary>Master clock in media seconds: <c>SegmentOffset + SegmentFrames / Fps</c>.</summary>
     double Position { get; }
 
     /// <summary>Bumped on every FFmpeg (re)start that begins a new segment: seek, aspect/debug change, encoder fallback.</summary>
@@ -32,8 +49,8 @@ public interface IMediaClock
     PauseGate Pause { get; }
 
     /// <summary>
-    /// Register the audio follower. After each restart the player waits (≤ 0.5 s) for
-    /// <see cref="IAudioFollowerHandle.SignalDrained"/> before starting the new FFmpeg, so the follower can
+    /// Register the audio sender. After each restart the player waits (≤ 0.5 s) for
+    /// <see cref="IAudioFollowerHandle.SignalDrained"/> before starting the new FFmpeg, so the sender can
     /// discard the old process's FIFO audio first. Dispose the handle when the sender exits.
     /// </summary>
     IAudioFollowerHandle RegisterAudioFollower();
@@ -46,17 +63,20 @@ public interface IAudioFollowerHandle : IDisposable
     void SignalDrained();
 }
 
-/// <summary>Counters the audio follower reports into the stream diagnostics (implemented by <c>Diagnostics.StreamDiagnostics</c>).</summary>
+/// <summary>Counters the audio sender reports into the stream diagnostics (implemented by <c>Diagnostics.StreamDiagnostics</c>).</summary>
 public interface IAudioStats
 {
-    /// <summary>A 20 ms frame of silence sent without consuming PCM.</summary>
+    /// <summary>A 20 ms frame of silence sent because no PCM was buffered for its slot (underrun).</summary>
     void AudioSilenceStep();
 
-    /// <summary>A 20 ms PCM frame skipped to catch up.</summary>
+    /// <summary>A 20 ms PCM frame dropped because its slot had passed (late after an underrun).</summary>
     void AudioSkipStep();
 
-    /// <summary>Latest measured audio-minus-video drift (milliseconds, target removed).</summary>
+    /// <summary>Latest audio-minus-video send position on the shared clock (milliseconds, av-sync offset removed).</summary>
     void AudioDrift(double milliseconds);
+
+    /// <summary>PCM buffered ahead of playout.</summary>
+    void AudioBuffered(TimeSpan buffered);
 }
 
 /// <summary>A gate that is open while playing and closed while paused (Python's <c>pause_gate</c> Event).</summary>

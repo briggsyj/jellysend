@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Logging;
 using Slopsoil.Discord.Rtp;
+using Slopsoil.Streaming.Contracts;
 using Slopsoil.Streaming.Diagnostics;
 using Slopsoil.Streaming.Video;
 
@@ -440,12 +441,17 @@ public sealed class VideoPlayerTests : IDisposable
         Assert.Same(player.Pause, ((Slopsoil.Streaming.Contracts.IMediaClock)player).Pause);
         Assert.Equal(1, _sink.Count);
         _time.Advance(TimeSpan.FromSeconds(10)); // a long pause
+        var before = Assert.IsType<PlayoutAnchor>(player.Anchor);
         player.ResumePlayback();
+        player.ResumePlayback(); // idempotent: no second shift
+        // The shared origin moved by the whole pause (10 s plus the 40 ms the player was asleep in it).
+        Assert.Equal(before with { Origin = before.Origin + TimeSpan.FromMilliseconds(10_040).Ticks }, player.Anchor);
 
         Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
         Assert.False(player.IsPaused);
         AssertFrames([Nals.Idr], [Nals.P1], [Nals.P2]);
         Assert.Equal(0, player.Diagnostics.Snapshot().LateFrames); // the pacing clock was shifted by the pause
+        Assert.Null(player.Anchor); // gone with the player
     }
 
     [Fact]
@@ -474,6 +480,139 @@ public sealed class VideoPlayerTests : IDisposable
         Assert.Equal(VideoPlayerEnd.Stopped, await Ended(player));
         Assert.Empty(_sink.Frames);
         Assert.True(proc.Terminated >= 1);
+    }
+
+    // ── read-ahead and the playout clock (spec 004) ──────────────────────
+
+    [Fact]
+    public async Task Without_read_ahead_the_buffer_holds_one_unit_and_play_starts_at_once()
+    {
+        Proc(Nals.Frames(3));
+        var player = Player();
+        Assert.Equal(1, player.BufferCapacity);
+        player.Start();
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        Assert.Equal(3, _sink.Count);
+    }
+
+    [Fact]
+    public async Task Pre_roll_waits_for_the_buffer_or_the_end_of_input()
+    {
+        var proc = Proc(Nals.Frames(10), blockAtEnd: true);
+        var player = Player(o => o with { BufferSeconds = 1.0 }); // 25 frames at 25 fps
+        Assert.Equal(25, player.BufferCapacity);
+        player.Start();
+        await Waits.UntilAsync(() => player.BufferedFrames == 10, "read-ahead");
+        Assert.Empty(_sink.Frames); // pre-roll not reached: nothing plays
+        Assert.Null(player.Anchor);
+
+        proc.Stdout.Release(); // FFmpeg ends: the shorter pre-roll is enough
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        Assert.Equal(10, _sink.Count);
+        Assert.Equal(0, player.Diagnostics.Snapshot().LateFrames);
+    }
+
+    [Fact]
+    public async Task Full_buffer_back_pressures_ffmpeg_and_playout_starts_at_the_pre_roll()
+    {
+        var data = Nals.Frames(100);
+        var proc = Proc(data, step: 16);
+        var player = Player(o => o with { BufferSeconds = 1.0 });
+        var bufferedAtFirstSend = -1;
+        _sink.OnSend = n =>
+        {
+            if (n == 1)
+            {
+                bufferedAtFirstSend = player.BufferedFrames;
+                player.PausePlayback(); // hold playout: the reader must stop at the bound
+            }
+        };
+        player.Start();
+        await Waits.UntilAsync(() => player.HeldByPause && player.BufferedFrames == 25, "full buffer");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.Equal(25, player.BufferedFrames);
+        Assert.InRange(proc.Stdout.Position, 1, data.Length - 1); // FFmpeg's output is not drained past the bound
+        Assert.InRange(bufferedAtFirstSend, 24, 25); // the first frame went once 25 were buffered
+
+        player.ResumePlayback();
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        Assert.Equal(100, _sink.Count);
+        Assert.Equal(0, player.Diagnostics.Snapshot().LateFrames);
+        Assert.Equal(0.0, player.Diagnostics.Snapshot().VideoBufferSeconds);
+    }
+
+    [Fact]
+    public async Task First_frame_publishes_the_playout_origin_and_frames_follow_it()
+    {
+        Proc(Nals.Frames(3));
+        var player = Player();
+        var anchors = new List<PlayoutAnchor?>();
+        var sendTimes = new List<long>();
+        _sink.OnSend = _ =>
+        {
+            anchors.Add(player.Anchor);
+            sendTimes.Add(_time.GetTimestamp());
+        };
+        player.Start();
+        await Ended(player);
+
+        var anchor = Assert.IsType<PlayoutAnchor>(anchors[0]);
+        Assert.Equal(0, anchor.Segment);
+        Assert.All(anchors, a => Assert.Same(anchor, a));
+        Assert.Equal([0L, 400_000L, 800_000L], sendTimes.Select(t => t - anchor.Origin)); // n / 25 fps in ticks
+    }
+
+    [Fact]
+    public async Task A_new_segment_gets_a_new_origin()
+    {
+        Proc(Nals.Frames(2), blockAtEnd: true);
+        Proc(Nals.Frames(2));
+        var player = Player();
+        var anchors = new List<PlayoutAnchor>();
+        _sink.OnSend = _ => anchors.Add(player.Anchor!);
+        player.Start();
+        await Waits.UntilAsync(() => _sink.Count == 2, "first segment");
+        player.Seek(5.0);
+        await Ended(player);
+
+        Assert.Equal([0, 0, 1, 1], anchors.Select(a => a.Segment));
+        Assert.True(anchors[2].Origin > anchors[0].Origin);
+    }
+
+    [Fact]
+    public async Task Two_second_read_stall_with_a_five_second_buffer_makes_no_late_frame()
+    {
+        // SC-003: FFmpeg stops delivering for 2 s of playout while 5 s are buffered.
+        var data = Nals.Frames(150);
+        var proc = Proc(data, step: 14 * 10);
+        long? stallUntil = null;
+        var reads = 0;
+        proc.Stdout.OnRead = () =>
+        {
+            if (++reads == 8)
+            {
+                stallUntil = _time.GetTimestamp() + TimeSpan.FromSeconds(2).Ticks;
+                SpinWait.SpinUntil(() => _time.GetTimestamp() >= stallUntil, TimeSpan.FromSeconds(10));
+            }
+        };
+        VideoPlayer? player = null;
+        _time.AutoFire = _ =>
+        {
+            // After the stall, let the reader refill (in real time) before the player moves the clock on.
+            if (stallUntil is { } until && _time.GetTimestamp() >= until)
+            {
+                SpinWait.SpinUntil(() => player!.BufferedFrames >= 40 || proc.Stdout.Position == data.Length, TimeSpan.FromSeconds(10));
+            }
+
+            return true;
+        };
+        player = Player(o => o with { BufferSeconds = 5.0, Fps = 10 }); // 50 frames buffered; the stall is 20
+        player.Start();
+
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        Assert.Equal(150, _sink.Count);
+        Assert.NotNull(stallUntil);
+        Assert.Equal(0, player.Diagnostics.Snapshot().LateFrames);
     }
 
     // ── seek / in-place restart ──────────────────────────────────────────
@@ -569,13 +708,11 @@ public sealed class VideoPlayerTests : IDisposable
         var first = Proc(Nals.Frames(1));
         Proc(Nals.Frames(1));
         var player = Player();
-        var once = false;
-        _sink.OnSend = _ =>
+        first.Stdout.OnRead = () =>
         {
-            if (!once)
+            if (first.Stdout.Position == first.Stdout.Length)
             {
-                once = true;
-                first.Stdout.OnRead = () => player.Seek(20.0); // arrives just before stdout EOF
+                player.Seek(20.0); // arrives with stdout's EOF
             }
         };
         player.Start();

@@ -20,6 +20,7 @@ public sealed class StreamDiagnosticsTests
         [
             "FpsSent", "FpsTarget", "LateFrames", "MaxLatenessMs", "ReadStallMs", "PacketsPerSec", "SendDrops", "SendErrors",
             "DriftMs", "SilenceSteps", "SkipSteps", "Encoder", "Resolution", "Bitrate", "SourceCodec", "Position", "Runtime",
+            "VideoBufferSeconds", "AudioBufferSeconds",
         ];
         var props = typeof(StreamDiagnosticsSnapshot).GetProperties().Select(p => p.Name).ToHashSet();
         Assert.All(fields, f => Assert.Contains(f, props));
@@ -41,6 +42,18 @@ public sealed class StreamDiagnosticsTests
         Assert.Null(s.Runtime);
         Assert.Equal(0, s.Position);
         Assert.Equal(TimeSpan.Zero, s.Window);
+        Assert.Equal((0.0, 0.0), (s.VideoBufferSeconds, s.AudioBufferSeconds));
+    }
+
+    [Fact]
+    public void Buffer_fill_is_the_latest_report()
+    {
+        var d = New();
+        d.VideoBuffered(TimeSpan.FromSeconds(4.5));
+        d.AudioBuffered(TimeSpan.FromSeconds(5.5));
+        d.AudioBuffered(TimeSpan.FromSeconds(5.25));
+        var s = d.Snapshot();
+        Assert.Equal((4.5, 5.25), (s.VideoBufferSeconds, s.AudioBufferSeconds));
     }
 
     [Fact]
@@ -185,6 +198,8 @@ public sealed class StreamDiagnosticsTests
         public int SegmentFrames => 0;
 
         public bool SeekPending => false;
+
+        public PlayoutAnchor? Anchor => null;
 
         public bool IsSourceActive => true;
 

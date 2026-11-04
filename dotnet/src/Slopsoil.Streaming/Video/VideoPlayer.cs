@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Slopsoil.Common.Logging;
@@ -9,15 +10,17 @@ using Slopsoil.Streaming.Process;
 namespace Slopsoil.Streaming.Video;
 
 /// <summary>
-/// Reads H.264 Annex-B from an FFmpeg child on a dedicated thread, groups it into access units and sends them
-/// paced to the wall clock at exactly <see cref="Fps"/>; FFmpeg's PCM audio goes to <see cref="AudioFifoPath"/>
-/// for the audio sender. Seek, aspect and overlay changes restart FFmpeg in place (with <c>-ss</c>) so viewers
-/// stay in the screenshare; a hardware encoder that produces nothing is retried once in software.
+/// Reads H.264 Annex-B from an FFmpeg child on a reader thread, groups it into access units into a bounded
+/// read-ahead buffer (<see cref="VideoPlayerOptions.BufferSeconds"/>), and on the player thread sends them paced
+/// to the segment's playout clock at exactly <see cref="Fps"/> once the pre-roll is buffered (spec 004). The clock's
+/// origin is published as <see cref="Anchor"/> so the audio sender schedules on the same clock; FFmpeg's PCM audio
+/// goes to <see cref="AudioFifoPath"/>. Seek, aspect and overlay changes restart FFmpeg in place (with <c>-ss</c>)
+/// so viewers stay in the screenshare; a hardware encoder that produces nothing is retried once in software.
 /// Port of <c>video_player.H264VideoPlayer</c>.
 /// </summary>
 public sealed class VideoPlayer : IMediaClock, IDisposable
 {
-    /// <summary>How long a restart waits for the audio follower to drain the old FIFO audio.</summary>
+    /// <summary>How long a restart waits for the audio sender to drain the old FIFO audio.</summary>
     public static readonly TimeSpan DrainWait = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Grace period after SIGTERM before SIGKILL.</summary>
@@ -50,6 +53,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private readonly TaskCompletionSource<VideoPlayerEnd> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly int _timestampIncrement;
     private readonly PacketPacer? _pacer;
+    private readonly int _prerollFrames;
 
     private Thread? _thread;
     private volatile bool _running;
@@ -69,9 +73,12 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private int _restartSeq;
     private DiagnosticsLogger? _statsLogger;
     private RepeatingTimer? _overlayTimer;
+    private PlayoutAnchor? _anchor;
+    private long _pausedAt;
+    private volatile FrameBuffer<IReadOnlyList<byte[]>>? _frames;
+    private volatile Exception? _readerError;
 
-    // Pacing state of the current segment (player thread only).
-    private long _t0 = -1;
+    // Pacing state of the current packet (player thread only).
     private long _frameStart;
 
     public VideoPlayer(
@@ -96,6 +103,8 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         Fps = options.Fps;
         _timestampIncrement = (int)Math.Round(RtpMediaSender.VideoClock / options.Fps);
         _pacer = options.PacketPace > 0 ? PacePacket : null;
+        _prerollFrames = (int)Math.Round(Math.Clamp(options.BufferSeconds, 0.0, 30.0) * options.Fps);
+        BufferCapacity = Math.Max(1, _prerollFrames);
         Diagnostics = diagnostics ?? new StreamDiagnostics(options.Fps, options.Resolution, options.Bitrate, _time);
         Diagnostics.Clock ??= this;
         AudioFifoPath = Path.Combine(options.TempDirectory, string.Create(CultureInfo.InvariantCulture, $"slopsoil_{options.VideoSsrc}_audio.fifo"));
@@ -103,6 +112,14 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     }
 
     public double Fps { get; }
+
+    /// <summary>Most access units read ahead of playout (≈ buffer seconds × fps; 1 without read-ahead).</summary>
+    public int BufferCapacity { get; }
+
+    /// <summary>Access units buffered ahead of playout right now.</summary>
+    public int BufferedFrames => _frames?.Count ?? 0;
+
+    public PlayoutAnchor? Anchor => Volatile.Read(ref _anchor);
 
     /// <summary>FIFO FFmpeg writes s16le 48 kHz stereo PCM into; exists from <see cref="Start"/> until the player ends.</summary>
     public string AudioFifoPath { get; }
@@ -267,9 +284,37 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
 
     public void Dispose() => Stop();
 
-    public void PausePlayback() => Pause.Close();
+    /// <summary>Close the pause gate; both streams hold at their next slot.</summary>
+    public void PausePlayback()
+    {
+        lock (_ctl)
+        {
+            if (Pause.IsOpen)
+            {
+                _pausedAt = _time.GetTimestamp();
+                Pause.Close();
+            }
+        }
+    }
 
-    public void ResumePlayback() => Pause.Open();
+    /// <summary>Shift the playout origin by the pause (FR-004: for video and audio alike), then open the gate.</summary>
+    public void ResumePlayback()
+    {
+        lock (_ctl)
+        {
+            if (Pause.IsOpen)
+            {
+                return;
+            }
+
+            if (_anchor is { } anchor)
+            {
+                Volatile.Write(ref _anchor, anchor with { Origin = anchor.Origin + (_time.GetTimestamp() - _pausedAt) });
+            }
+
+            Pause.Open();
+        }
+    }
 
     /// <summary>Restart decoding from <paramref name="seconds"/> without tearing down the stream.</summary>
     public void Seek(double seconds)
@@ -444,6 +489,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         {
             _finished = true;
             _seekTo = null;
+            Volatile.Write(ref _anchor, null);
             _overlayTimer?.Dispose();
             _overlayTimer = null;
         }
@@ -516,7 +562,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         return true;
     }
 
-    /// <summary>Bump <see cref="RestartSeq"/> and give the audio follower ≤ 0.5 s to drain the old FIFO audio.</summary>
+    /// <summary>Bump <see cref="RestartSeq"/> and give the audio sender ≤ 0.5 s to drain the old FIFO audio.</summary>
     private void SignalRestart()
     {
         var follower = _follower;
@@ -631,8 +677,38 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         StartStderrDrain(process);
         Diagnostics.SetEncoder(_encoder.Name);
         Volatile.Write(ref _segmentFrames, 0);
-        _t0 = -1;
-        ReadLoop(process, token);
+        lock (_ctl)
+        {
+            Volatile.Write(ref _anchor, null);
+        }
+
+        var frames = new FrameBuffer<IReadOnlyList<byte[]>>(BufferCapacity);
+        _frames = frames;
+        var reader = new Thread(() => ReadLoop(process, frames, token)) { IsBackground = true, Name = "H264VideoReader" };
+        reader.Start();
+        try
+        {
+            PlayLoop(frames, token);
+        }
+        finally
+        {
+            if (frames.IsCompleted)
+            {
+                reader.Join();
+            }
+            else
+            {
+                StopReader(process, reader);
+            }
+
+            _frames = null;
+            Diagnostics.VideoBuffered(TimeSpan.Zero);
+        }
+
+        if (Interlocked.Exchange(ref _readerError, null) is { } error)
+        {
+            ExceptionDispatchInfo.Throw(error);
+        }
 
         if (Interrupted && !process.HasExited)
         {
@@ -649,46 +725,110 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         _log.LogInformation("H.264 video stream ended (exit code {Code})", process.ExitCode);
     }
 
-    private void ReadLoop(IMediaProcess process, CancellationToken token)
+    /// <summary>
+    /// Reader thread: stdout → access units → the bounded buffer, eagerly (FR-002). Blocks while the buffer is full,
+    /// so FFmpeg is held back by its pipe. Never touches the time provider's timers.
+    /// </summary>
+    private void ReadLoop(IMediaProcess process, FrameBuffer<IReadOnlyList<byte[]>> frames, CancellationToken token)
     {
-        var splitter = new AccessUnitSplitter();
-        var buffer = new byte[ReadSize];
-        while (!_stopRequested)
+        try
         {
-            var readStart = _time.GetTimestamp();
-            int read;
-            try
+            var splitter = new AccessUnitSplitter();
+            var buffer = new byte[ReadSize];
+            while (!_stopRequested && !token.IsCancellationRequested)
             {
-                read = process.StandardOutput.Read(buffer);
-            }
-            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
-            {
-                read = 0; // stdout closed by stop()
-            }
+                var readStart = _time.GetTimestamp();
+                int read;
+                try
+                {
+                    read = process.StandardOutput.Read(buffer);
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    read = 0; // stdout closed by stop()
+                }
 
-            Diagnostics.VideoReadStall(_time.GetElapsedTime(readStart));
-            if (read == 0)
-            {
-                break;
-            }
+                Diagnostics.VideoReadStall(_time.GetElapsedTime(readStart));
+                if (read == 0)
+                {
+                    break;
+                }
 
-            foreach (var frame in splitter.Feed(buffer.AsSpan(0, read)))
-            {
-                if (Emit(frame, token))
+                if (!AddAll(frames, splitter.Feed(buffer.AsSpan(0, read)), token))
                 {
                     return;
                 }
             }
+
+            // Flush the tail only on a natural end: after stop/seek it is stale.
+            if (!Interrupted && !token.IsCancellationRequested)
+            {
+                AddAll(frames, splitter.Flush(), token);
+            }
+        }
+        catch (Exception ex)
+        {
+            _readerError = ex;
+        }
+        finally
+        {
+            frames.Complete();
+        }
+    }
+
+    private static bool AddAll(FrameBuffer<IReadOnlyList<byte[]>> frames, IReadOnlyList<IReadOnlyList<byte[]>> units, CancellationToken token)
+    {
+        foreach (var unit in units)
+        {
+            if (unit.Count > 0 && !frames.Add(unit, token))
+            {
+                return false;
+            }
         }
 
-        // Flush the tail only on a natural end: after stop/seek it is stale.
-        if (Interrupted)
+        return true;
+    }
+
+    /// <summary>
+    /// End a reader that is still running (stop/seek, or the player failed): SIGTERM lets a blocked Read return;
+    /// SIGKILL if FFmpeg ignores it. Only then may stdout be closed (closing it under a Read blocks on .NET/Linux).
+    /// </summary>
+    private void StopReader(IMediaProcess process, Thread reader)
+    {
+        if (reader.Join(TimeSpan.Zero))
         {
             return;
         }
 
-        foreach (var frame in splitter.Flush())
+        Signal(process, closeStdout: false);
+        if (reader.Join(TerminateGrace))
         {
+            return;
+        }
+
+        _log.LogWarning("FFmpeg did not exit after SIGTERM — sending SIGKILL");
+        try
+        {
+            process.Kill();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or System.ComponentModel.Win32Exception)
+        {
+        }
+
+        reader.Join(TerminateGrace);
+    }
+
+    /// <summary>Player thread: wait for the pre-roll (FR-003), then send every buffered unit on the playout clock.</summary>
+    private void PlayLoop(FrameBuffer<IReadOnlyList<byte[]>> frames, CancellationToken token)
+    {
+        if (_prerollFrames > 0 && !frames.WaitFor(_prerollFrames, token))
+        {
+            return;
+        }
+
+        while (!_stopRequested && frames.Take(token) is { } frame)
+        {
+            Diagnostics.VideoBuffered(TimeSpan.FromSeconds(frames.Count / Fps));
             if (Emit(frame, token))
             {
                 return;
@@ -696,49 +836,73 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         }
     }
 
-    /// <summary>Send a frame and pace to the wall clock. True → stop reading this segment.</summary>
+    /// <summary>
+    /// Send frame <c>n</c> of the segment at <c>origin + n / fps</c> and wait for the next slot. The first frame
+    /// publishes the origin (<see cref="Anchor"/>); a pause holds the frame and shifts the origin (in
+    /// <see cref="ResumePlayback"/>); a late frame (underrun) goes at once and the schedule stays absolute.
+    /// True → stop playing this segment.
+    /// </summary>
     private bool Emit(IReadOnlyList<byte[]> frame, CancellationToken token)
     {
-        if (frame.Count == 0)
+        var n = SegmentFrames;
+        long origin;
+        while (true)
         {
-            return false;
-        }
-
-        if (!Pause.IsOpen)
-        {
-            var pausedAt = _time.GetTimestamp();
-            _heldByPause = true;
-            var opened = Pause.WaitOpen(Timeout.InfiniteTimeSpan, token);
-            _heldByPause = false;
-            if (!opened)
+            if (!Pause.IsOpen)
             {
-                return true; // stop or seek while paused
+                _heldByPause = true;
+                var opened = Pause.WaitOpen(Timeout.InfiniteTimeSpan, token);
+                _heldByPause = false;
+                if (!opened)
+                {
+                    return true; // stop or seek while paused
+                }
             }
 
-            if (_t0 >= 0)
+            if (Interrupted)
             {
-                // Shift the pacing clock so we don't burst to "catch up".
-                _t0 += _time.GetTimestamp() - pausedAt;
+                return true;
             }
-        }
 
-        if (Interrupted)
-        {
-            return true;
+            if (Anchor is not { } anchor)
+            {
+                lock (_ctl)
+                {
+                    if (!Pause.IsOpen)
+                    {
+                        continue; // paused just now: hold the first frame
+                    }
+
+                    anchor = new PlayoutAnchor(RestartSeq, _time.GetTimestamp());
+                    Volatile.Write(ref _anchor, anchor);
+                }
+            }
+
+            origin = anchor.Origin;
+            var wait = Ticks(origin, n) - _time.GetTimestamp();
+            if (wait <= MinWaitTicks)
+            {
+                if (Pause.IsOpen)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            // Ahead of the slot (only after a pause moved the origin): wait for it, then look again.
+            if (Sleep(TimeSpan.FromSeconds((double)wait / _time.TimestampFrequency), token))
+            {
+                return true;
+            }
         }
 
         _frameStart = _time.GetTimestamp();
-        if (_t0 < 0)
-        {
-            _t0 = _frameStart;
-        }
-
         _sink.SendVideoFrame(frame, _timestampIncrement, _pacer);
         _firstFrame.TrySetResult();
-        var n = SegmentFrames + 1;
-        Volatile.Write(ref _segmentFrames, n);
+        Volatile.Write(ref _segmentFrames, n + 1);
 
-        var due = _t0 + (long)(n / Fps * _time.TimestampFrequency);
+        var due = Ticks(Anchor?.Origin ?? origin, n + 1);
         var slack = TimeSpan.FromSeconds((double)(due - _time.GetTimestamp()) / _time.TimestampFrequency);
         Diagnostics.VideoFrameSent(slack);
         if (slack > TimeSpan.FromMilliseconds(1))
@@ -748,6 +912,10 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
 
         return _stopRequested;
     }
+
+    private long MinWaitTicks => _time.TimestampFrequency / 1000;
+
+    private long Ticks(long origin, int frame) => origin + (long)(frame / Fps * _time.TimestampFrequency);
 
     /// <summary>Spread a frame's packets over <c>PacketPace</c> of the frame interval (absolute deadlines).</summary>
     private bool PacePacket(int index, int count)

@@ -94,6 +94,26 @@ public sealed class OptionsTests
         Assert.Equal(warnings, _warnings.Count);
     }
 
+    [Theory]
+    [InlineData(null, 5.0, 0)]
+    [InlineData("0", 0.0, 0)]
+    [InlineData("2.5", 2.5, 0)]
+    [InlineData("30", 30.0, 0)]
+    [InlineData("31", 5.0, 1)]
+    [InlineData("-1", 5.0, 1)]
+    [InlineData("lots", 5.0, 1)]
+    public void Stream_buffer_seconds(string? raw, double seconds, int warnings)
+    {
+        var o = raw is null ? Parse() : Parse(("STREAM_BUFFER_SECONDS", raw));
+        Assert.Equal(seconds, o.StreamBufferSeconds);
+        Assert.Equal(warnings, _warnings.Count);
+        Assert.Contains("StreamBufferSeconds = " + seconds.ToString(System.Globalization.CultureInfo.InvariantCulture), o.ToString(), StringComparison.Ordinal);
+        if (warnings > 0)
+        {
+            Assert.Contains("STREAM_BUFFER_SECONDS", _warnings[0], StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void Allowed_ids_skip_non_digits_like_isdigit()
     {

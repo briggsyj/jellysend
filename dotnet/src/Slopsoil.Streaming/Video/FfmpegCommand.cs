@@ -85,7 +85,9 @@ public static class FfmpegCommand
         args.AddRange(o.Encoder.PostCodec);
         args.AddRange(
         [
-            // Exact rate: Position counts frames at Fps, so FFmpeg must emit that rate or the follower sees drift.
+            // Exact constant rate: the playout clock sends frame n at t0 + n/Fps. CFR also makes frame 0 output
+            // time 0 (the segment start), duplicating the first picture when the video starts after the audio.
+            "-fps_mode", "cfr",
             "-r", o.Fps.ToString("G6", inv),
             "-g", Math.Max(1, (int)Math.Round(o.Fps)).ToString(inv),
             "-f", "h264", "pipe:1",
@@ -100,10 +102,17 @@ public static class FfmpegCommand
         args.AddRange(
         [
             "-map", o.HasAudio ? "0:a:0" : "1:a:0",
+            // One media timeline (spec 004 FR-001): the raw PCM has no timestamps, so pad/trim it to output time 0
+            // (sample 0 = video frame 0 = the -ss point) and fill timestamp gaps with silence. Without this a
+            // source whose audio starts 0.5 s after its video plays 0.5 s early.
+            "-af", AudioFilter,
             "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2", "-f", "s16le", o.AudioFifo,
         ]);
         return args;
     }
+
+    /// <summary>Aligns the PCM output to the video's origin (<c>-af</c>).</summary>
+    public const string AudioFilter = "aresample=async=1:first_pts=0";
 
     /// <summary>The <c>-vf</c> chain: encoder scaler with forced aspect, plus the overlay stage when on.</summary>
     public static string VideoFilter(FfmpegCommandOptions o)

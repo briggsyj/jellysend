@@ -200,6 +200,8 @@ Remove the line (and pull again) to go back to Python. What's different:
 - When everyone leaves the voice channel the stream keeps going for `EMPTY_CHANNEL_TIMEOUT_MINUTES` (default 20;
   `0` = stop and leave at once, as the Python bot does) and stops if nobody returns.
 - `!media <title> 1:23:45` starts the item at that time (also `<show> s01e02 45m`).
+- Audio and video play from one clock out of a read-ahead buffer: `STREAM_BUFFER_SECONDS` (default 5, 0–30) of
+  FFmpeg output is buffered before playback starts (and after each seek), so transcode hiccups shorter than that never reach Discord; `0` = no read-ahead.
 
 ### Option A - Pre-built image (recommended)
 

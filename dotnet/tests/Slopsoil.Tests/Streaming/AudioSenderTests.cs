@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Pipes;
 using Microsoft.Extensions.Logging;
@@ -18,34 +19,57 @@ public sealed class AudioSenderTests
     private readonly StepTimeProvider _time = new();
     private readonly FakeEncoder _encoder = new();
     private readonly List<byte[]> _sent = [];
+    private readonly List<long> _sentAt = [];
     private Action? _afterSend;
 
-    private AudioSender Sender(IPcmSource pcm, FakeMediaClock? clock = null, int avSyncMs = 0, IAudioStats? stats = null, ILogger? log = null) =>
-        new(pcm, clock, stats, Sink, avSyncMs, log, _time, () => _encoder);
+    private AudioSender Sender(IPcmSource pcm, FakeMediaClock? clock = null, int avSyncMs = 0, IAudioStats? stats = null, ILogger? log = null, double buffer = 0) =>
+        new(pcm, clock, stats, Sink, avSyncMs, log, _time, () => _encoder, buffer);
 
     private void Sink(ReadOnlySpan<byte> opus)
     {
         _sent.Add(opus.ToArray());
+        _sentAt.Add(_time.GetTimestamp());
         _afterSend?.Invoke();
     }
 
     private List<int> PayloadIds() => _sent.Select(p => (int)p[^1]).ToList();
 
-    /// <summary>A clock that tracks the sender's own audio position (Python's <c>position=lambda: s._audio_position()</c>).</summary>
-    private static FakeMediaClock InStep(Func<AudioSender?> sender, double offset = 0.0) =>
-        new() { PositionFn = () => (sender()?.AudioPosition ?? 0.0) + offset };
+    /// <summary>Send times in ms relative to <paramref name="origin"/>.</summary>
+    private List<double> SentMs(long origin) => _sentAt.Select(t => TimeSpan.FromTicks(t - origin).TotalMilliseconds).ToList();
 
-    private static Func<double> Ticks(params double[] ticks)
+    private static TimeSpan Ms(double ms) => TimeSpan.FromMilliseconds(ms);
+
+    /// <summary>A frame whose bytes (and so its fake Opus payload id) are all <paramref name="id"/>.</summary>
+    private static byte[] Pcm(int id) => Enumerable.Repeat((byte)id, Frame).ToArray();
+
+    /// <summary>
+    /// A playing clock (25 fps) whose segment-0 origin, 100 ms after the moment the read-ahead is
+    /// <paramref name="ready"/> (waited for in real time), appears from then on.
+    /// </summary>
+    private FakeMediaClock Clock(Func<bool> ready, out Func<long> origin)
     {
-        var i = 0;
-        return () => ticks[i++];
+        PlayoutAnchor? anchor = null;
+        origin = () => anchor!.Origin;
+        return new FakeMediaClock
+        {
+            Fps = 25,
+            SegmentFrames = 1000,
+            SourceActive = () => true,
+            AnchorFn = () =>
+            {
+                if (anchor is null)
+                {
+                    SpinUntil(ready);
+                    anchor = new PlayoutAnchor(0, _time.GetTimestamp() + Ms(100).Ticks);
+                }
+
+                return anchor;
+            },
+        };
     }
 
-    private static Func<double> Ticking(double step)
-    {
-        var t = 0.0;
-        return () => t += step;
-    }
+    private static void SpinUntil(Func<bool> condition) =>
+        Assert.True(SpinWait.SpinUntil(condition, TimeSpan.FromSeconds(10)), "timed out waiting on the read-ahead");
 
     // ── basic sending ────────────────────────────────────────────────────────
 
@@ -104,13 +128,15 @@ public sealed class AudioSenderTests
         Assert.Throws<ArgumentNullException>(() => new AudioSender(FakePcm.Frames(0), null, null, (OpusSink)null!, 0));
     }
 
-    // ── STREAM_AV_SYNC_MS ────────────────────────────────────────────────────
+    // ── STREAM_AV_SYNC_MS (own origin) ───────────────────────────────────────
 
     [Fact]
     public void Positive_av_sync_discards_backlog()
     {
-        Sender(FakePcm.Frames(5), avSyncMs: 40).SendLoop(); // 2 frames
+        var s = Sender(FakePcm.Frames(5), avSyncMs: 40); // 2 frames' slots are already gone at the origin
+        s.SendLoop();
         Assert.Equal([2, 3, 4], PayloadIds());
+        Assert.Equal(new AudioCorrections(0, 0), s.Corrections); // by design, not a correction
     }
 
     [Fact]
@@ -127,14 +153,13 @@ public sealed class AudioSenderTests
         s.Stop();
         s.SendLoop();
         Assert.Empty(_sent);
-        Assert.Equal(0, s.Follower.SegmentFrames);
     }
 
     [Fact]
     public void Negative_av_sync_delays_start()
     {
         Sender(FakePcm.Frames(1), avSyncMs: -250).SendLoop();
-        Assert.Equal(TimeSpan.FromMilliseconds(250), _time.Waits[0]);
+        Assert.Equal(Ms(250), _time.Waits[0]);
         Assert.Single(_sent);
     }
 
@@ -145,37 +170,7 @@ public sealed class AudioSenderTests
         Assert.Equal(TimeSpan.FromSeconds(5), _time.Waits[0]);
     }
 
-    [Fact]
-    public void Target_offset_from_av_sync_ms_is_kept()
-    {
-        // +40 discards 2 frames up front and the follower keeps audio 40 ms ahead instead of
-        // "correcting" it back.
-        AudioSender? s = null;
-        var clock = InStep(() => s, -0.04);
-        s = Sender(FakePcm.Frames(5), clock, avSyncMs: 40);
-        s.SendLoop();
-        Assert.Equal([2, 3, 4], PayloadIds());
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-    }
-
-    // ── short reads, stop, pacing ────────────────────────────────────────────
-
-    [Fact]
-    public void Waits_through_fallback_gap()
-    {
-        // A short read while the source is still active is a FIFO gap, not EOF.
-        var pcm = new FakePcm([Enumerable.Repeat((byte)1, Frame).ToArray(), [], [], Enumerable.Repeat((byte)2, Frame).ToArray(), []]);
-        var active = new Queue<bool>([true, true, false]);
-        AudioSender? s = null;
-        var clock = InStep(() => s);
-        clock.SourceActive = active.Dequeue;
-        s = Sender(pcm, clock);
-
-        s.SendLoop();
-
-        Assert.Equal([1, 2], PayloadIds());
-        Assert.Equal(2, _time.WaitsOf(50));
-    }
+    // ── read-ahead, end of input, stop, pacing ───────────────────────────────
 
     [Fact]
     public void Short_read_without_a_clock_ends_the_stream()
@@ -185,14 +180,26 @@ public sealed class AudioSenderTests
     }
 
     [Fact]
-    public void Stop_during_gap()
+    public void Read_ahead_is_bounded_and_back_pressures_the_fifo()
     {
-        var clock = new FakeMediaClock { SourceActive = () => true };
-        var s = Sender(FakePcm.Frames(0), clock);
-        _time.OnWait = _ => s.Stop(); // stop arrives while waiting
+        var pcm = new EndlessPcm();
+        var clock = new FakeMediaClock { SourceActive = () => true }; // never anchored: nothing plays
+        var s = Sender(pcm, clock, buffer: 1.0);
+        Assert.Equal(100, s.BufferCapacity); // (1 s + 1 s headroom) / 20 ms
+        Assert.Equal(50, Sender(pcm, buffer: 0).BufferCapacity);
+        _time.OnWait = _ =>
+        {
+            if (s.ReadAheadSettled)
+            {
+                Assert.Equal(100, s.BufferedFrames);
+                s.Stop();
+            }
+        };
+
         s.SendLoop();
+
         Assert.Empty(_sent);
-        Assert.Equal(1, _time.WaitsOf(50));
+        Assert.Equal(101, pcm.Reads); // the full buffer plus the frame in hand: FFmpeg is held back by the FIFO
     }
 
     [Fact]
@@ -210,7 +217,7 @@ public sealed class AudioSenderTests
         var s = Sender(FakePcm.Frames(10));
         _afterSend = () =>
         {
-            _time.CreateTimer(_ => { }, null, TimeSpan.FromMilliseconds(30), Timeout.InfiniteTimeSpan); // run late
+            _time.CreateTimer(_ => { }, null, Ms(30), Timeout.InfiniteTimeSpan); // run late
             s.Stop();
         };
         s.SendLoop();
@@ -220,20 +227,374 @@ public sealed class AudioSenderTests
     [Fact]
     public void Paces_to_an_absolute_schedule()
     {
-        // Freeze the clock so every frame is "early" and must wait for its slot.
-        _time.AdvanceOnWait = false;
-        Sender(FakePcm.Frames(3)).SendLoop();
-        Assert.Equal([20, 40, 60], _time.Waits.Select(w => (int)w.TotalMilliseconds));
+        var s = Sender(FakePcm.Frames(3));
+        s.SendLoop();
+        Assert.Equal([20, 20], _time.Waits.Select(w => (int)w.TotalMilliseconds));
+        Assert.Equal([0, 20, 40], SentMs(_sentAt[0]));
     }
 
     [Fact]
-    public void Late_frames_do_not_wait()
+    public void A_briefly_stalled_sender_catches_up_in_a_burst()
     {
-        var s = Sender(FakePcm.Frames(3));
-        _afterSend = () => _time.CreateTimer(_ => { }, null, TimeSpan.FromMilliseconds(100), Timeout.InfiniteTimeSpan);
+        var s = Sender(FakePcm.Frames(5));
+        _afterSend = () =>
+        {
+            if (_sent.Count == 1)
+            {
+                _time.CreateTimer(_ => { }, null, Ms(70), Timeout.InfiniteTimeSpan); // the thread stalls 70 ms
+            }
+        };
         s.SendLoop();
-        Assert.Equal(3, _sent.Count);
-        Assert.Equal(3, _time.WaitsOf(100)); // only the simulated stalls; no pacing waits
+
+        Assert.Equal([0, 1, 2, 3, 4], PayloadIds());
+        Assert.Equal([0, 70, 70, 70, 80], SentMs(_sentAt[0])); // slots 1-3 go late, slot 4 on time again
+        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
+    }
+
+    [Fact]
+    public void A_long_stalled_sender_skips_the_slots_it_missed()
+    {
+        var s = Sender(FakePcm.Frames(16));
+        _afterSend = () =>
+        {
+            if (_sent.Count == 1)
+            {
+                _time.CreateTimer(_ => { }, null, Ms(250), Timeout.InfiniteTimeSpan);
+            }
+        };
+        s.SendLoop();
+
+        // Slots 1 and 2 are more than 200 ms late: dropped. Slots 3-12 go late in a burst, 13-15 on time.
+        Assert.Equal([0, .. Enumerable.Range(3, 13)], PayloadIds());
+        Assert.Equal([0, .. Enumerable.Repeat(250.0, 10), 260, 280, 300], SentMs(_sentAt[0]));
+        Assert.Equal(new AudioCorrections(0, 2), s.Corrections);
+    }
+
+    // ── one clock (spec 004) ─────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(40)]
+    [InlineData(-60)]
+    public void Audio_frame_k_goes_at_origin_plus_k_frames_minus_av_sync(int avSyncMs)
+    {
+        AudioSender? s = null;
+        var clock = Clock(() => s!.ReadAheadSettled, out var origin);
+        clock.SourceActive = () => false; // one segment: the reader ends at its end
+        s = Sender(FakePcm.Frames(3), clock, avSyncMs);
+
+        s.SendLoop();
+
+        Assert.Equal([0, 1, 2], PayloadIds());
+        Assert.Equal([0 - avSyncMs, 20 - avSyncMs, 40 - avSyncMs], SentMs(origin()));
+        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
+    }
+
+    [Fact]
+    public void Nothing_is_sent_before_the_segment_is_anchored()
+    {
+        PlayoutAnchor? anchor = null;
+        AudioSender? s = null;
+        var clock = new FakeMediaClock { Fps = 25, SegmentFrames = 1000, SourceActive = () => anchor is null, AnchorFn = () => anchor };
+        s = Sender(FakePcm.Frames(2), clock);
+        var polls = 0;
+        _time.OnWait = w =>
+        {
+            if (w == Ms(2) && ++polls == 5)
+            {
+                SpinUntil(() => s.ReadAheadSettled);
+                Assert.Empty(_sent); // pre-roll: buffered, not played
+                Assert.Equal(2, s.BufferedFrames);
+                anchor = new PlayoutAnchor(0, _time.GetTimestamp() + Ms(2).Ticks);
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal([0, 1], PayloadIds());
+        Assert.Equal([0, 20], SentMs(anchor!.Origin));
+    }
+
+    [Fact]
+    public void Underrun_sends_silence_on_schedule_and_drops_the_late_frames()
+    {
+        var gate = new GatedPcm();
+        gate.Release(Pcm(10), Pcm(11));
+        AudioSender? s = null;
+        var clock = Clock(() => s!.BufferedFrames >= 2, out var origin);
+        var stats = new FakeAudioStats();
+        s = Sender(gate, clock, stats: stats);
+        _afterSend = () =>
+        {
+            if (_sent.Count == 4)
+            {
+                // Frames 12 and 13 arrive after their slots (2, 3) were filled with silence.
+                gate.Release(Pcm(12), Pcm(13), Pcm(14));
+                SpinUntil(() => s.BufferedFrames == 3);
+            }
+            else if (_sent.Count == 5)
+            {
+                s.Stop();
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal([10, 11, 0, 0, 14], PayloadIds());
+        Assert.Equal([0, 20, 40, 60, 80], SentMs(origin())); // the schedule never moved
+        Assert.Equal(new AudioCorrections(2, 2), s.Corrections);
+        Assert.Equal((2, 2), (stats.Silence, stats.Skips));
+    }
+
+    [Fact]
+    public void Two_second_read_stall_with_a_five_second_buffer_is_inaudible()
+    {
+        // SC-003: the source stops delivering for 2 s while 5 s are buffered.
+        var gate = new GatedPcm();
+        gate.Release([.. Enumerable.Range(0, 250).Select(i => Pcm(i % 200))]);
+        AudioSender? s = null;
+        var clock = Clock(() => s!.BufferedFrames >= 250, out var origin);
+        var stats = new FakeAudioStats();
+        s = Sender(gate, clock, stats: stats, buffer: 5);
+        _afterSend = () =>
+        {
+            if (_sent.Count == 100)
+            {
+                gate.Release([.. Enumerable.Range(250, 150).Select(i => Pcm(i % 200))]); // 2 s later
+                SpinUntil(() => s.BufferedFrames == 300);
+            }
+            else if (_sent.Count == 400)
+            {
+                s.Stop();
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal(400, _sent.Count);
+        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
+        Assert.Equal(0, stats.Silence);
+        Assert.Equal(7980, SentMs(origin())[^1]);
+        Assert.True(stats.Buffered.Max() >= TimeSpan.FromSeconds(4.98));
+    }
+
+    [Fact]
+    public void Pause_holds_audio_and_follows_the_shifted_origin()
+    {
+        AudioSender? s = null;
+        var anchor = new PlayoutAnchor(0, _time.GetTimestamp() + Ms(100).Ticks);
+        var clock = new FakeMediaClock { Fps = 25, SegmentFrames = 1000, SourceActive = () => false };
+        clock.AnchorFn = () =>
+        {
+            SpinUntil(() => s!.ReadAheadSettled);
+            return clock.Anchor;
+        };
+        clock.Anchor = anchor;
+        s = Sender(FakePcm.Frames(3), clock);
+        _afterSend = () =>
+        {
+            if (_sent.Count == 1)
+            {
+                clock.Pause.Close();
+            }
+        };
+        var pauseWaits = 0;
+        _time.OnWait = w =>
+        {
+            if (w == Ms(100) && ++pauseWaits == 3)
+            {
+                // The player moves the origin by the pause before it opens the gate.
+                clock.Anchor = anchor with { Origin = anchor.Origin + Ms(300).Ticks };
+                clock.Pause.Open();
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal([0, 1, 2], PayloadIds());
+        Assert.Equal([0, 320, 340], SentMs(anchor.Origin));
+        Assert.Equal(3, pauseWaits);
+    }
+
+    [Fact]
+    public void Stop_while_paused()
+    {
+        var clock = new FakeMediaClock();
+        clock.Pause.Close();
+        var s = Sender(FakePcm.Frames(3), clock);
+        _time.OnWait = _ => s.Stop();
+        s.SendLoop();
+        Assert.Empty(_sent);
+        Assert.Equal(1, _time.WaitsOf(100));
+    }
+
+    [Fact]
+    public void Restart_flushes_the_old_segment_and_re_anchors_on_the_new_one()
+    {
+        AudioSender? s = null;
+        var clock = new FakeMediaClock { Fps = 25, SegmentFrames = 1000, SourceActive = () => true };
+        var first = new PlayoutAnchor(0, _time.GetTimestamp() + Ms(100).Ticks); // nothing polls before the read-ahead settled
+        PlayoutAnchor? second = null;
+        var gate = new GatedPcm();
+        gate.Release(Pcm(1), Pcm(2), Pcm(3), Pcm(4), Pcm(5));
+        gate.EndOfWriter(); // the old FFmpeg goes away
+        var released = false;
+        var refilled = false;
+        clock.AnchorFn = () =>
+        {
+            if (clock.RestartSeq == 0)
+            {
+                SpinUntil(() => s!.ReadAheadSettled);
+                return first;
+            }
+
+            if (!released)
+            {
+                return null;
+            }
+
+            if (!refilled)
+            {
+                SpinUntil(() => s!.BufferedFrames >= 2);
+                refilled = true;
+            }
+
+            return second;
+        };
+        var log = new ListLogger();
+        s = Sender(gate, clock, log: log);
+        _afterSend = () =>
+        {
+            if (_sent.Count == 2)
+            {
+                // Seek: FFmpeg restarted at 30 s.
+                clock.RestartSeq = 1;
+                clock.SegmentOffset = 30.0;
+                second = new PlayoutAnchor(1, _time.GetTimestamp() + Ms(500).Ticks);
+            }
+            else if (_sent.Count == 4)
+            {
+                s.Stop();
+            }
+        };
+        _time.OnWait = _ =>
+        {
+            if (!released && clock.Handles[0].Signals == 1)
+            {
+                // The player starts the new FFmpeg only after the old audio was drained.
+                released = true;
+                gate.Release(Pcm(21), Pcm(22));
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal([1, 2, 21, 22], PayloadIds());
+        Assert.Equal([0, 20], SentMs(first.Origin).Take(2));
+        Assert.Equal([0, 20], SentMs(second!.Origin).Skip(2));
+        Assert.True(clock.Handles[0].Signals >= 1);
+        Assert.Contains(log.Entries, e => e.Message.StartsWith("GoLiveAudio: source restarted at 30.0s — dropped 3 buffered frames", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Restart_while_paused_drains_and_signals_player()
+    {
+        var clock = new FakeMediaClock();
+        clock.Pause.Close();
+        var s = Sender(FakePcm.Frames(1), clock);
+        var calls = 0;
+        _time.OnWait = _ =>
+        {
+            if (++calls == 1)
+            {
+                clock.RestartSeq = 1; // seek while paused: FFmpeg restarted
+                clock.SegmentOffset = 30.0;
+            }
+            else if (clock.Handles[0].Signals > 0)
+            {
+                s.Stop();
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal(1, clock.Handles[0].Signals);
+        Assert.Empty(_sent);
+    }
+
+    [Fact]
+    public void Pending_seek_sends_nothing_and_discards_the_stale_audio()
+    {
+        var pcm = new EndlessPcm();
+        var clock = new FakeMediaClock { SeekPending = true, SourceActive = () => true, Anchor = new PlayoutAnchor(0, 0) };
+        var s = Sender(pcm, clock);
+        _time.OnWait = _ =>
+        {
+            if (pcm.Reads > 500)
+            {
+                s.Stop(); // still reading: FFmpeg never blocks on the FIFO
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Empty(_sent);
+        Assert.Equal(0, s.BufferedFrames);
+    }
+
+    [Fact]
+    public void End_of_a_segment_sends_no_silence_and_ends_with_the_source()
+    {
+        var active = true;
+        AudioSender? s = null;
+        var clock = Clock(() => s!.ReadAheadSettled, out _);
+        clock.SourceActive = () => active;
+        s = Sender(FakePcm.Frames(2), clock);
+        _time.OnWait = w =>
+        {
+            if (_sent.Count == 2 && w == Ms(2))
+            {
+                active = false; // the player ended
+            }
+        };
+
+        s.SendLoop();
+
+        Assert.Equal([0, 1], PayloadIds());
+        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
+    }
+
+    [Fact]
+    public void Drift_and_buffer_fill_are_reported_on_the_shared_clock()
+    {
+        AudioSender? s = null;
+        var clock = Clock(() => s!.ReadAheadSettled, out _);
+        clock.SourceActive = () => false;
+        clock.SegmentFrames = 0; // video stuck at its first frame: it falls behind by 20 ms per audio frame
+        var stats = new FakeAudioStats();
+        s = Sender(FakePcm.Frames(3), clock, stats: stats);
+
+        s.SendLoop();
+
+        Assert.Equal([0, 20, 40], stats.Drifts.Select(d => Math.Round(d)));
+        Assert.Equal([Ms(40), Ms(20), Ms(0), Ms(0)], stats.Buffered);
+    }
+
+    [Fact]
+    public void Initial_restart_seq_is_adopted()
+    {
+        AudioSender? s = null;
+        var anchor = new PlayoutAnchor(7, _time.GetTimestamp());
+        var clock = new FakeMediaClock { RestartSeq = 7, SourceActive = () => false };
+        clock.AnchorFn = () =>
+        {
+            SpinUntil(() => s!.ReadAheadSettled);
+            return anchor;
+        };
+        s = Sender(FakePcm.Frames(1), clock);
+        s.SendLoop();
+        Assert.Single(_sent);
+        Assert.Equal(0, clock.Handles[0].Signals); // no restart drain
     }
 
     // ── thread, completion, errors ───────────────────────────────────────────
@@ -265,7 +626,7 @@ public sealed class AudioSenderTests
     }
 
     [Fact]
-    public async Task Sender_exit_unregisters_follower()
+    public async Task Sender_exit_unregisters_from_the_player()
     {
         var clock = new FakeMediaClock();
         var s = Sender(FakePcm.Frames(0), clock);
@@ -326,388 +687,23 @@ public sealed class AudioSenderTests
         Assert.Empty(_sent);
     }
 
-    // ── pause gate ───────────────────────────────────────────────────────────
-
     [Fact]
-    public void Holds_while_paused_then_resumes()
+    public void Reader_errors_are_logged_and_end_the_stream()
     {
-        AudioSender? s = null;
-        var clock = InStep(() => s);
-        clock.Pause.Close();
-        s = Sender(FakePcm.Frames(2), clock);
-        var pauseWaits = 0;
-        _time.OnWait = w =>
-        {
-            if (w == TimeSpan.FromMilliseconds(100) && ++pauseWaits == 3)
-            {
-                clock.Pause.Open();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(3, pauseWaits);
-        Assert.Equal([0, 1], PayloadIds());
+        var log = new ListLogger();
+        Sender(new ThrowingPcm(), log: log).SendLoop();
+        Assert.Empty(_sent);
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Error && e.Message == "GoLiveAudio: PCM reader failed");
     }
 
     [Fact]
-    public void Pause_mid_stream()
+    public void A_closed_fifo_ends_the_reader_quietly()
     {
-        AudioSender? s = null;
-        var clock = InStep(() => s);
-        s = Sender(FakePcm.Frames(3), clock);
-        _afterSend = () =>
-        {
-            if (_sent.Count == 1)
-            {
-                clock.Pause.Close();
-            }
-        };
-        var pauseWaits = 0;
-        _time.OnWait = w =>
-        {
-            if (w == TimeSpan.FromMilliseconds(100) && ++pauseWaits == 2)
-            {
-                clock.Pause.Open();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(2, pauseWaits);
-        Assert.Equal(3, _sent.Count);
-    }
-
-    [Fact]
-    public void Stop_while_paused()
-    {
-        var clock = new FakeMediaClock();
-        clock.Pause.Close();
-        var s = Sender(FakePcm.Frames(3), clock);
-        _time.OnWait = _ => s.Stop();
+        var log = new ListLogger();
+        var s = Sender(new ThrowingPcm(new ObjectDisposedException("fifo")), log: log);
         s.SendLoop();
         Assert.Empty(_sent);
-        Assert.Equal(1, _time.WaitsOf(100));
-    }
-
-    [Fact]
-    public void Restart_while_paused_drains_and_signals_player()
-    {
-        var clock = new FakeMediaClock();
-        clock.Pause.Close();
-        var pcm = FakePcm.Frames(1);
-        var s = Sender(pcm, clock);
-        var calls = 0;
-        _time.OnWait = _ =>
-        {
-            if (++calls == 1)
-            {
-                clock.RestartSeq = 1; // seek while paused: FFmpeg restarted
-                clock.SegmentOffset = 30.0;
-            }
-            else
-            {
-                s.Stop();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(1, clock.Handles[0].Signals);
-        Assert.Equal(1, pcm.Drains);
-        Assert.Equal((30.0, 1), (s.Follower.SegmentBase, s.Follower.SeenSeq));
-    }
-
-    [Fact]
-    public void Pause_resets_drift_persistence()
-    {
-        var clock = new FakeMediaClock { SegmentFrames = 0 };
-        clock.Pause.Close();
-        var s = Sender(FakePcm.Frames(1), clock);
-        s.Follower.NetSilence = AudioFollower.MaxNetSilence; // read straight away after the pause
-        s.Follower.DriftSince = 1.0;
-        s.Follower.Correcting = true;
-        var calls = 0;
-        _time.OnWait = _ =>
-        {
-            if (++calls > 1)
-            {
-                clock.Pause.Open();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Null(s.Follower.DriftSince);
-        Assert.False(s.Follower.Correcting);
-        Assert.Equal([0], PayloadIds());
-    }
-
-    // ── A/V clock follower and stale-audio drain ─────────────────────────────
-
-    [Fact]
-    public void Audio_behind_video_drops_frames_to_catch_up()
-    {
-        var clock = new FakeMediaClock { PositionFn = () => 1.0 }; // video already 1 s in, flowing
-        var stats = new FakeAudioStats();
-        var s = Sender(FakePcm.Frames(6), clock, stats: stats);
-        s.FollowerNow = Ticks(0.0, 1.1, 1.4, 1.7, 2.0, 2.3, 2.6, 2.9);
-
-        s.SendLoop();
-
-        // Tick 1 starts the persistence timer; from tick 2 one frame is skipped per correction interval.
-        Assert.Equal([0, 2, 4], PayloadIds());
-        Assert.Equal(3, s.Corrections.Dropped);
-        Assert.Equal(3, stats.Skips);
-    }
-
-    [Fact]
-    public void A_skip_that_hits_end_of_input_is_not_counted()
-    {
-        var clock = new FakeMediaClock { PositionFn = () => 1.0 };
-        var s = Sender(FakePcm.Frames(5), clock);
-        s.FollowerNow = Ticks(0.0, 1.1, 1.4, 1.7, 2.0);
-        s.SendLoop();
-        Assert.Equal([0, 2, 4], PayloadIds());
-        Assert.Equal(2, s.Corrections.Dropped);
-    }
-
-    [Fact]
-    public void Audio_in_step_with_video_is_untouched()
-    {
-        AudioSender? s = null;
-        var clock = InStep(() => s);
-        s = Sender(FakePcm.Frames(4), clock);
-        s.SendLoop();
-        Assert.Equal([0, 1, 2, 3], PayloadIds());
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-    }
-
-    [Fact]
-    public void Audio_waits_silently_for_first_video_frame()
-    {
-        // Before the segment's first frame, audio waits (bounded) instead of running ahead of the picture.
-        var clock = new FakeMediaClock { PositionFn = () => 5.0, SegmentFrames = 0 };
-        var s = Sender(FakePcm.Frames(4), clock);
-        s.SendLoop();
-        Assert.Equal(AudioFollower.MaxNetSilence + 4, _sent.Count);
-        Assert.Equal(4, s.Follower.SegmentFrames); // every real frame still played after the wait
-        Assert.Equal(AudioFollower.MaxNetSilence, s.Follower.NetSilence);
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-    }
-
-    [Fact]
-    public void Wait_for_first_frame_is_budgeted()
-    {
-        var clock = new FakeMediaClock { SegmentFrames = 0 };
-        Sender(FakePcm.Frames(5), clock).SendLoop();
-        Assert.Equal(AudioFollower.MaxNetSilence + 5, _sent.Count);
-    }
-
-    [Fact]
-    public void Restart_rebases_audio_position_and_drains()
-    {
-        AudioSender? s = null;
-        var clock = InStep(() => s);
-        var pcm = FakePcm.Frames(4);
-        pcm.DrainResult = 7;
-        var log = new ListLogger();
-        s = Sender(pcm, clock, log: log);
-        _afterSend = () =>
-        {
-            if (_sent.Count == 1) // FFmpeg restarted at 120 s after the 1st frame
-            {
-                clock.RestartSeq = 1;
-                clock.SegmentOffset = 120.0;
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(1, pcm.Drains);
-        Assert.Equal(120.0 + (3 * 0.02), s.AudioPosition, 9);
-        Assert.Equal(1, s.Follower.SeenSeq);
-        Assert.Equal(4, _sent.Count);
-        Assert.Equal(1, clock.Handles[0].Signals);
-        Assert.Contains(log.Entries, e => e.Message.Contains("source restarted at 120.0s") && e.Message.Contains("dropped 7 stale bytes"));
-    }
-
-    [Fact]
-    public void Restart_resets_drift_tracking()
-    {
-        var clock = new FakeMediaClock();
-        var s = Sender(FakePcm.Frames(0), clock);
-        s.Follower.DriftSince = 1.0;
-        s.Follower.Correcting = true;
-        Assert.False(s.CheckRestart());
-        clock.RestartSeq = 1;
-        Assert.True(s.CheckRestart());
-        Assert.Null(s.Follower.DriftSince);
-        Assert.False(s.Follower.Correcting);
-    }
-
-    [Fact]
-    public void Restart_resets_settle_and_episode_counts()
-    {
-        var clock = new FakeMediaClock();
-        var s = Sender(FakePcm.Frames(0), clock);
-        s.Follower.SettleSteps = 9;
-        s.Follower.EpisodeSteps = 4;
-        clock.RestartSeq = 1;
-        Assert.True(s.CheckRestart());
-        Assert.Equal((0, 0), (s.Follower.SettleSteps, s.Follower.EpisodeSteps));
-    }
-
-    [Fact]
-    public void No_clock_never_restarts_or_follows()
-    {
-        var s = Sender(FakePcm.Frames(2));
-        Assert.False(s.CheckRestart());
-        s.SendLoop();
-        Assert.Equal([0, 1], PayloadIds());
-    }
-
-    [Fact]
-    public void Initial_restart_seq_and_offset_are_adopted()
-    {
-        var clock = new FakeMediaClock { RestartSeq = 4, SegmentOffset = 60.0 };
-        var s = Sender(FakePcm.Frames(0), clock);
-        Assert.False(s.CheckRestart());
-        Assert.Equal(60.0, s.AudioPosition);
-    }
-
-    [Fact]
-    public void Pending_seek_sends_silence_without_reading()
-    {
-        var clock = new FakeMediaClock { PositionFn = () => 100.0, SeekPending = true };
-        var pcm = FakePcm.Frames(3);
-        var s = Sender(pcm, clock);
-        _afterSend = () =>
-        {
-            if (_sent.Count == 4)
-            {
-                s.Stop();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(0, pcm.Reads); // old segment's audio not played or "caught up"
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-        Assert.All(_sent, p => Assert.Equal(0, p[^1]));
-    }
-
-    [Fact]
-    public void Pending_seek_keeps_draining_so_ffmpeg_never_blocks()
-    {
-        var clock = new FakeMediaClock { SeekPending = true };
-        var pcm = FakePcm.Frames(1);
-        var s = Sender(pcm, clock);
-        _afterSend = () =>
-        {
-            if (_sent.Count == 3)
-            {
-                s.Stop();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(3, pcm.Drains);
-    }
-
-    // ── persistent-drift follower (anti rubber-banding) ──────────────────────
-
-    [Fact]
-    public void Transient_lag_is_not_corrected()
-    {
-        // Video a few frames behind while still flowing: both sides self-correct to the wall clock.
-        AudioSender? s = null;
-        var clock = InStep(() => s, -0.1); // 100 ms behind
-        s = Sender(FakePcm.Frames(10), clock);
-        s.FollowerNow = Ticking(0.02);
-        s.SendLoop();
-        Assert.Equal(Enumerable.Range(0, 10), PayloadIds());
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-    }
-
-    [Fact]
-    public void Large_drift_must_persist_before_correcting()
-    {
-        AudioSender? s = null;
-        var clock = InStep(() => s, -0.5); // 500 ms ahead
-        s = Sender(FakePcm.Frames(10), clock);
-        s.FollowerNow = Ticking(0.02); // 10 ticks = 0.2 s < persistence window
-        s.SendLoop();
-        Assert.Equal(0, s.Corrections.Silence);
-    }
-
-    [Fact]
-    public void Persistent_drift_corrected_gently_with_rate_limit()
-    {
-        AudioSender? s = null;
-        var clock = InStep(() => s, -0.5);
-        var stats = new FakeAudioStats();
-        var times = new List<double>();
-        stats.OnSilence = () => times.Add(s!.Follower.LastCorrection);
-        s = Sender(FakePcm.Frames(30), clock, stats: stats);
-        s.FollowerNow = Ticking(0.1); // 100 ms per tick
-
-        s.SendLoop();
-
-        Assert.NotEmpty(times);
-        Assert.True(times[0] >= 1.0); // only after the persistence window
-        Assert.All(times.Zip(times.Skip(1)), p => Assert.True(p.Second - p.First >= 0.25 - 1e-9));
-        Assert.Equal(times.Count, s.Corrections.Silence);
-    }
-
-    // ── settling window after a segment's first frame ────────────────────────
-
-    [Fact]
-    public void Settling_window_aligns_quickly_and_is_capped()
-    {
-        // Right after start/seek the encoder delay leaves audio ahead: align immediately (no
-        // persistence wait), but never more than the cap.
-        var clock = new FakeMediaClock { PositionFn = () => 0.0, SegmentFrames = 1, Fps = 30.0 };
-        var s = Sender(FakePcm.Frames(5), clock);
-        _afterSend = () =>
-        {
-            if (_sent.Count == 25)
-            {
-                s.Stop();
-            }
-        };
-
-        s.SendLoop();
-
-        Assert.Equal(AudioFollower.MaxSettleSteps, s.Corrections.Silence);
-        Assert.Equal(5, s.Follower.SegmentFrames); // all real audio still played afterwards
-    }
-
-    [Fact]
-    public void Settling_window_skips_when_audio_behind()
-    {
-        var clock = new FakeMediaClock { PositionFn = () => 0.2, SegmentFrames = 1, Fps = 30.0 };
-        var s = Sender(FakePcm.Frames(8), clock);
-        s.SendLoop();
-        Assert.True(s.Corrections.Dropped >= 1);
-    }
-
-    [Fact]
-    public void Settling_ends_after_window()
-    {
-        var clock = new FakeMediaClock { PositionFn = () => 0.0, SegmentFrames = 30, Fps = 30.0 }; // 1 s at 30 fps
-        var s = Sender(FakePcm.Frames(5), clock);
-        s.FollowerNow = Ticking(0.02);
-        s.SendLoop();
-        Assert.Equal(new AudioCorrections(0, 0), s.Corrections);
-    }
-
-    [Fact]
-    public void Default_follower_time_comes_from_the_time_provider()
-    {
-        var s = Sender(FakePcm.Frames(0));
-        Assert.Equal(100.0, s.FollowerNow());
+        Assert.DoesNotContain(log.Entries, e => e.Level == LogLevel.Error);
     }
 
     // ── PCM source ───────────────────────────────────────────────────────────
@@ -803,7 +799,15 @@ public sealed class AudioSenderTests
 
     private sealed class EndlessPcm : IPcmSource
     {
-        public int ReadFrame(Span<byte> frame) => frame.Length;
+        private int _reads;
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public int ReadFrame(Span<byte> frame)
+        {
+            Interlocked.Increment(ref _reads);
+            return frame.Length;
+        }
 
         public int DrainAvailable() => 0;
     }
@@ -822,6 +826,8 @@ public sealed class AudioSenderTests
 
         public bool SeekPending => false;
 
+        public PlayoutAnchor? Anchor => null;
+
         public bool IsSourceActive => false;
 
         public PauseGate Pause { get; } = new();
@@ -836,5 +842,42 @@ public sealed class AudioSenderTests
             {
             }
         }
+    }
+
+    /// <summary>PCM whose frames appear when the test releases them; blocks in between (a stalled FFmpeg).</summary>
+    private sealed class GatedPcm : IPcmSource
+    {
+        private readonly BlockingCollection<byte[]> _chunks = [];
+
+        public void Release(params byte[][] frames)
+        {
+            foreach (var f in frames)
+            {
+                _chunks.Add(f);
+            }
+        }
+
+        /// <summary>The writer closes its end (a short read).</summary>
+        public void EndOfWriter() => _chunks.Add([]);
+
+        public int ReadFrame(Span<byte> frame)
+        {
+            if (!_chunks.TryTake(out var chunk, TimeSpan.FromSeconds(20)))
+            {
+                return 0;
+            }
+
+            chunk.CopyTo(frame);
+            return chunk.Length;
+        }
+
+        public int DrainAvailable() => 0;
+    }
+
+    private sealed class ThrowingPcm(Exception? error = null) : IPcmSource
+    {
+        public int ReadFrame(Span<byte> frame) => throw error ?? new InvalidOperationException("boom");
+
+        public int DrainAvailable() => 0;
     }
 }

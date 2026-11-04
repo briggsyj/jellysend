@@ -18,14 +18,16 @@ public static class DiagnosticsFormat
         + $"(max {s.MaxLatenessMs:F0} ms, total {s.LateTotalMs:F0} ms) | ffmpeg read-block {s.ReadStallMs:F0} ms / {s.Window.TotalSeconds:F1}s "
         + $"| {Math.Round(s.PacketsPerSec * s.Window.TotalSeconds):F0} pkts | drops {s.SendDrops}, errors {s.SendErrors} "
         + $"| drift {Drift(s.DriftMs)}, silence {s.SilenceSteps}, skip {s.SkipSteps} "
+        + $"| buffer video {s.VideoBufferSeconds:F1} s, audio {s.AudioBufferSeconds:F1} s "
         + $"| {s.Encoder} {s.Resolution} {s.Bitrate} src={s.SourceCodec ?? "?"} pos {Clock(s.Position)}/{Runtime(s.Runtime)}"));
 
-    /// <summary>The overlay: the four groups of spec US6 scenario 1, one per line.</summary>
+    /// <summary>The overlay: the four groups of spec US6 scenario 1 plus the read-ahead (spec 004), one per line.</summary>
     public static string Overlay(StreamDiagnosticsSnapshot s) => string.Create(
         Inv,
         $"VIDEO   {s.FpsSent:F1}/{s.FpsTarget:0.##} fps  late {s.LateFrames} (max {s.MaxLatenessMs:F0} ms)  "
         + $"read-stall {s.ReadStallMs:F0} ms  {s.PacketsPerSec:F0} pkt/s\n"
         + $"A/V     drift {Drift(s.DriftMs)}  silence {s.SilenceSteps}  skip {s.SkipSteps}\n"
+        + $"BUFFER  video {s.VideoBufferSeconds:F1} s  audio {s.AudioBufferSeconds:F1} s\n"
         + $"STREAM  {s.Encoder} {s.Resolution.Replace(':', 'x')} {s.Bitrate}  src {s.SourceCodec ?? "?"}  "
         + $"{Clock(s.Position)} / {Runtime(s.Runtime)}\n"
         + $"NETWORK drops {s.SendDrops}  errors {s.SendErrors}");
