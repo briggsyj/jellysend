@@ -45,7 +45,7 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           push: false
           # Read-only: PR checks must not race the publish job for cache slots.
-          cache-from: type=gha
+          cache-from: type=gha,scope=slopsoil
 
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
@@ -56,6 +56,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Run unit tests
         uses: ./.github/actions/unit-tests
@@ -111,8 +113,7 @@ jobs:
           images: ${{ steps.images.outputs.list }}
           title: slopsoil
           description: >-
-            Discord self-bot that streams live TV, IPTV, YouTube, Jellyfin and
-            HLS/RTSP sources into a Discord voice channel.
+            Discord self-bot that streams Jellyfin into a Discord voice channel.
           licenses: GPL-3.0-or-later
 
       - name: Set up Docker Buildx
@@ -142,10 +143,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Reuse layers across runs via the GitHub Actions cache backend.
-          cache-from: type=gha
+          cache-from: type=gha,scope=slopsoil
           # A cache write failure ("failed to reserve cache") must not fail the
           # publish — the image itself was built fine.
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-to: type=gha,scope=slopsoil,mode=max,ignore-error=true
           # Supply-chain metadata: SLSA provenance + SBOM attached to the image.
           provenance: mode=max
           sbom: true

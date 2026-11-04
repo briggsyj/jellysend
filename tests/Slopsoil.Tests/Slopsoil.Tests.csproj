@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Slopsoil.Commands\Slopsoil.Commands.csproj" />
+    <ProjectReference Include="..\..\src\Slopsoil.Common\Slopsoil.Common.csproj" />
+    <ProjectReference Include="..\..\src\Slopsoil.Discord\Slopsoil.Discord.csproj" />
+    <ProjectReference Include="..\..\src\Slopsoil.Host\Slopsoil.Host.csproj" />
+    <ProjectReference Include="..\..\src\Slopsoil.Services\Slopsoil.Services.csproj" />
+    <ProjectReference Include="..\..\src\Slopsoil.Streaming\Slopsoil.Streaming.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.MTP" Version="10.1.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Vectors/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+</Project>

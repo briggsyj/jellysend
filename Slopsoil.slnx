@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Slopsoil.Commands/Slopsoil.Commands.csproj" />
+    <Project Path="src/Slopsoil.Common/Slopsoil.Common.csproj" />
+    <Project Path="src/Slopsoil.Discord/Slopsoil.Discord.csproj" />
+    <Project Path="src/Slopsoil.Host/Slopsoil.Host.csproj" />
+    <Project Path="src/Slopsoil.Services/Slopsoil.Services.csproj" />
+    <Project Path="src/Slopsoil.Streaming/Slopsoil.Streaming.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Slopsoil.Tests/Slopsoil.Tests.csproj" />
+  </Folder>
+</Solution>

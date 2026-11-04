@@ -1,7 +1,9 @@
-.env
-venv/
-__pycache__/
-*.pyc
-*.pyo
-.git/
-*.pcap
+# Send just the .NET sources to the image build.
+*
+!Slopsoil.slnx
+!Directory.Build.props
+!global.json
+!src/
+**/bin/
+**/obj/
+**/TestResults/

@@ -8,12 +8,5 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
-
-    # Persist IPTV source list across container restarts.
-    volumes:
-      - slopsoil-data:/root/.local/share/slopsoil
     devices:
-      - /dev/dri:/dev/dri
-
-volumes:
-  slopsoil-data:
+      - /dev/dri:/dev/dri   # VA-API hardware encoding (Intel/AMD)

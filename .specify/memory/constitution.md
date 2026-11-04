@@ -47,30 +47,29 @@ Rationale: CI and local runs share one entry point, so a passing result means th
 
 Public interfaces covered by Principle I:
 
-- Discord commands, their arguments, and their documented behavior.
+- Discord commands, their arguments, and their documented behavior (`specs/001-dotnet-rewrite/contracts/commands.md`).
 - Environment variables documented in `.env.example` and `README.md`.
 - Published container images and the `docker-compose.yml` deployment.
-- The saved source data managed by `services/sources.py`.
 
-Internal Python modules and helper functions are not public interfaces.
+Internal .NET types and helper methods are not public interfaces.
 
-Layers covered by Principle II:
+Layers covered by Principle II (enforced by project references):
 
-- `bot.py`: process entry point and startup wiring.
-- `cogs/`: Discord commands and user-facing interaction; may call `services/` and `streaming/`.
-- `services/`: clients and parsers for external systems and source data; MUST NOT depend on
-  `cogs/` or `streaming/`.
-- `streaming/`: the go-live, video, and audio pipeline. Its one existing call into `cogs/`, from
-  `streaming/engine.py` to `cogs/utils.py`, MUST NOT be extended to other cog modules.
-- `permissions.py`, `redact.py`, `davey_compat.py`, `video_compat.py`: shared cross-cutting modules.
+- `src/Slopsoil.Host`: process entry point and startup wiring.
+- `src/Slopsoil.Commands`: Discord commands and user-facing interaction; may use every other project.
+- `src/Slopsoil.Services`: Jellyfin and SyncPlay clients; MUST depend only on `Slopsoil.Common`.
+- `src/Slopsoil.Streaming`: the FFmpeg video and audio pipeline and stream engine; MUST depend only on
+  `Slopsoil.Discord` and `Slopsoil.Common`.
+- `src/Slopsoil.Discord`: gateway, voice, go-live, RTP, transport crypto and DAVE; MUST depend only on
+  `Slopsoil.Common`.
+- `src/Slopsoil.Common`: configuration, redaction and permissions shared by all layers.
 
 ## Development Workflow
 
-- Run the unit suite with `ci/test/run.sh`, the same entry point CI uses through
-  `.github/actions/unit-tests`.
-- Total coverage MUST remain at or above the `fail_under` value in `pyproject.toml`, currently 90%.
-- Tests that need FFmpeg are skipped when it is absent; such skips MUST be reported under
-  Principle IV.
+- Run the unit suite with `ci/test.sh`, the same entry point CI uses.
+- Line coverage MUST remain at or above the `COVERAGE_MIN` default in `ci/test.sh`, currently 90%.
+- Tests that need FFmpeg or `libdave` are skipped when they are absent; such skips MUST be reported
+  under Principle IV.
 - Feature plans MUST state which public interfaces and layers they touch, and whether they include
   a database migration.
 - Commit messages and pull request titles MUST follow
@@ -95,4 +94,4 @@ Versioning follows semantic versioning:
 Every feature plan and pull request review MUST check compliance with these principles. Any
 exception MUST be justified in the feature plan and approved by a maintainer.
 
-**Version**: 1.1.0 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-03
+**Version**: 1.2.0 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-04 (the Python bot was replaced by the .NET edition, spec 009)
