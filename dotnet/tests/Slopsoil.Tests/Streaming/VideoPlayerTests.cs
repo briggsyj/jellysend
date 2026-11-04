@@ -587,15 +587,18 @@ public sealed class VideoPlayerTests : IDisposable
         var proc = Proc(data, step: 14 * 10);
         long? stallUntil = null;
         var reads = 0;
+        VideoPlayer? player = null;
         proc.Stdout.OnRead = () =>
         {
-            if (++reads == 8)
+            // Start the stall only once playout is running AND ≥ 30 frames (3 s) are buffered. The stalled reader waits for
+            // the fake clock, which only the playing player moves: if the stall began during the pre-roll, or after the
+            // player had drained the buffer, both would wait on each other (seen on a slow CI runner).
+            if (++reads >= 8 && stallUntil is null && _sink.Count > 0 && player!.BufferedFrames >= 30)
             {
                 stallUntil = _time.GetTimestamp() + TimeSpan.FromSeconds(2).Ticks;
                 SpinWait.SpinUntil(() => _time.GetTimestamp() >= stallUntil, TimeSpan.FromSeconds(10));
             }
         };
-        VideoPlayer? player = null;
         _time.AutoFire = _ =>
         {
             // After the stall, let the reader refill (in real time) before the player moves the clock on.
