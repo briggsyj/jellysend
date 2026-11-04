@@ -34,6 +34,7 @@ public static partial class MediaText
         `!media resume 1:23:45` — jump to a time (`1:23` = 1h 23m; also `45m`, `90s`)
         `!media stop` — stop, stay in voice · `!media leave` — stop and leave
         `!media join` — join your voice channel
+        `!media subtitles` — pick subtitles, or `!media subs off` · `!media audio` — pick the audio track
         `!media aspect-ratio` — change the picture shape
         `!media debug on` / `off` — diagnostics on the stream
 

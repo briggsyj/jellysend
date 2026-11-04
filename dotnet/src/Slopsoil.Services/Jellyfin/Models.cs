@@ -73,7 +73,27 @@ public sealed record MediaItem
 /// <param name="HasAudio">Whether the source has an audio stream, if reported.</param>
 /// <param name="VideoCodec">Lower-case codec FFmpeg will receive (<c>h264</c> when transcoding), if reported.</param>
 /// <param name="RuntimeSeconds">Media source runtime in seconds, if reported and positive.</param>
-public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? HasAudio, string? VideoCodec, double? RuntimeSeconds = null);
+public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? HasAudio, string? VideoCodec, double? RuntimeSeconds = null)
+{
+    /// <summary>The source's audio and subtitle tracks (spec 005), in Jellyfin's index order.</summary>
+    public IReadOnlyList<MediaTrack> Tracks { get; init; } = [];
+
+    /// <summary>The tracks this session was started with.</summary>
+    public TrackSelection Selection { get; init; } = TrackSelection.Default;
+}
+
+/// <summary>An audio or subtitle track of a media source (from PlaybackInfo's MediaStreams).</summary>
+/// <param name="Index">Jellyfin stream index (what <c>AudioStreamIndex</c> / <c>SubtitleStreamIndex</c> take).</param>
+/// <param name="IsAudio">Audio track; otherwise a subtitle track.</param>
+/// <param name="Language">ISO language code if tagged (e.g. <c>eng</c>).</param>
+/// <param name="Label">Human-readable name (Jellyfin's DisplayTitle, else language + codec).</param>
+public sealed record MediaTrack(int Index, bool IsAudio, string? Language, string Label, bool IsDefault, bool IsForced);
+
+/// <summary>Which tracks to play: <see cref="AudioIndex"/> null = the source's default audio; <see cref="SubtitleIndex"/> null = no subtitles.</summary>
+public sealed record TrackSelection(int? AudioIndex, int? SubtitleIndex)
+{
+    public static TrackSelection Default { get; } = new(null, null);
+}
 
 /// <summary>Result of <c>/Users/AuthenticateByName</c>.</summary>
 /// <param name="AccessToken">User access token (use as <c>Token</c> / <c>api_key</c>).</param>

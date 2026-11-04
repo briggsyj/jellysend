@@ -99,7 +99,7 @@ public sealed class JellyfinClientTests
             ? FakeHttpHandler.Json("[]")
             : PlaybackResponse(new { TranscodingUrl = "/t.m3u8" });
 
-        var stream = await _client.StartPlaybackAsync("item-1", Ct);
+        var stream = await _client.StartPlaybackAsync("item-1", null, Ct);
 
         Assert.NotNull(stream);
         Assert.Equal($"{Base}/t.m3u8?SubtitleStreamIndex=-1&api_key=testkey", stream.Url);
@@ -141,7 +141,7 @@ public sealed class JellyfinClientTests
     {
         _client.CachedUserId = "u";
         _http.Responder = _ => PlaybackResponse(new { TranscodingUrl = "/t.m3u8?PlaySessionId=from-url" }, playSessionId: null);
-        var stream = await _client.StartPlaybackAsync("item-1", Ct);
+        var stream = await _client.StartPlaybackAsync("item-1", null, Ct);
         Assert.Equal("from-url", stream!.PlaySessionId);
     }
 
@@ -163,7 +163,7 @@ public sealed class JellyfinClientTests
     {
         _client.CachedUserId = "u";
         _http.Responder = _ => throw new HttpRequestException("connection refused to http://jf/x?api_key=SECRET");
-        Assert.Null(await _client.StartPlaybackAsync("item-1", Ct));
+        Assert.Null(await _client.StartPlaybackAsync("item-1", null, Ct));
         Assert.True(_log.Has(LogLevel.Warning, "PlaybackInfo failed for item item-1"));
         Assert.DoesNotContain("SECRET", _log.Text, StringComparison.Ordinal);
     }
@@ -173,7 +173,7 @@ public sealed class JellyfinClientTests
     {
         _client.CachedUserId = "u";
         _http.Responder = _ => FakeHttpHandler.Json("{}", HttpStatusCode.BadRequest);
-        Assert.Null(await _client.StartPlaybackAsync("item-1", Ct));
+        Assert.Null(await _client.StartPlaybackAsync("item-1", null, Ct));
         Assert.True(_log.Has(LogLevel.Warning, "HTTP 400"));
     }
 
@@ -197,7 +197,7 @@ public sealed class JellyfinClientTests
     {
         _client.CachedUserId = "u";
         _http.Responder = _ => FakeHttpHandler.Json($$"""{"MediaSources": [{{source}}], "PlaySessionId": "ps-9"}""");
-        var stream = await _client.StartPlaybackAsync("item-1", Ct);
+        var stream = await _client.StartPlaybackAsync("item-1", null, Ct);
         Assert.NotNull(stream);
         Assert.Equal((hasAudio, codec), (stream.HasAudio, stream.VideoCodec));
         Assert.Equal("ps-9", stream.PlaySessionId);
@@ -211,7 +211,7 @@ public sealed class JellyfinClientTests
     {
         _client.CachedUserId = "u";
         _http.Responder = _ => FakeHttpHandler.Json($$"""{"MediaSources": [{"TranscodingUrl": "/t", "RunTimeTicks": {{ticks}}}]}""");
-        var stream = await _client.StartPlaybackAsync("item-1", Ct);
+        var stream = await _client.StartPlaybackAsync("item-1", null, Ct);
         Assert.Equal(seconds, stream!.RuntimeSeconds);
         Assert.Null(stream.PlaySessionId);
     }

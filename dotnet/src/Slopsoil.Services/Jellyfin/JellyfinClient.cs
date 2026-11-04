@@ -193,7 +193,11 @@ public sealed class JellyfinClient : IDisposable
 
     /// <summary>Start a playback session and return just the stream URL (null on failure).</summary>
     public async Task<string?> GetStreamUrlAsync(string itemId, CancellationToken ct = default) =>
-        (await StartPlaybackAsync(itemId, ct).ConfigureAwait(false))?.Url;
+        (await StartPlaybackAsync(itemId, null, ct).ConfigureAwait(false))?.Url;
+
+    /// <summary>Subtitle formats Jellyfin may burn in (method Encode) when a subtitle track is selected.</summary>
+    internal static readonly IReadOnlyList<string> BurnInFormats =
+        ["srt", "subrip", "ass", "ssa", "vtt", "webvtt", "mov_text", "pgssub", "pgs", "dvdsub", "vobsub", "dvbsub", "sub", "smi", "ttml"];
 
     /// <summary>
     /// Start a playback session via <c>POST /Items/{id}/PlaybackInfo</c> with an H.264/AAC HLS DeviceProfile and no
@@ -201,13 +205,16 @@ public sealed class JellyfinClient : IDisposable
     /// can override the body's -1 and burn subtitles in) and <c>api_key</c> appended so FFmpeg can fetch segments.
     /// Returns null when the request fails or yields no usable source (logged).
     /// </summary>
-    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct = default)
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default)
     {
+        tracks ??= TrackSelection.Default;
+        var subtitle = tracks.SubtitleIndex ?? -1;
         var userId = await GetUserIdAsync(ct).ConfigureAwait(false);
         var payload = new JsonObject
         {
-            // -1 + an empty SubtitleProfiles list: no soft subtitle track and no burned-in subtitles.
-            ["SubtitleStreamIndex"] = -1,
+            // -1 + an empty SubtitleProfiles list: no soft subtitle track and no burned-in subtitles. A selected
+            // subtitle track is burned in by Jellyfin's transcoder (every format with method Encode, spec 005).
+            ["SubtitleStreamIndex"] = subtitle,
             ["DeviceProfile"] = new JsonObject
             {
                 ["MaxStreamingBitrate"] = 8_000_000,
@@ -223,9 +230,15 @@ public sealed class JellyfinClient : IDisposable
                 }),
                 ["DirectPlayProfiles"] = new JsonArray(),
                 ["CodecProfiles"] = new JsonArray(),
-                ["SubtitleProfiles"] = new JsonArray(),
+                ["SubtitleProfiles"] = subtitle < 0
+                    ? new JsonArray()
+                    : new JsonArray([.. BurnInFormats.Select(f => (JsonNode)new JsonObject { ["Format"] = f, ["Method"] = "Encode" })]),
             },
         };
+        if (tracks.AudioIndex is { } audio)
+        {
+            payload["AudioStreamIndex"] = audio;
+        }
         var query = new List<(string, string)> { ("DeviceId", AuthHeader.DefaultDeviceId) };
         if (!string.IsNullOrEmpty(userId))
         {
@@ -272,7 +285,7 @@ public sealed class JellyfinClient : IDisposable
         var full = raw.StartsWith("http://", StringComparison.Ordinal) || raw.StartsWith("https://", StringComparison.Ordinal)
             ? raw
             : BaseUrl + raw;
-        full = ForceNoSubtitles(full, out var queryPlaySession);
+        full = ForceTracks(full, subtitle, tracks.AudioIndex, out var queryPlaySession);
         var (hasAudio, codec) = StreamMetadata(source, transcodingUrl is not null);
         long? runtimeTicks = source.ValueKind == JsonValueKind.Object
             && source.TryGetProperty("RunTimeTicks", out var rt)
@@ -284,7 +297,40 @@ public sealed class JellyfinClient : IDisposable
             NonEmptyString(result, "PlaySessionId") ?? queryPlaySession,
             hasAudio,
             codec,
-            runtimeTicks is { } ticks ? JellyfinTicks.ToSeconds(ticks) : null);
+            runtimeTicks is { } ticks ? JellyfinTicks.ToSeconds(ticks) : null)
+        {
+            Tracks = ParseTracks(source),
+            Selection = tracks,
+        };
+    }
+
+    /// <summary>Audio and subtitle tracks of a media source, in index order (spec 005).</summary>
+    internal static IReadOnlyList<MediaTrack> ParseTracks(JsonElement source)
+    {
+        if (source.ValueKind != JsonValueKind.Object || !source.TryGetProperty("MediaStreams", out var streams) || streams.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var tracks = new List<MediaTrack>();
+        foreach (var s in streams.EnumerateArray())
+        {
+            var type = NonEmptyString(s, "Type");
+            if (type is not ("Audio" or "Subtitle") || !s.TryGetProperty("Index", out var i) || !i.TryGetInt32(out var index))
+            {
+                continue;
+            }
+
+            var language = NonEmptyString(s, "Language");
+            var codec = NonEmptyString(s, "Codec")?.ToUpperInvariant();
+            var label = NonEmptyString(s, "DisplayTitle")
+                ?? string.Join(" — ", new[] { language ?? "Unknown", codec }.Where(x => x is not null));
+            tracks.Add(new MediaTrack(index, type == "Audio", language, label, Flag(s, "IsDefault"), Flag(s, "IsForced")));
+        }
+
+        return tracks;
+
+        static bool Flag(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
     }
 
     /// <summary>
@@ -381,7 +427,13 @@ public sealed class JellyfinClient : IDisposable
     /// Rewrite the query so <c>SubtitleStreamIndex=-1</c> (first value per key kept, like <c>parse_qs</c> →
     /// <c>urlencode</c>), returning the URL's <c>PlaySessionId</c> query value if any.
     /// </summary>
-    internal static string ForceNoSubtitles(string url, out string? playSessionId)
+    internal static string ForceNoSubtitles(string url, out string? playSessionId) => ForceTracks(url, -1, null, out playSessionId);
+
+    /// <summary>
+    /// Rewrite the query so <c>SubtitleStreamIndex</c> (and <c>AudioStreamIndex</c> when given) say what we asked
+    /// for — the user's server profile could otherwise override them — returning the URL's <c>PlaySessionId</c>.
+    /// </summary>
+    internal static string ForceTracks(string url, int subtitleIndex, int? audioIndex, out string? playSessionId)
     {
         var fragment = "";
         var hash = url.IndexOf('#', StringComparison.Ordinal);
@@ -412,14 +464,23 @@ public sealed class JellyfinClient : IDisposable
             }
         }
 
-        var index = pairs.FindIndex(p => p.Key == "SubtitleStreamIndex");
-        if (index >= 0)
+        void Set(string key, string value)
         {
-            pairs[index] = new("SubtitleStreamIndex", "-1");
+            var index = pairs.FindIndex(p => p.Key == key);
+            if (index >= 0)
+            {
+                pairs[index] = new(key, value);
+            }
+            else
+            {
+                pairs.Add(new(key, value));
+            }
         }
-        else
+
+        Set("SubtitleStreamIndex", subtitleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (audioIndex is { } audio)
         {
-            pairs.Add(new("SubtitleStreamIndex", "-1"));
+            Set("AudioStreamIndex", audio.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         playSessionId = pairs.Find(p => p.Key == "PlaySessionId").Value;

@@ -20,7 +20,8 @@ public interface IMediaLibrary
 
     Task<MediaItem?> GetItemAsync(string itemId, CancellationToken ct);
 
-    Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct);
+    /// <summary>Start a playback session with <paramref name="tracks"/> (null: default audio, no subtitles).</summary>
+    Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct);
 
     Task StopEncodingAsync(string? playSessionId, CancellationToken ct);
 

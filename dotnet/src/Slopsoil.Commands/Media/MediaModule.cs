@@ -54,6 +54,9 @@ public sealed class MediaModule : IStreamControl
     private readonly ConcurrentDictionary<ulong, double> _aspect = new();
     private readonly ConcurrentDictionary<ulong, bool> _debug = new();
 
+    // Spec 005: remembered subtitle/audio languages per guild; cleared on leave.
+    private readonly ConcurrentDictionary<ulong, TrackPrefs> _trackPrefs = new();
+
     public MediaModule(
         IMediaLibrary? library,
         StreamEngine engine,
@@ -104,7 +107,9 @@ public sealed class MediaModule : IStreamControl
             .Sub("remove", Role.Friend, RemoveAsync)
             .Sub("aspect-ratio", Role.Friend, AspectAsync, "aspect", "ar")
             .Sub("playlist", Role.Friend, PlaylistAsync)
-            .Sub("debug", Role.Friend, DebugAsync);
+            .Sub("debug", Role.Friend, DebugAsync)
+            .Sub("subtitles", Role.Friend, SubtitlesAsync, "subs", "sub")
+            .Sub("audio", Role.Friend, AudioTrackAsync);
 
         router.Add("join", Role.Friend, voice.JoinAsync);
         router.Add("leave", Role.Friend, voice.LeaveAsync);
@@ -826,11 +831,12 @@ public sealed class MediaModule : IStreamControl
     }
 
     /// <summary><see cref="StartItemAsync"/> body; the caller holds <c>state.StartLock</c>.</summary>
-    private async Task<StartResult> StartItemHoldingLockAsync(ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync)
+    private async Task<StartResult> StartItemHoldingLockAsync(
+        ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, TrackSelection? tracks = null)
     {
         var generation = Interlocked.Increment(ref state.Generation);
         var hadPlayer = _engine.GetPlayback(guild) is not null;
-        var result = await StartItemLockedAsync(guild, state, channel, item, start, sync, generation).ConfigureAwait(false);
+        var result = await StartItemLockedAsync(guild, state, channel, item, start, sync, generation, tracks).ConfigureAwait(false);
         if (result == StartResult.Failed && Volatile.Read(ref state.Generation) == generation)
         {
             if (hadPlayer && _engine.GetPlayback(guild) is not null)
@@ -854,7 +860,8 @@ public sealed class MediaModule : IStreamControl
     private bool StillCurrent(ulong guild, GuildState state, long generation) =>
         _states.TryGetValue(guild, out var current) && ReferenceEquals(current, state) && Volatile.Read(ref state.Generation) == generation;
 
-    private async Task<StartResult> StartItemLockedAsync(ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, long generation)
+    private async Task<StartResult> StartItemLockedAsync(
+        ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, long generation, TrackSelection? tracks)
     {
         var library = _library!;
         var send = state.Send;
@@ -862,7 +869,14 @@ public sealed class MediaModule : IStreamControl
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
 
         await send("checking stream…").ConfigureAwait(false);
-        var stream = await library.StartPlaybackAsync(item.Id, CancellationToken.None).ConfigureAwait(false);
+        var stream = await library.StartPlaybackAsync(item.Id, tracks, CancellationToken.None).ConfigureAwait(false);
+        if (stream is not null && tracks is null && ResolveTracks(guild, stream.Tracks) is { } preferred && preferred != stream.Selection)
+        {
+            // The remembered subtitle/audio language picks other tracks: reopen the session with them (spec 005).
+            await library.StopEncodingAsync(stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
+            stream = await library.StartPlaybackAsync(item.Id, preferred, CancellationToken.None).ConfigureAwait(false);
+        }
+
         if (stream is null)
         {
             await send($"could not start a Jellyfin playback session for **{label}** — check that the server is reachable and the credentials are valid").ConfigureAwait(false);
@@ -1136,6 +1150,7 @@ public sealed class MediaModule : IStreamControl
     private async Task TeardownAsync(ulong guild)
     {
         _debug.TryRemove(guild, out _);
+        _trackPrefs.TryRemove(guild, out _);
         if (!_states.TryRemove(guild, out var state))
         {
             return;
@@ -1372,6 +1387,157 @@ public sealed class MediaModule : IStreamControl
         catch (Exception ex)
         {
             _log.LogWarning(ex, "{What} failed", what);
+        }
+    }
+
+    // ── Subtitle and audio tracks (spec 005) ─────────────────────────────────
+
+    /// <summary>Remembered per guild: subtitles on in a language (or off), audio in a language (null: default).</summary>
+    private sealed record TrackPrefs(bool SubtitlesOn, string? SubtitleLanguage, string? AudioLanguage);
+
+    /// <summary>The tracks the guild's remembered languages pick for an item (default/off when nothing matches).</summary>
+    private TrackSelection ResolveTracks(ulong guild, IReadOnlyList<MediaTrack> tracks)
+    {
+        if (!_trackPrefs.TryGetValue(guild, out var prefs))
+        {
+            return TrackSelection.Default;
+        }
+
+        static bool Same(string? a, string? b) => a is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        int? audio = null;
+        if (prefs.AudioLanguage is { } language && tracks.FirstOrDefault(t => t.IsAudio && Same(t.Language, language)) is { } a && !a.IsDefault)
+        {
+            audio = a.Index;
+        }
+
+        int? subtitle = null;
+        if (prefs.SubtitlesOn && prefs.SubtitleLanguage is { } subLanguage)
+        {
+            var matches = tracks.Where(t => !t.IsAudio && Same(t.Language, subLanguage)).ToList();
+            subtitle = (matches.FirstOrDefault(t => !t.IsForced) ?? matches.FirstOrDefault())?.Index;
+        }
+
+        return new TrackSelection(audio, subtitle);
+    }
+
+    /// <summary><c>!media subtitles</c> (<c>subs</c>, <c>sub</c>): picker, or <c>off</c> / a number; burned in by Jellyfin.</summary>
+    private Task SubtitlesAsync(CommandContext c) => PickTrackAsync(c, audio: false);
+
+    /// <summary><c>!media audio</c>: pick the audio track.</summary>
+    private Task AudioTrackAsync(CommandContext c) => PickTrackAsync(c, audio: true);
+
+    private async Task PickTrackAsync(CommandContext c, bool audio)
+    {
+        var arg = c.Rest.Trim();
+        var off = !audio && arg.Equals("off", StringComparison.OrdinalIgnoreCase);
+        var word = c.InvokedWith.Length > 0 ? c.InvokedWith : audio ? "audio" : "subtitles";
+        if (arg.Length > 0 && !off && !arg.All(char.IsAsciiDigit))
+        {
+            await TitleFallthroughAsync(c, word, arg).ConfigureAwait(false); // `!media audio of the past` is a title
+            return;
+        }
+
+        var guild = ContextGuild(c);
+        if (guild is null || !_states.TryGetValue(guild.Value, out var state) || state.Now is not { } now || _engine.GetPlayback(guild.Value) is null)
+        {
+            await c.ReplyAsync("nothing is playing").ConfigureAwait(false);
+            return;
+        }
+
+        var tracks = now.Stream.Tracks.Where(t => t.IsAudio == audio).ToList();
+        if (tracks.Count == 0 && !off)
+        {
+            await c.ReplyAsync(audio ? "this item has no audio tracks to choose from" : "this item has no subtitles").ConfigureAwait(false);
+            return;
+        }
+
+        // Options: subtitles get "Off" first.
+        var options = new List<MediaTrack?>();
+        if (!audio)
+        {
+            options.Add(null);
+        }
+
+        options.AddRange(tracks);
+        var currentIndex = audio
+            ? now.Stream.Selection.AudioIndex ?? tracks.FirstOrDefault(t => t.IsDefault)?.Index ?? tracks[0].Index
+            : now.Stream.Selection.SubtitleIndex;
+
+        int choice;
+        if (off)
+        {
+            choice = 0;
+        }
+        else if (arg.Length > 0)
+        {
+            if (!int.TryParse(arg, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) || n < 1 || n > options.Count)
+            {
+                await c.ReplyAsync($"pick a number between 1 and {options.Count} — see `!media {(audio ? "audio" : "subtitles")}`").ConfigureAwait(false);
+                return;
+            }
+
+            choice = n - 1;
+        }
+        else
+        {
+            var lines = new List<string> { $"**{(audio ? "Audio track" : "Subtitles")}** — reply with a number:" };
+            for (var i = 0; i < options.Count; i++)
+            {
+                var label = options[i] is { } t ? TrackLabel(t) : "Off";
+                var mark = options[i]?.Index == currentIndex ? "  ← current" : "";
+                lines.Add($"`{i + 1}` {label}{mark}");
+            }
+
+            await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
+            if (await NumberPrompt.AskAsync(c, options.Count).ConfigureAwait(false) is not { } picked)
+            {
+                return;
+            }
+
+            choice = picked - 1;
+        }
+
+        var track = options[choice];
+        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(false, null, null));
+        _trackPrefs[guild.Value] = audio
+            ? prefs with { AudioLanguage = track?.Language }
+            : prefs with { SubtitlesOn = track is not null, SubtitleLanguage = track?.Language };
+
+        var emoji = audio ? "🔊 audio" : "💬 subtitles";
+        var name = track is null ? "off" : $"**{TrackLabel(track)}**";
+        if (track?.Index == currentIndex)
+        {
+            await c.ReplyAsync($"{emoji}: {name} (already on)").ConfigureAwait(false);
+            return;
+        }
+
+        var selection = audio
+            ? now.Stream.Selection with { AudioIndex = track!.Index }
+            : now.Stream.Selection with { SubtitleIndex = track?.Index };
+        await c.ReplyAsync($"{emoji}: {name} — switching…").ConfigureAwait(false);
+        await RestartWithTracksAsync(guild.Value, state, now, selection).ConfigureAwait(false);
+    }
+
+    private static string TrackLabel(MediaTrack t) =>
+        t.Label + (t.IsForced && !t.Label.Contains("forced", StringComparison.OrdinalIgnoreCase) ? " (forced)" : "");
+
+    /// <summary>Reopen the current item with other tracks at its current position (the screenshare stays up).</summary>
+    private async Task RestartWithTracksAsync(ulong guild, GuildState state, NowPlaying now, TrackSelection selection)
+    {
+        await state.StartLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!ReferenceEquals(state.Now, now) || _engine.GetPlayback(guild) is not { } playback || _voice.Get(guild) is not { } link)
+            {
+                return; // something else started or stopped meanwhile
+            }
+
+            await StartItemHoldingLockAsync(guild, state, link.ChannelId, now.Item, playback.Position, sync: false, tracks: selection).ConfigureAwait(false);
+        }
+        finally
+        {
+            state.StartLock.Release();
         }
     }
 

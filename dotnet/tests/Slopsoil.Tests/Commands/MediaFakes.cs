@@ -123,15 +123,31 @@ internal sealed class FakeLibrary : IMediaLibrary
 
     public TaskCompletionSource PlaybackEntered { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, CancellationToken ct)
+    /// <summary>Audio/subtitle tracks per item id (spec 005).</summary>
+    public Dictionary<string, List<MediaTrack>> Tracks { get; } = [];
+
+    /// <summary>Every StartPlaybackAsync call: (item, tracks requested).</summary>
+    public List<(string Item, TrackSelection? Tracks)> PlaybackCalls { get; } = [];
+
+    public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct)
     {
+        lock (PlaybackCalls)
+        {
+            PlaybackCalls.Add((itemId, tracks));
+        }
+
         PlaybackEntered.TrySetResult();
         if (PlaybackGate is { } gate)
         {
             await gate.Task;
         }
 
-        return await StartPlaybackCoreAsync(itemId);
+        var stream = await StartPlaybackCoreAsync(itemId);
+        return stream is null ? null : stream with
+        {
+            Tracks = Tracks.TryGetValue(itemId, out var t) ? t : [],
+            Selection = tracks ?? TrackSelection.Default,
+        };
     }
 
     private Task<PlaybackStream?> StartPlaybackCoreAsync(string itemId)
