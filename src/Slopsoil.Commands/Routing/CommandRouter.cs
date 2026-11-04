@@ -7,11 +7,15 @@ public delegate Task CommandHandler(CommandContext context);
 /// <summary>
 /// <c>!</c>-prefixed command dispatch (discord.py <c>commands.Bot</c> subset): commands with aliases,
 /// groups whose first word may name a sub-command (else the group's own handler gets the whole rest), names case-insensitive,
-/// a global "has any role" check and per-command role checks — failures are silent, as in Python.
+/// a global "has any role" check and per-command role checks — a failed check on a known command replies
+/// <see cref="DeniedReply"/> (spec 010); unknown commands are ignored.
 /// </summary>
 public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, MessageHub hub, Action<string, Exception>? onError = null)
 {
     public const char Prefix = '!';
+
+    /// <summary>Reply to a known command from someone whose role does not allow it (spec 010).</summary>
+    public const string DeniedReply = "_quack_ no.";
 
     private readonly Dictionary<string, Command> _commands = new(StringComparer.OrdinalIgnoreCase);
 
@@ -52,7 +56,7 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
         // only its own handler, each sub-command has its own (so `!media help` can be open to viewers).
         if (!RoleResolver.Satisfies(roles, message.AuthorId, Role.Viewer))
         {
-            return Task.CompletedTask;
+            return DenyAsync(message, ct);
         }
 
         var context = new CommandContext(message, rest, sender, hub, ct);
@@ -60,7 +64,20 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender sender, M
         var (target, targetContext) = command.TryGetSubcommand(sub, out var subcommand)
             ? (subcommand, context.WithRest(subRest, sub))
             : (command, context);
-        return RoleResolver.Satisfies(roles, message.AuthorId, target.Role) ? RunAsync(target, targetContext) : Task.CompletedTask;
+        return RoleResolver.Satisfies(roles, message.AuthorId, target.Role) ? RunAsync(target, targetContext) : DenyAsync(message, ct);
+    }
+
+    /// <summary>A known command its author may not run: say no (unknown commands stay silent).</summary>
+    private async Task DenyAsync(ChatMessage message, CancellationToken ct)
+    {
+        try
+        {
+            await sender.SendAsync(message.ChannelId, DeniedReply, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            onError?.Invoke("denied reply", ex);
+        }
     }
 
     private async Task RunAsync(Command command, CommandContext context)

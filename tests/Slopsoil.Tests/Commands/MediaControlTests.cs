@@ -357,9 +357,9 @@ public sealed class MediaControlTests
         await _h.Send("!media help", author: 30);
         await _h.Send("!ping", author: 30);
         await _h.Send("!help inception", author: 30);      // not a command: never a search
-        await _h.Send("!play film", author: 30);           // silent: viewers can't play
+        await _h.Send("!play film", author: 30);           // viewers can't play
         await _h.Send("!join", author: 30);
-        Assert.Equal([MediaText.HelpText, "pong!", "no command `inception` — `!help` lists them all"], _h.Texts);
+        Assert.Equal([MediaText.HelpText, "pong!", "no command `inception` — `!help` lists them all", "_quack_ no.", "_quack_ no."], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
 

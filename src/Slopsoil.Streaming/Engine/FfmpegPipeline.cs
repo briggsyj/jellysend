@@ -68,7 +68,16 @@ internal sealed class FfmpegPipeline : IPipeline
         _log = loggers.CreateLogger<FfmpegPipeline>();
         // Spec 007: STREAM_FPS is a ceiling; the output follows the source rate (evenly divided when above it).
         var fps = FrameRate.Choose(request.SourceFps, options.Fps);
-        _diagnostics = new StreamDiagnostics(fps, options.Resolution, options.VideoBitrate);
+        // Spec 010: a runtime output height replaces the configured box and scales the bitrate with it.
+        var (resolution, bitrate) = request.OutputHeight is { } height
+            ? OutputSize.For(height, options.Resolution, options.VideoBitrate)
+            : (options.Resolution, options.VideoBitrate);
+        if (request.OutputHeight is not null)
+        {
+            encoders = new EncoderSelection(encoders.Primary.For(resolution, bitrate), encoders.Fallback?.For(resolution, bitrate));
+        }
+
+        _diagnostics = new StreamDiagnostics(fps, resolution, bitrate);
         _diagnostics.SetSource(request.SourceCodec, request.RuntimeSeconds, FrameRate.Normalize(request.SourceFps));
         _sender = new RtpMediaSender(link.SendPacket, link.Mode, link.SecretKey, link.AudioSsrc, link.VideoSsrc, () => link.Dave) { Stats = _diagnostics };
         var playerOptions = new VideoPlayerOptions
@@ -87,8 +96,8 @@ internal sealed class FfmpegPipeline : IPipeline
             DebugOverlay = request.DebugOverlay,
             PacketPace = options.PacketPace,
             BufferSeconds = options.StreamBufferSeconds,
-            Resolution = options.Resolution,
-            Bitrate = options.VideoBitrate,
+            Resolution = resolution,
+            Bitrate = bitrate,
             TempDirectory = tempDirectory,
             OnSegmentStarting = () => link.Dave?.RegisterVideoSsrc(link.VideoSsrc),
         };

@@ -6,6 +6,9 @@ namespace Slopsoil.Commands.Media;
 /// <summary>One <c>!media aspect-ratio</c> choice: label and forced display ratio (null = the media's own).</summary>
 public sealed record AspectOption(string Label, double? Ratio);
 
+/// <summary>One <c>!resolution</c> choice: label and output height (null = the configured resolution).</summary>
+public sealed record ResolutionOption(string Label, int? Height);
+
 /// <summary>Pure text helpers and constants of <c>cogs/jellyfin.py</c>.</summary>
 public static partial class MediaText
 {
@@ -19,6 +22,59 @@ public static partial class MediaText
         new("2.39:1 — cinema scope (21:9)", 2.39),
         new("1.85:1 — theatrical widescreen", 1.85),
     ];
+
+    /// <summary>
+    /// <c>!resolution</c> choices (spec 010): output height, 16:9 box, bitrate scaled down with the pixels; null = the
+    /// configured <c>STREAM_RESOLUTION</c> / <c>STREAM_QUALITY</c>.
+    /// </summary>
+    public static readonly IReadOnlyList<ResolutionOption> ResolutionOptions =
+    [
+        new("Default — the configured resolution", null),
+        new("360p", 360),
+        new("480p", 480),
+        new("540p", 540),
+        new("720p", 720),
+        new("1080p", 1080),
+    ];
+
+    /// <summary>Index into <see cref="ResolutionOptions"/>: its number, <c>720p</c> / <c>720</c>, <c>1280x720</c>, <c>hd</c>, <c>default</c>.</summary>
+    public static int? FindResolution(string text)
+    {
+        var t = text.Trim().ToLowerInvariant().Replace(" ", "", StringComparison.Ordinal);
+        if (t.Length == 0)
+        {
+            return null;
+        }
+
+        if (t.Length == 1 && char.IsAsciiDigit(t[0]))
+        {
+            var n = t[0] - '0';
+            return n >= 1 && n <= ResolutionOptions.Count ? n - 1 : null;
+        }
+
+        t = t switch
+        {
+            "default" or "reset" or "auto" or "original" or "off" or "config" or "configured" => "default",
+            "sd" => "480",
+            "qhd" => "540",
+            "hd" => "720",
+            "fhd" or "fullhd" => "1080",
+            _ => t,
+        };
+        if (t == "default")
+        {
+            return 0;
+        }
+
+        if (t.Contains('x', StringComparison.Ordinal) || t.Contains(':', StringComparison.Ordinal))
+        {
+            t = t.Split('x', ':')[^1];
+        }
+
+        t = t.TrimEnd('p');
+        var index = ResolutionOptions.ToList().FindIndex(o => o.Height?.ToString(CultureInfo.InvariantCulture) == t);
+        return index >= 0 ? index : null;
+    }
 
     public const string HelpText = """
         **🎬 slopsoil**
@@ -34,7 +90,8 @@ public static partial class MediaText
         `!time` — where we are · `!time 1:23:45` — jump (`1:23` = 1h 23m; also `45m`, `90s`)
         `!stop` — stop, stay in voice · `!leave` — stop and leave · `!join` — join your voice channel
         `!subs` — subtitles (`!subs english`, `!subs off`) · `!audio` — audio track (`!audio japanese`)
-        `!ar` — picture shape (`!ar 16:9`) · `!debug on` / `off` — stats on the stream
+        `!ar` — picture shape (`!ar 16:9`) · `!res` — resolution (`!res 480p`)
+        `!debug on` / `off` — stats on the stream
 
         **Playlist** (max 10, plays in order)
         `!queue <title>` or `!queue <show> s01e02`
