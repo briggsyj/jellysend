@@ -46,7 +46,7 @@ revisit R4 with the maintainer (plan.md Delivery phase 0).
 - [X] T010 [P] Tests in `dotnet/tests/Slopsoil.Tests/Discord/SpsRewriteTests.cs` for SPS VUI rewrite (`bitstream_restriction_flag=1`, `max_num_reorder_frames=0`) against Python-generated vectors (reference `rewrite_sps_vui`)
 - [X] T011 (RtpPacketizer is `RtpHeader.cs`) Implement `dotnet/src/Slopsoil.Discord/Rtp/{RtpPacketizer.cs,H264Packetizer.cs,SpsRewriter.cs,TransportCrypto.cs}` (modes `aead_xchacha20_poly1305_rtpsize`, `xsalsa20_poly1305_lite`; nonce handling as `_encrypt` / `_encrypt_audio`) until T009–T010 pass
 - [X] T012 Implement `dotnet/src/Slopsoil.Discord/Gateway/GatewayClient.cs` (user-account IDENTIFY like discord.py-self, heartbeat, RESUME, dispatch of READY/GUILD_CREATE/VOICE_STATE_UPDATE/VOICE_SERVER_UPDATE/MESSAGE_CREATE and stream ops 18–20) and `Voice/VoiceConnection.cs` (voice ws v8, UDP IP discovery, select protocol with video capabilities per `video_compat.py`, DAVE opcodes per `davey_compat.py`) and `GoLive/GoLiveConnection.cs` (per `streaming/golive.py`, idempotent disconnect clearing the stream key)
-- [ ] T013 Spike harness `dotnet/src/Slopsoil.Host/Spike.cs`: when `SLOPSOIL_SPIKE=testpattern`, on `!join` start go-live with FFmpeg `testsrc2` + `sine` through T011/T012; validate manually per quickstart.md scenario 1 in a DAVE-enabled channel and record the result in `dotnet/README.md`
+- [X] T013 Spike harness `dotnet/src/Slopsoil.Host/Spike.cs`: when `SLOPSOIL_SPIKE=testpattern`, on `!join` start go-live with FFmpeg `testsrc2` + `sine` through T011/T012; validate manually per quickstart.md scenario 1 in a DAVE-enabled channel and record the result in `dotnet/README.md` (accepted by the maintainer from production use, 2026-11-04)
 
 **Checkpoint**: test pattern visible and audible to another Discord client → proceed.
 
@@ -146,7 +146,7 @@ targets hold; `off` removes it without a screenshare drop.
 ## Phase 9: Polish & cut-over
 
 - [X] T042 Log-scan test in `dotnet/tests/Slopsoil.Tests/Common/LogScanTests.cs` driving a full fake play/pause/seek/stop through the router and asserting no credential appears in captured logs (SC-006)
-- [ ] T043 Cut-over PR (after parity.md is signed off): tag last Python build as `v1.x`, switch `latest` to the .NET image, title `feat!: .NET edition becomes latest` with `BREAKING CHANGE:` footer naming the removed TV/IPTV/yt-dlp features and the Python tag to pin (constitution Principle I)
+- [X] T043 Cut-over PR (after parity.md is signed off): tag last Python build as `v1.x`, switch `latest` to the .NET image, title `feat!: .NET edition becomes latest` with `BREAKING CHANGE:` footer naming the removed TV/IPTV/yt-dlp features and the Python tag to pin (constitution Principle I). Done by spec 009 (2026-11-04): the maintainer accepted parity from production use and chose no Python rollback tag; the .NET code moved to the repository root
 
 ---
 

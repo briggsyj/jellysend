@@ -14,45 +14,11 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
-      pull-requests: write   # post/update the coverage comment on the PR
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
       - name: Run unit tests
         uses: ./.github/actions/unit-tests
-
-      - name: Post coverage comment
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: ci/test/post-coverage-comment.sh
-
-  # .NET edition (specs/001-dotnet-rewrite). Same gate style as the Python job:
-  # dotnet/ci/test.sh runs the suite and enforces the coverage minimum.
-  dotnet:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: dotnet
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: dotnet/global.json
-
-      - name: Install native dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium23 libopus0
-
-      - name: Run .NET tests with coverage gate
-        run: ci/test.sh

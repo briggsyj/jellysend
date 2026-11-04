@@ -10,7 +10,7 @@ namespace Slopsoil.Host;
 /// <summary>
 /// T049 soak mode (<c>SLOPSOIL_SOAK=1</c>): stream <c>SLOPSOIL_SOAK_FILE</c> through the real pipeline with the
 /// debug overlay on — no Discord, packets are encrypted and discarded — and append a diagnostics row to
-/// <c>SLOPSOIL_SOAK_CSV</c> every 10 s. See dotnet/tests/soak/README.md.
+/// <c>SLOPSOIL_SOAK_CSV</c> every 10 s. See tests/soak/README.md.
 /// </summary>
 internal static class Soak
 {

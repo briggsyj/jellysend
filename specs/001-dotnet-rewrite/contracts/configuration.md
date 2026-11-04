@@ -23,6 +23,6 @@ variables are ignored without error so an existing `.env` works unchanged.
 
 # Contract: Container image
 
-- Image `ghcr.io/briggsyj/slopsoil`; .NET builds tagged `dotnet`, `dotnet-sha-<short sha>` until cut-over,
-  then `latest` (spec Clarifications). Same volume (`/root/.local/share/slopsoil`, unused by the subset) and
-  `/dev/dri` device mapping as today so `docker-compose.yml` needs only the tag change.
+- Image `ghcr.io/briggsyj/slopsoil`: `latest` (newest `develop`), `sha-<short sha>`, release versions. Since the
+  cut-over (spec 009, 2026-11-04) these are the .NET image; the preview tags `dotnet` / `dotnet-sha-*` are no
+  longer published. `/dev/dri` device mapping as before; the old IPTV data volume is unused.

@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Slopsoil.Tests;
 
-/// <summary>Byte-exact vectors produced by the Python bot (dotnet/tests/vectors/make_vectors.py).</summary>
+/// <summary>Byte-exact vectors captured from the original Python bot (its generator was removed with it, spec 009).</summary>
 internal static class Vectors
 {
     private static readonly Lazy<JsonDocument> Doc = new(() =>

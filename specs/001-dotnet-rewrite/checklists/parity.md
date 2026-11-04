@@ -95,4 +95,4 @@ Legend: `<x>` = a value from your library; `…` = remainder of a multi-line rep
 | D3 | `!media debug on` / `off` / `debug` | overlay appears / disappears without dropping the screenshare / state + diagnostics reply | n/a | [ ] |
 | D4 | 2-hour item with debug on (T049 soak) | SC-008–SC-010 hold | n/a | [ ] |
 
-Signed off by: ____________ Date: ________ (both columns complete → T043 cut-over)
+Signed off by: maintainer, 2026-11-04 — accepted from production use of the `:dotnet` image without a row-by-row run (spec 009). The rows are kept as a manual regression list.

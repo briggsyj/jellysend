@@ -1,41 +1,56 @@
-# fedora-minimal is the slimmed-down Fedora base: same packages and repos as
-# fedora:44 but without the full dnf/Python stack, so the image is noticeably
-# smaller.  It ships `microdnf` (a thin dnf5 frontend) instead of dnf — the only
-# practical difference here is the command name; it still installs from RPM
-# Fusion and supports --allowerasing.  We stay in the Fedora family on purpose:
-# it's the only mainstream distro whose stock FFmpeg (ffmpeg-free) bundles
-# libopenh264 + the hardware encoders WITHOUT libx264 (see below), which keeps
-# the encoder behaviour identical to the working host.
-FROM registry.fedoraproject.org/fedora-minimal:44
-
-# ffmpeg-free is Fedora's standard FFmpeg build (no libx264, but includes
-# libopenh264, h264_vaapi, h264_nvenc, and h264_qsv).  This matches the
-# working host environment exactly.  Do NOT swap this for RPM Fusion's
-# `ffmpeg` package: it ships a different FFmpeg version with libx264, and
-# libx264's output currently causes Discord to drop the stream after one frame.
+# slopsoil image. Build from the repository root:  docker build -t slopsoil .
 #
-# ffmpeg-free's h264_vaapi encoder is only the libva *loader* — it still needs a
-# hardware-specific VA-API driver to reach the GPU.  Fedora's stock VA-API drivers
-# strip H.264/HEVC for patent reasons, so hardware H.264 encode needs the RPM
-# Fusion builds.  We install one driver per supported GPU vendor:
-#   * AMD            -> mesa-va-drivers-freeworld (radeonsi)  [RPM Fusion free]
-#   * Intel Gen8+    -> intel-media-driver        (iHD)       [RPM Fusion nonfree]
-#   * Intel pre-Gen8 -> libva-intel-driver        (i965)      [RPM Fusion free]
-# Without the matching driver the h264_vaapi probe fails and the bot silently
-# falls back to the libopenh264 software encoder.  (NVIDIA uses h264_nvenc, not
-# VA-API; that encoder is already compiled into ffmpeg-free and loads the host's
-# libnvidia-encode at runtime via the NVIDIA container toolkit — no image package
-# needed.)  Fedora's libva searches /usr/lib64/dri, dri-freeworld and dri-nonfree
-# by default and auto-selects the right driver from the /dev/dri device's PCI ID,
-# so installing every driver side by side is enough; we deliberately do NOT
-# hardcode LIBVA_DRIVER_NAME, which would force one vendor and break the others.
-# We enable RPM Fusion ONLY for these drivers (and libva-utils, which provides
-# `vainfo` for debugging) — ffmpeg itself stays on ffmpeg-free.
+# Stage 1 builds libdave (Discord's DAVE end-to-end encryption library) as a
+# shared library so the bot can P/Invoke its C API (dave.h). This mirrors the
+# libdave vcpkg recipe without vcpkg: mlspp at the commit libdave's overlay
+# port pins, with GREASE disabled and the `mlspp` C++ namespace, against the
+# system OpenSSL 3. Bump both pins together.
+FROM registry.fedoraproject.org/fedora:44 AS libdave
+ARG LIBDAVE_REF=6396c90aedbb9a6ee117ea9ce1ce9832af6a3375
+ARG MLSPP_REF=1cc50a124a3bc4e143a787ec934280dc70c1034d
+RUN dnf install -y gcc-c++ cmake ninja-build git openssl-devel json-devel \
+    && dnf clean all
+WORKDIR /src
+RUN git clone https://github.com/cisco/mlspp.git \
+    && git -C mlspp checkout "${MLSPP_REF}" \
+    # libdave doesn't use these and GCC 15 trips -Werror in mls_ds (same as the overlay port)
+    && sed -i '/^add_subdirectory(mls_ds)$/d;/^add_subdirectory(mls_vectors)$/d' mlspp/lib/CMakeLists.txt \
+    && cmake -S mlspp -B mlspp/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DDISABLE_GREASE=ON -DMLS_CXX_NAMESPACE=mlspp -DTESTING=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX=/opt/dave \
+    && cmake --build mlspp/build && cmake --install mlspp/build
+RUN git clone https://github.com/discord/libdave.git \
+    && git -C libdave checkout "${LIBDAVE_REF}" \
+    && cmake -S libdave/cpp -B libdave/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON -DTESTING=OFF -DCMAKE_PREFIX_PATH=/opt/dave \
+        -DCMAKE_INSTALL_PREFIX=/opt/dave \
+    && cmake --build libdave/build && cmake --install libdave/build \
+    # The CMake project is named "libdave", so the shared object is liblibdave.so;
+    # expose the name the P/Invoke resolver looks for as well.
+    && cd /opt/dave/lib* && for f in liblibdave.so*; do [ -e "$f" ] && ln -sf "$f" libdave.so && break; done; true
+
+# Stage 2: publish the host as a self-contained linux-x64 app.
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY . ./
+RUN dotnet publish src/Slopsoil.Host/Slopsoil.Host.csproj -c Release -r linux-x64 \
+        --self-contained true -o /out
+
+# Stage 3: runtime. Fedora's ffmpeg-free plus the RPM Fusion VA-API drivers
+# (mesa freeworld / Intel) for hardware H.264 encoding, libopus/libsodium for the
+# bot's own Opus encoding and transport encryption, and a monospace font for the
+# `!debug` overlay (FFmpeg drawtext resolves font=monospace via fontconfig).
+FROM registry.fedoraproject.org/fedora-minimal:44
 RUN microdnf install -y \
         ffmpeg-free \
         libva-utils \
-        python3 \
-        python3-pip \
+        opus \
+        libsodium \
+        openssl-libs \
+        libstdc++ \
+        libicu \
+        fontconfig \
+        dejavu-sans-mono-fonts \
         https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-44.noarch.rpm \
         https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-44.noarch.rpm \
     && microdnf install -y --allowerasing \
@@ -44,14 +59,8 @@ RUN microdnf install -y \
         libva-intel-driver \
     && microdnf clean all \
     && rm -rf /var/cache/dnf /var/cache/libdnf5
-
+COPY --from=libdave /opt/dave/lib*/*dave*.so* /usr/local/lib/
+RUN echo /usr/local/lib > /etc/ld.so.conf.d/slopsoil.conf && ldconfig
 WORKDIR /app
-
-# Install Python deps before copying source so this layer is cached unless
-# requirements.txt changes.
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python3", "bot.py"]
+COPY --from=build /out ./
+ENTRYPOINT ["/app/Slopsoil.Host"]

@@ -17,16 +17,16 @@ ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30:duration=7200 -f lavfi -i sin
 In the image (uses the same encoder detection, `/dev/dri` and `STREAM_*` settings as the bot):
 
 ```bash
-docker run --rm --device /dev/dri -v "$PWD:/soak" -e SLOPSOIL_SOAK=1 -e SLOPSOIL_SOAK_FILE=/soak/soak.mp4 -e SLOPSOIL_SOAK_CSV=/soak/soak.csv -e STREAM_QUALITY=1080p -e STREAM_FPS=30 ghcr.io/briggsyj/slopsoil:dotnet
+docker run --rm --device /dev/dri -v "$PWD:/soak" -e SLOPSOIL_SOAK=1 -e SLOPSOIL_SOAK_FILE=/soak/soak.mp4 -e SLOPSOIL_SOAK_CSV=/soak/soak.csv -e STREAM_QUALITY=1080p -e STREAM_FPS=30 ghcr.io/briggsyj/slopsoil:latest
 ```
 
-Or from a checkout: `SLOPSOIL_SOAK=1 SLOPSOIL_SOAK_FILE=soak.mp4 dotnet run --project dotnet/src/Slopsoil.Host`.
+Or from a checkout: `SLOPSOIL_SOAK=1 SLOPSOIL_SOAK_FILE=soak.mp4 dotnet run --project src/Slopsoil.Host`.
 `Ctrl+C` stops early; the CSV is flushed row by row.
 
 ## 3. Check the result
 
 ```bash
-python3 dotnet/tests/soak/check.py soak.csv
+python3 tests/soak/check.py soak.csv
 ```
 
 | Check | Spec | Computed from |

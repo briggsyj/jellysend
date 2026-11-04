@@ -8,9 +8,6 @@ on:
     branches: [develop]     # PRs whose base branch is develop
   push:
     tags: ["v*.*.*"]        # publishes versioned (1.2.3 / 1.2 / 1) tags
-    # .NET edition preview: every push publishes :dotnet / :dotnet-sha-<sha>
-    # (publish-dotnet only — the Python jobs skip branch pushes).
-    branches: [001-dotnet-rewrite]
   workflow_dispatch:        # allow manual builds
 
 # Only one publish run per ref at a time; cancel superseded runs to save minutes.
@@ -48,55 +45,26 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           push: false
           # Read-only: PR checks must not race the publish job for cache slots.
-          cache-from: type=gha
-
-  # PR check for the .NET edition image (specs/001-dotnet-rewrite T006): builds
-  # libdave + the self-contained host. Build-only; publish-dotnet pushes it.
-  build-check-dotnet:
-    if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Skip unless the .NET edition exists on this branch
-        id: has
-        run: |
-          if [ -f dotnet/Dockerfile ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
-
-      - name: Set up Docker Buildx
-        if: steps.has.outputs.yes == 'true'
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build .NET image (no push)
-        if: steps.has.outputs.yes == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: dotnet/Dockerfile
-          platforms: ${{ env.PLATFORMS }}
-          push: false
-          cache-from: type=gha,scope=dotnet
-          cache-to: type=gha,scope=dotnet,mode=max,ignore-error=true
+          cache-from: type=gha,scope=slopsoil
 
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
   # A closed-but-unmerged PR must never publish, so gate on merged == true.
   test:
-    if: (github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref_type == 'branch')) || (github.event.action == 'closed' && github.event.pull_request.merged == true)
+    if: github.event_name != 'pull_request' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Run unit tests
         uses: ./.github/actions/unit-tests
 
   publish:
     needs: test             # only publish if the tests passed
-    if: (github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref_type == 'branch')) || (github.event.action == 'closed' && github.event.pull_request.merged == true)
+    if: github.event_name != 'pull_request' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
 
     # On a merged PR the triggering ref is the PR merge ref, not develop. Resolve
@@ -145,8 +113,7 @@ jobs:
           images: ${{ steps.images.outputs.list }}
           title: slopsoil
           description: >-
-            Discord self-bot that streams live TV, IPTV, YouTube, Jellyfin and
-            HLS/RTSP sources into a Discord voice channel.
+            Discord self-bot that streams Jellyfin into a Discord voice channel.
           licenses: GPL-3.0-or-later
 
       - name: Set up Docker Buildx
@@ -176,121 +143,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Reuse layers across runs via the GitHub Actions cache backend.
-          cache-from: type=gha
+          cache-from: type=gha,scope=slopsoil
           # A cache write failure ("failed to reserve cache") must not fail the
           # publish — the image itself was built fine.
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-to: type=gha,scope=slopsoil,mode=max,ignore-error=true
           # Supply-chain metadata: SLSA provenance + SBOM attached to the image.
-          provenance: mode=max
-          sbom: true
-
-  # .NET edition image (specs/001-dotnet-rewrite T039), published side by side
-  # with the Python image until cut-over: :dotnet (moving) and
-  # :dotnet-sha-<short sha> (pinned). Never touches :latest. Runs on pushes to
-  # the rewrite branch, merged PRs into develop, and manual dispatch; skipped
-  # on refs without dotnet/. Gated on the .NET test suite.
-  publish-dotnet:
-    if: github.event_name != 'pull_request' || (github.event.action == 'closed' && github.event.pull_request.merged == true)
-    runs-on: ubuntu-latest
-    env:
-      TARGET_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.TARGET_SHA }}
-
-      - name: Skip unless the .NET edition exists on this ref
-        id: has
-        run: |
-          if [ -f dotnet/Dockerfile ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
-
-      - name: Set up .NET
-        if: steps.has.outputs.yes == 'true'
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: dotnet/global.json
-
-      - name: Run .NET tests with coverage gate
-        if: steps.has.outputs.yes == 'true'
-        working-directory: dotnet
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libsodium23 libopus0
-          ci/test.sh
-
-      - name: Compute .NET image tags
-        if: steps.has.outputs.yes == 'true'
-        id: tags
-        shell: bash
-        run: |
-          short="${TARGET_SHA::7}"
-          repos=("ghcr.io/${GITHUB_REPOSITORY,,}")
-          if [[ -n "${DOCKERHUB_USERNAME}" ]]; then
-            repos+=("docker.io/${DOCKERHUB_USERNAME,,}/slopsoil")
-          fi
-          {
-            echo "list<<EOF"
-            for r in "${repos[@]}"; do
-              echo "${r}:dotnet"
-              echo "${r}:dotnet-sha-${short}"
-            done
-            echo "EOF"
-            echo "images<<EOF"
-            printf '%s\n' "${repos[@]}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
-
-      # Reused for OCI labels only; its tags (latest/sha-*) belong to the Python image.
-      - name: Compute image labels
-        if: steps.has.outputs.yes == 'true'
-        id: meta
-        uses: ./.github/actions/docker-meta
-        with:
-          default-branch: develop
-          sha: ${{ env.TARGET_SHA }}
-          images: ${{ steps.tags.outputs.images }}
-          title: slopsoil (.NET edition)
-          description: >-
-            Discord self-bot that streams Jellyfin into a Discord voice channel
-            (.NET edition preview).
-          licenses: GPL-3.0-or-later
-
-      - name: Set up Docker Buildx
-        if: steps.has.outputs.yes == 'true'
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        if: steps.has.outputs.yes == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        if: steps.has.outputs.yes == 'true' && env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v4
-        with:
-          registry: docker.io
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push .NET image
-        if: steps.has.outputs.yes == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: dotnet/Dockerfile
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          tags: ${{ steps.tags.outputs.list }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=dotnet
-          cache-to: type=gha,scope=dotnet,mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
