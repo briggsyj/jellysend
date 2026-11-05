@@ -8,6 +8,9 @@ public static partial class NumberPrompt
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>The context's own wait (spec 028), else <see cref="Timeout"/>.</summary>
+    private static TimeSpan WaitFor(CommandContext context) => context.PromptTimeout ?? Timeout;
+
     /// <summary>
     /// The choice, or null after replying "⌛ No answer — cancelled.", "Cancelled." or an out-of-range message.
     /// <paramref name="match"/> also accepts a reply that names an option (spec 008: <c>english</c>, <c>16:9</c>) — it
@@ -20,13 +23,20 @@ public static partial class NumberPrompt
         bool Check(ChatMessage m)
         {
             var text = m.Content.Trim();
-            return m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId
+            return context.CanAnswer(m)
                 && (IsDecimal(text) || text.StartsWith(CommandRouter.Prefix) || Named(text) is not null);
         }
 
-        var reply = await context.Hub.WaitForAsync(Check, Timeout, context.Cancellation).ConfigureAwait(false);
+        context.Prompts.Shown = true;
+        var reply = await context.Hub.WaitForAsync(Check, WaitFor(context), context.Cancellation).ConfigureAwait(false);
         if (reply is null)
         {
+            if (context.PickFirstOnTimeout)
+            {
+                await context.ReplyAsync("⌛ No answer — going with the first one.").ConfigureAwait(false);
+                return 1;
+            }
+
             await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
             return null;
         }
@@ -62,9 +72,9 @@ public static partial class NumberPrompt
         string? Word(string text) => words.FirstOrDefault(w => w.Equals(text.Trim(), StringComparison.OrdinalIgnoreCase));
 
         var reply = await context.Hub.WaitForAsync(
-            m => m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId
+            m => context.CanAnswer(m)
                 && (Word(m.Content) is not null || m.Content.TrimStart().StartsWith(CommandRouter.Prefix)),
-            Timeout, context.Cancellation).ConfigureAwait(false);
+            WaitFor(context), context.Cancellation).ConfigureAwait(false);
         return reply is null ? null : Word(reply.Content);
     }
 
@@ -76,8 +86,8 @@ public static partial class NumberPrompt
     public static async Task<string?> AskTextAsync(CommandContext context)
     {
         var reply = await context.Hub.WaitForAsync(
-            m => m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId && m.Content.Trim().Length > 0,
-            Timeout, context.Cancellation).ConfigureAwait(false);
+            m => context.CanAnswer(m) && m.Content.Trim().Length > 0,
+            WaitFor(context), context.Cancellation).ConfigureAwait(false);
         if (reply is null)
         {
             await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
@@ -107,13 +117,20 @@ public static partial class NumberPrompt
         bool Check(ChatMessage m)
         {
             var text = m.Content.Trim();
-            return m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId
+            return context.CanAnswer(m)
                 && (IsDecimal(text) || IsList(text) || text.StartsWith(CommandRouter.Prefix));
         }
 
-        var reply = await context.Hub.WaitForAsync(Check, Timeout, context.Cancellation).ConfigureAwait(false);
+        context.Prompts.Shown = true;
+        var reply = await context.Hub.WaitForAsync(Check, WaitFor(context), context.Cancellation).ConfigureAwait(false);
         if (reply is null)
         {
+            if (context.PickFirstOnTimeout)
+            {
+                await context.ReplyAsync("⌛ No answer — going with the first one.").ConfigureAwait(false);
+                return [1];
+            }
+
             await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
             return null;
         }

@@ -184,3 +184,17 @@ internal sealed class GuildNames
     private static string? Name(JsonElement e) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
 }
+
+/// <summary><see cref="JellySend.Commands.Events.IEventSource"/> over Discord REST (spec 028).</summary>
+internal sealed class RestEventSource(JellySend.Discord.Rest.DiscordRestClient rest) : JellySend.Commands.Events.IEventSource
+{
+    public async Task<IReadOnlyList<ulong>> GetServerIdsAsync(CancellationToken ct) =>
+        [.. (await rest.GetGuildsAsync(ct).ConfigureAwait(false)).Select(g => g.Id)];
+
+    public async Task<IReadOnlyList<JellySend.Commands.Events.EventInfo>> GetEventsAsync(ulong guildId, CancellationToken ct) =>
+        [.. (await rest.GetScheduledEventsAsync(guildId, ct).ConfigureAwait(false)).Select(e => new JellySend.Commands.Events.EventInfo(
+            e.Id, e.GuildId, e.Name, e.Description, e.ChannelId, e.Status, e.EntityType, e.Start, e.CreatorId))];
+
+    public Task SetStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct) =>
+        rest.SetScheduledEventStatusAsync(guildId, eventId, status, ct);
+}

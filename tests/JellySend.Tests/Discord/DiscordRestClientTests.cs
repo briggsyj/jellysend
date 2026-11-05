@@ -69,6 +69,30 @@ public sealed class DiscordRestClientTests
     }
 
     [Fact]
+    public async Task Scheduled_events_are_read_and_started()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """
+            [
+              {"id":"9","name":"Movie Night","description":"Screenings:\n1. A","channel_id":"300","status":1,"entity_type":2,
+               "scheduled_start_time":"2026-11-06T09:30:00+00:00","creator_id":"20"},
+              {"id":"10","name":"Elsewhere","description":null,"channel_id":null,"status":2,"entity_type":3}
+            ]
+            """));
+        var events = await _client.GetScheduledEventsAsync(5, Ct);
+        Assert.Equal(
+            new ScheduledEvent(9, 5, "Movie Night", "Screenings:\n1. A", 300, 1, 2, new DateTimeOffset(2026, 11, 6, 9, 30, 0, TimeSpan.Zero), 20),
+            events[0]);
+        Assert.Equal(new ScheduledEvent(10, 5, "Elsewhere", "", null, 2, 3, DateTimeOffset.MaxValue, null), events[1]);
+
+        _responses.Enqueue(Respond(HttpStatusCode.OK, "{}"));
+        await _client.SetScheduledEventStatusAsync(5, 9, 2, Ct);
+        var (request, body) = _requests[^1];
+        Assert.Equal("PATCH", request.Method.Method);
+        Assert.Equal("https://discord.com/api/v9/guilds/5/scheduled-events/9", request.RequestUri!.ToString());
+        Assert.Equal("""{"status":2}""", body);
+    }
+
+    [Fact]
     public async Task Guilds_come_with_their_names()
     {
         _responses.Enqueue(Respond(HttpStatusCode.OK, """[{"id":"5","name":"Movie Night"},{"id":"6"}]"""));

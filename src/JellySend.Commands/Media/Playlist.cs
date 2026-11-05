@@ -63,6 +63,27 @@ public sealed class Playlist<T>(Func<T, string> label)
         }
     }
 
+    /// <summary>
+    /// Insert <paramref name="item"/> at <paramref name="index"/> (clamped), ignoring the cap (spec 028: an event's
+    /// screenings always fit, ahead of what was already waiting).
+    /// </summary>
+    public void InsertAt(int index, T item)
+    {
+        lock (_lock)
+        {
+            _items.Insert(Math.Clamp(index, 0, _items.Count), item);
+        }
+    }
+
+    /// <summary>The position of the last item matching <paramref name="match"/>, or -1.</summary>
+    public int LastIndexOf(Func<T, bool> match)
+    {
+        lock (_lock)
+        {
+            return _items.FindLastIndex(i => match(i));
+        }
+    }
+
     /// <summary>Remove and return the first item, or null when empty (auto-advance / skip).</summary>
     public T? TakeNext()
     {

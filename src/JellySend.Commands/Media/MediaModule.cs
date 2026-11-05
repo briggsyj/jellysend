@@ -18,7 +18,7 @@ namespace JellySend.Commands.Media;
 /// auto-advance, aspect ratio, SyncPlay group sync, and the .NET-only debug overlay. Also the
 /// <see cref="IStreamControl"/> the voice commands stop streams through.
 /// </summary>
-public sealed class MediaModule : IStreamControl
+public sealed partial class MediaModule : IStreamControl
 {
     /// <summary>Codecs the pipeline can transcode from.</summary>
     public static readonly IReadOnlySet<string> SupportedCodecs = new HashSet<string>(["h264", "hevc", "mpeg2video", "mpeg4", "mjpeg"]);
@@ -116,6 +116,7 @@ public sealed class MediaModule : IStreamControl
     public void Register(CommandRouter router, VoiceModule voice)
     {
         _voiceModule = voice;
+        _hub = router.Hub; // spec 028: event pickers wait on the same messages
         _voice.DefaultChannel = Settings.DefaultVoiceChannel; // spec 027
         var handlers = new Dictionary<string, CommandHandler>(StringComparer.Ordinal)
         {
@@ -1928,6 +1929,11 @@ public sealed class MediaModule : IStreamControl
     /// </summary>
     private async Task<bool> AdvanceHoldingLockAsync(ulong guild, GuildState state)
     {
+        if (state.Queue.Count == 0)
+        {
+            await ScreeningAdvanceAsync(state, null).ConfigureAwait(false); // spec 028: the last screening ended
+        }
+
         while (state.Queue.Count > 0)
         {
             if (_voice.Get(guild) is not { } link)
@@ -1936,6 +1942,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             var item = state.Queue.TakeNext()!;
+            await ScreeningAdvanceAsync(state, item).ConfigureAwait(false);
             await state.Send($"⏭ Coming up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
             switch (await StartItemHoldingLockAsync(guild, state, link.ChannelId, item, 0, sync: true).ConfigureAwait(false))
             {
@@ -2453,6 +2460,9 @@ public sealed class MediaModule : IStreamControl
         public long Generation;
 
         public Playlist<MediaItem> Queue { get; } = new(MediaLabels.Format);
+
+        /// <summary>The Discord event whose screenings are on (spec 028), if any.</summary>
+        public ScreeningRun? Screening { get; set; }
 
         public volatile NowPlaying? Now;
 

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using JellySend.Commands.Events;
 using JellySend.Common.Config;
 using JellySend.Commands.Media;
 using JellySend.Commands.Routing;
@@ -108,6 +109,7 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         {
             MaxPlaytime = options.MaxPlaytime,
             Settings = settings,
+            Announcer = new RestMessageSender(rest),
         };
         var voiceModule = new VoiceModule(
             voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout, announcer: new RestMessageSender(rest));
@@ -160,6 +162,11 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         {
             await gateway.ConnectAsync(token, stoppingToken);
             _log.LogInformation("Logged in as user {UserId}", gateway.UserId);
+
+            // Spec 028: Discord events with a "Screenings" list start the bot.
+            var events = new EventScheduler(
+                new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>());
+            _ = events.RunAsync(stoppingToken);
             await gateway.Completion.WaitAsync(stoppingToken);
             _log.LogError("Gateway connection ended; stopping");
             lifetime.StopApplication();

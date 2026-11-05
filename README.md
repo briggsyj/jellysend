@@ -238,6 +238,25 @@ Leave out what comes after `add`, `remove` or `order` and the bot asks for it. T
 | `!help` | All commands; `!help <command>` for one; `!help all` for every command in detail |
 | `!ping` | Is the bot alive? |
 
+### Discord Events (screenings)
+
+Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
+
+```
+Our monthly movie night!
+
+Screenings:
+1. Big Buck Bunny
+2. Example Show s1e1-3
+```
+
+- At the event's start time the bot starts the event and streams the screenings in the event's voice channel, taking over anything already playing (the rest of the playlist plays afterwards). Starting the event by hand in Discord starts them too.
+- Only events created by someone allowed to use `!play` count.
+- In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
+- A title that matches several things is asked about in that chat; anyone allowed to `!play` can answer, until shortly before that item is due. Unanswered, the first match is used. The schedule is posted again after each pick. Titles that aren't found are skipped.
+- When the last screening ends, the bot ends the event.
+- The bot's account needs **Manage Events** in the server to start and end events (the screenings still run without it), and permission to post in the voice channel's chat.
+
 #### Jellyfin SyncPlay (group watch)
 
 With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay group named after the Discord server. Join it in a Jellyfin app to pause, play and seek the Discord stream together.

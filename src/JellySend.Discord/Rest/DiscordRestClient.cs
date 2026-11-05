@@ -81,6 +81,40 @@ public sealed class DiscordRestClient
             .Select(c => (c.Id, c.Name))];
     }
 
+    /// <summary>
+    /// The guild's scheduled events (spec 028): id, name, description, voice channel, status (1 scheduled, 2 active,
+    /// 3 completed, 4 cancelled), entity type (2 voice), scheduled start and creator.
+    /// </summary>
+    public async Task<IReadOnlyList<ScheduledEvent>> GetScheduledEventsAsync(ulong guildId, CancellationToken ct)
+    {
+        using var events = JsonDocument.Parse(await SendAsync(
+            HttpMethod.Get, $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events", null, ct).ConfigureAwait(false));
+        return [.. events.RootElement.EnumerateArray().Select(e => new ScheduledEvent(
+            Snowflake(e, "id") ?? 0,
+            guildId,
+            e.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+            e.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString()! : "",
+            Snowflake(e, "channel_id"),
+            e.TryGetProperty("status", out var s) && s.TryGetInt32(out var status) ? status : 0,
+            e.TryGetProperty("entity_type", out var t) && t.TryGetInt32(out var type) ? type : 0,
+            e.TryGetProperty("scheduled_start_time", out var st) && st.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(st.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var start)
+                ? start : DateTimeOffset.MaxValue,
+            Snowflake(e, "creator_id")))];
+    }
+
+    /// <summary>PATCH an event's status (spec 028): 2 starts it, 3 ends it.</summary>
+    public Task SetScheduledEventStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct) =>
+        SendAsync(
+            new HttpMethod("PATCH"),
+            $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events/{eventId.ToString(CultureInfo.InvariantCulture)}",
+            new JsonObject { ["status"] = status },
+            ct);
+
+    private static ulong? Snowflake(JsonElement e, string property) =>
+        e.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
+        && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
+
     /// <summary>The servers the account is in (spec 027: <c>!channel default</c>), in Discord's order.</summary>
     public async Task<IReadOnlyList<(ulong Id, string Name)>> GetGuildsAsync(CancellationToken ct)
     {
@@ -151,3 +185,7 @@ public sealed class DiscordRestClient
         return TimeSpan.FromSeconds(Math.Clamp(seconds ?? 1.0, 0.0, 60.0));
     }
 }
+
+/// <summary>A Discord scheduled event (spec 028).</summary>
+public sealed record ScheduledEvent(
+    ulong Id, ulong GuildId, string Name, string Description, ulong? ChannelId, int Status, int EntityType, DateTimeOffset Start, ulong? CreatorId);
