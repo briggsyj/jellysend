@@ -19,7 +19,7 @@ public sealed class StreamDiagnosticsTests
         string[] fields =
         [
             "FpsSent", "FpsTarget", "LateFrames", "MaxLatenessMs", "ReadStallMs", "PacketsPerSec", "SendDrops", "SendErrors",
-            "DriftMs", "SilenceSteps", "SkipSteps", "Encoder", "Resolution", "Bitrate", "SourceCodec", "SourceFps", "Position", "Runtime",
+            "DriftMs", "SilenceSteps", "SkipSteps", "Encoder", "Resolution", "Bitrate", "SourceCodec", "SourceFps", "Source", "Position", "Runtime",
             "VideoBufferSeconds", "AudioBufferSeconds",
         ];
         var props = typeof(StreamDiagnosticsSnapshot).GetProperties().Select(p => p.Name).ToHashSet();

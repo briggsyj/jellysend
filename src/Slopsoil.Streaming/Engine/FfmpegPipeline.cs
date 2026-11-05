@@ -82,7 +82,11 @@ internal sealed class FfmpegPipeline : IPipeline
         }
 
         _diagnostics = new StreamDiagnostics(fps, resolution, bitrate);
-        _diagnostics.SetSource(request.SourceCodec, request.RuntimeSeconds, FrameRate.Normalize(request.SourceFps));
+        _diagnostics.SetSource(
+            request.SourceCodec,
+            request.RuntimeSeconds,
+            FrameRate.Normalize(request.SourceFps),
+            request.JellyfinTranscodeReason is { } why ? StreamDiagnostics.JellyfinTranscode(why) : StreamDiagnostics.OriginalFile);
         _sender = new RtpMediaSender(link.SendPacket, link.Mode, link.SecretKey, link.AudioSsrc, link.VideoSsrc, () => link.Dave) { Stats = _diagnostics };
         var playerOptions = new VideoPlayerOptions
         {

@@ -285,4 +285,34 @@ public sealed class DirectStreamTests
         Assert.Equal(6, JellyfinClient.PlayingAudio([tracks[0], tracks[1]], null)!.Index);
         Assert.Null(JellyfinClient.PlayingAudio([tracks[0]], null));
     }
+
+    // ── spec 017: why Jellyfin transcodes, for the stats ──
+
+    [Fact]
+    public async Task A_direct_stream_has_no_transcode_reason()
+    {
+        Respond(FileSource());
+        Assert.Null((await Client().StartPlaybackAsync("i", null, Ct))!.TranscodeReason);
+    }
+
+    [Fact]
+    public async Task Transcodes_say_why()
+    {
+        async Task<string?> Reason(JellyfinClient client, TrackSelection? tracks = null, bool allowDirect = true) =>
+            (await client.StartPlaybackAsync("i", tracks, Ct, allowDirect))!.TranscodeReason;
+
+        Respond(FileSource());
+        Assert.Equal("direct stream turned off", await Reason(Client(direct: false)));
+        Assert.Equal("the original file failed to start", await Reason(Client(), allowDirect: false));
+        Assert.Equal("burning in subtitles", await Reason(Client(), new TrackSelection(null, 2)));
+        var picky = Client();
+        picky.CanDecode = _ => false;
+        Assert.Equal("bot can't decode video hevc, audio truehd", await Reason(picky));
+
+        Respond(FileSource(protocol: "Http"));
+        Assert.Equal("not a plain file (disc image or remote source)", await Reason(Client()));
+
+        Respond(ExternalFirstSource(externalAudio: true));
+        Assert.Equal("external audio track", await Reason(Client(), new TrackSelection(4, null)));
+    }
 }

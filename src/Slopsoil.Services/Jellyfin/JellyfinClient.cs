@@ -288,9 +288,11 @@ public sealed class JellyfinClient : IDisposable
         }
 
         var source = sources[0];
-        if (PreferDirectStream && allowDirect && tracks.SubtitleIndex is null && DirectSourceId(source) is { } sourceId && Decodable(itemId, source, tracks))
+        var whyTranscode = WhyNotDirect(itemId, source, tracks, allowDirect);
+        if (whyTranscode is null && DirectSourceId(source) is { } sourceId)
         {
             var (directAudio, directCodec) = StreamMetadata(source, transcoding: false);
+            whyTranscode = directCodec is null ? "video codec not reported" : null;
             if (directCodec is not null)
             {
                 var direct = $"{BaseUrl}/Videos/{Uri.EscapeDataString(itemId)}/stream?{Query(("static", "true"), ("MediaSourceId", sourceId))}";
@@ -338,35 +340,48 @@ public sealed class JellyfinClient : IDisposable
             Tracks = ParseTracks(source),
             Selection = tracks,
             FrameRate = FrameRateOf(source),
+            TranscodeReason = whyTranscode ?? "Jellyfin chose it",
         };
     }
 
-    private bool Decodable(string itemId, JsonElement source, TrackSelection tracks)
+    /// <summary>
+    /// Why the original file cannot be streamed directly (spec 017: shown in the stats), or null when it can.
+    /// </summary>
+    private string? WhyNotDirect(string itemId, JsonElement source, TrackSelection tracks, bool allowDirect)
     {
-        // The original file only holds its embedded tracks: an external audio file needs Jellyfin's transcode.
-        if (PlayingAudio(ParseTracks(source), tracks.AudioIndex) is { IsExternal: true } external)
+        string? why = null;
+        if (!PreferDirectStream)
         {
-            _log.LogInformation(
-                "Jellyfin: item {ItemId} plays the external audio file {Track}; using Jellyfin's transcode instead of the original file",
-                itemId, external.Label);
-            return false;
+            why = "direct stream turned off";
+        }
+        else if (!allowDirect)
+        {
+            why = "the original file failed to start";
+        }
+        else if (tracks.SubtitleIndex is not null)
+        {
+            why = "burning in subtitles";
+        }
+        else if (DirectSourceId(source) is null)
+        {
+            why = "not a plain file (disc image or remote source)";
+        }
+        else if (PlayingAudio(ParseTracks(source), tracks.AudioIndex) is { IsExternal: true })
+        {
+            // The original file only holds its embedded tracks: an external audio file needs Jellyfin's transcode.
+            why = "external audio track";
+        }
+        else if (CanDecode is { } canDecode && FormatOf(source, tracks.AudioIndex) is var format && !canDecode(format))
+        {
+            why = $"bot can't decode {format}";
         }
 
-        if (CanDecode is not { } canDecode)
+        if (why is not null && PreferDirectStream)
         {
-            return true;
+            _log.LogInformation("Jellyfin: using Jellyfin's transcode for item {ItemId} instead of the original file: {Reason}", itemId, why);
         }
 
-        var format = FormatOf(source, tracks.AudioIndex);
-        if (canDecode(format))
-        {
-            return true;
-        }
-
-        _log.LogInformation(
-            "Jellyfin: the bot's FFmpeg cannot decode item {ItemId} ({Format}); using Jellyfin's transcode instead of the original file",
-            itemId, format);
-        return false;
+        return why;
     }
 
     /// <summary>

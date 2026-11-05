@@ -25,6 +25,7 @@ public sealed class DiagnosticsLoggerTests
         Resolution = "1920:1080",
         Bitrate = "12000k",
         SourceCodec = "hevc",
+        Source = "Jellyfin transcode (burning in subtitles)",
         Position = 3723.9,
         Runtime = 5400,
         Window = TimeSpan.FromSeconds(10),
@@ -37,16 +38,17 @@ public sealed class DiagnosticsLoggerTests
     {
         Assert.Equal(
             "video stats: 29.9 fps (target 30, src ?) | late 2/299 frames (max 12 ms, total 20 ms) | ffmpeg read-block 5 ms / 10.0s "
-            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00",
+            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00 "
+            + "| source Jellyfin transcode (burning in subtitles) → encoded twice (Jellyfin + bot)",
             DiagnosticsFormat.LogLine(Sample));
     }
 
     [Fact]
     public void Log_line_without_audio_or_source_info()
     {
-        var line = DiagnosticsFormat.LogLine(Sample with { DriftMs = null, SourceCodec = null, Runtime = null, Position = -1 });
+        var line = DiagnosticsFormat.LogLine(Sample with { DriftMs = null, SourceCodec = null, Source = null, Runtime = null, Position = -1 });
         Assert.Contains("drift n/a", line);
-        Assert.EndsWith("src=? pos 0:00:00/?", line);
+        Assert.EndsWith("src=? pos 0:00:00/? | source ?", line);
     }
 
     [Fact]
@@ -61,13 +63,16 @@ public sealed class DiagnosticsLoggerTests
     public void Overlay_has_the_four_groups_and_the_buffer()
     {
         var lines = DiagnosticsFormat.Overlay(Sample with { DriftMs = -7.2, VideoBufferSeconds = 2.5 }).Split('\n');
-        Assert.Equal(5, lines.Length);
+        Assert.Equal(6, lines.Length);
         Assert.Equal("VIDEO   29.9/30 fps (src ?)  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
         Assert.Equal("A/V     drift -7 ms  silence 1  skip 2", lines[1]);
         Assert.Equal("BUFFER  video 2.5 s  audio 5.0 s", lines[2]);
         Assert.Equal("STREAM  libx264 1920x1080 12000k  src hevc  1:02:03 / 1:30:00", lines[3]);
-        Assert.Equal("NETWORK drops 1  errors 3", lines[4]);
+        Assert.Equal("SOURCE  Jellyfin transcode (burning in subtitles) → encoded twice (Jellyfin + bot)", lines[4]);
+        Assert.Equal("NETWORK drops 1  errors 3", lines[5]);
         Assert.Contains("drift 0 ms", DiagnosticsFormat.Overlay(Sample with { DriftMs = 0.2 }));
+        Assert.Contains("SOURCE  original file → encoded once (bot)", DiagnosticsFormat.Overlay(Sample with { Source = StreamDiagnostics.OriginalFile }));
+        Assert.Contains("SOURCE  ?", DiagnosticsFormat.Overlay(Sample with { Source = null }));
     }
 
     [Fact]

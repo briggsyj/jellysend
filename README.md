@@ -157,6 +157,7 @@ Everything goes to the container's stdout (`docker compose logs -f slopsoil`). E
 - **FFmpeg:** the full FFmpeg command, any FFmpeg warnings or errors, when the audio FIFO opened, and when the first video frame was sent.
 - **Voice and screenshare:** every voice-gateway event, labelled `[voice …]` or `[stream …]`, with Discord's close codes explained.
 - **Self events:** the bot's own voice state, voice server and stream (`STREAM_*`) events.
+- **Stats source:** the `SOURCE` line of the `!debug` overlay (and the stats log line) says where the picture comes from: `original file → encoded once (bot)`, or `Jellyfin transcode (<why>) → encoded twice` with the reason (subtitles burned in, external audio track, a format the bot can't decode, the original failed to start, not a plain file, or direct streaming turned off). Discord always receives the bot's own encode.
 - **The end:** one line saying why the stream ended (reason, position, whether a frame was ever sent, and how the screenshare closed).
 
 If a direct stream of the original file fails before its first frame, the bot retries it once through Jellyfin's transcode and keeps using the transcode for that item.

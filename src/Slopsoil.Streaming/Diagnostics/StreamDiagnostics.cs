@@ -80,6 +80,9 @@ public sealed record StreamDiagnosticsSnapshot
     /// <summary>Source frame rate, when known (spec 007).</summary>
     public double? SourceFps { get; init; }
 
+    /// <summary>Where the input comes from (spec 017): <see cref="StreamDiagnostics.OriginalFile"/> or "Jellyfin transcode (why)"; null = unknown.</summary>
+    public string? Source { get; init; }
+
     /// <summary>Playback position in seconds of the source media.</summary>
     public double Position { get; init; }
 
@@ -115,6 +118,7 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
     private string _encoder = "?";
     private string? _sourceCodec;
     private double? _sourceFps;
+    private string? _source;
     private double? _runtime;
 
     public StreamDiagnostics(double fpsTarget, string resolution, string bitrate, TimeProvider? time = null)
@@ -148,15 +152,22 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
     }
 
     /// <summary>Source codec, runtime and frame rate of the item now playing (from PlaybackInfo / ffprobe).</summary>
-    public void SetSource(string? codec, double? runtimeSeconds, double? sourceFps = null)
+    public void SetSource(string? codec, double? runtimeSeconds, double? sourceFps = null, string? source = null)
     {
         lock (_lock)
         {
             _sourceCodec = codec;
             _runtime = runtimeSeconds;
             _sourceFps = sourceFps;
+            _source = source;
         }
     }
+
+    /// <summary><see cref="StreamDiagnosticsSnapshot.Source"/> for a direct stream of the original file.</summary>
+    public const string OriginalFile = "original file";
+
+    /// <summary>The <see cref="StreamDiagnosticsSnapshot.Source"/> text for a Jellyfin transcode.</summary>
+    public static string JellyfinTranscode(string reason) => $"Jellyfin transcode ({reason})";
 
     public void VideoFrameSent(TimeSpan slack) => Update(b =>
     {
@@ -242,6 +253,7 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
                 Bitrate = Bitrate,
                 SourceCodec = _sourceCodec,
                 SourceFps = _sourceFps,
+                Source = _source,
                 Position = position,
                 Runtime = _runtime,
                 Window = window,
