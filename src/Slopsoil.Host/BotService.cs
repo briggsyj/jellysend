@@ -61,7 +61,17 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         // Voice + go-live.
         var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("Slopsoil.Voice"));
         var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
-        var pipelines = new FfmpegPipelineFactory(options, loggers);
+        using var imageHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        imageHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; slopsoil)");
+        var stillLog = loggers.CreateLogger<StillImages>();
+        var pipelines = new FfmpegPipelineFactory(options, loggers)
+        {
+            // Spec 015: loading / pause cards, fetched once at startup (a URL is downloaded to a temp file).
+            Stills = new StillImages(
+                await StillImageFiles.ResolveAsync(options.LoadingImage, "loading", imageHttp, stillLog, stoppingToken).ConfigureAwait(false),
+                await StillImageFiles.ResolveAsync(options.PausedImage, "paused", imageHttp, stillLog, stoppingToken).ConfigureAwait(false),
+                logger: stillLog),
+        };
         var engine = new StreamEngine(new GoLiveConnector(gateway, voice, voiceOptions), pipelines, loggers.CreateLogger<StreamEngine>());
 
         // Jellyfin.
@@ -212,5 +222,44 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
     private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
     {
         public Task SendAsync(ulong channelId, string content, CancellationToken ct) => rest.SendMessageAsync(channelId, content, ct);
+    }
+}
+
+/// <summary>Turns <c>STREAM_LOADING_IMAGE</c> / <c>STREAM_PAUSED_IMAGE</c> (a path or an http(s) URL) into a local file.</summary>
+internal static class StillImageFiles
+{
+    public static async Task<string?> ResolveAsync(string? value, string name, HttpClient http, ILogger log, CancellationToken ct)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            if (File.Exists(value))
+            {
+                log.LogInformation("{Name} image: {Path}", name, value);
+                return value;
+            }
+
+            log.LogWarning("{Name} image {Path} not found — no {Name} card", name, value, name);
+            return null;
+        }
+
+        try
+        {
+            var bytes = await http.GetByteArrayAsync(value, ct).ConfigureAwait(false);
+            var extension = Path.GetExtension(new Uri(value).AbsolutePath);
+            var path = Path.Combine(Path.GetTempPath(), $"slopsoil_{name}_card{(extension.Length is > 0 and <= 5 ? extension : ".img")}");
+            await File.WriteAllBytesAsync(path, bytes, ct).ConfigureAwait(false);
+            log.LogInformation("{Name} image downloaded ({Bytes} bytes) from {Url}", name, bytes.Length, Slopsoil.Common.Logging.Redactor.RedactUrl(value));
+            return path;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UriFormatException)
+        {
+            log.LogWarning("could not download the {Name} image from {Url}: {Error} — no {Name} card", name, Slopsoil.Common.Logging.Redactor.RedactUrl(value), ex.Message, name);
+            return null;
+        }
     }
 }

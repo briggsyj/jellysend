@@ -964,4 +964,99 @@ public sealed class VideoPlayerTests : IDisposable
         Assert.Equal(3.2, diagnostics.Snapshot().Position, 6);
         Assert.Equal(25.0, player.Fps);
     }
+
+    // ── loading / pause cards (spec 015) ─────────────────────────────────
+
+    private static readonly byte[] CardIdr = [0x65, 0xAA, 0x01];
+    private static readonly byte[] CardP = [0x41, 0xAA, 0x02];
+    private static readonly StillClip Card = new([[Nals.Sps, Nals.Pps, CardIdr], [CardP]]);
+
+    private static bool IsCard(IReadOnlyList<byte[]> frame) => frame.Any(n => n.SequenceEqual(CardIdr) || n.SequenceEqual(CardP));
+
+    [Fact]
+    public async Task Loading_card_plays_while_the_read_ahead_fills_then_the_film_starts()
+    {
+        var proc = Proc(Nals.Frames(10), blockAtEnd: true);
+        var player = Player(o => o with { BufferSeconds = 1.0, LoadingStill = () => Card });
+        player.Start();
+        await Waits.UntilAsync(() => _sink.Count >= 3, "loading card frames");
+        Assert.Null(player.Anchor);                       // the card is outside the film's clock
+        Assert.False(player.FirstFrameSent.IsCompleted);
+        Assert.Equal(0, player.SegmentFrames);
+        Assert.Equal([Nals.Sps, Nals.Pps, CardIdr], _sink.Frames[0]); // the loop starts at its keyframe
+        Assert.Equal([CardP], _sink.Frames[1]);
+
+        proc.Stdout.Release();
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        var film = _sink.Frames.SkipWhile(IsCard).ToList();
+        Assert.Equal(10, film.Count);
+        Assert.DoesNotContain(film, IsCard);
+        Assert.Contains(Nals.Idr, film[0]);
+        Assert.Equal(10, player.SegmentFrames);
+    }
+
+    [Fact]
+    public async Task Loading_card_not_ready_yet_waits_silently()
+    {
+        var proc = Proc(Nals.Frames(3), blockAtEnd: true);
+        var player = Player(o => o with { BufferSeconds = 1.0, LoadingStill = () => null });
+        player.Start();
+        await Waits.UntilAsync(() => player.BufferedFrames == 3, "read-ahead");
+        Assert.Empty(_sink.Frames);
+        proc.Stdout.Release();
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        Assert.Equal(3, _sink.Count);
+    }
+
+    [Fact]
+    public async Task Pause_card_plays_while_paused_and_the_film_returns_at_its_next_keyframe()
+    {
+        Proc([.. Nals.AnnexB(Nals.Aud, Nals.Sps, Nals.Pps, Nals.Idr, Nals.Aud, Nals.P1, Nals.Aud, Nals.P2, Nals.Aud, Nals.Idr, Nals.Aud), .. Nals.StartCode]);
+        var player = Player(o => o with { PausedStill = () => Card });
+        _sink.OnSend = n =>
+        {
+            if (n == 1)
+            {
+                player.PausePlayback();
+            }
+        };
+        player.Start();
+        await Waits.UntilAsync(() => player.HeldByPause && _sink.Frames.Count(IsCard) >= 3, "pause card frames");
+        Assert.Equal(1, player.SegmentFrames);           // the card does not advance the film
+        player.ResumePlayback();
+
+        Assert.Equal(VideoPlayerEnd.Natural, await Ended(player));
+        var sps = SpsRewriter.Rewrite(Nals.Sps);
+        Assert.Equal([sps, Nals.Pps, Nals.Idr], _sink.Frames[0]);
+        Assert.True(IsCard(_sink.Frames[^2]) && IsCard(_sink.Frames[^3])); // P1 and P2 slots: the card continues
+        Assert.Equal([sps, Nals.Pps, Nals.Idr], _sink.Frames[^1]);            // back at the keyframe, with SPS/PPS
+        Assert.DoesNotContain(_sink.Frames, f => f.Contains(Nals.P1) || f.Contains(Nals.P2));
+        Assert.Equal(4, player.SegmentFrames);           // the clock counted every film slot
+    }
+
+    [Fact]
+    public void Still_clip_gives_keyframes_their_parameter_sets_and_starts_at_one()
+    {
+        var clip = StillClip.FromAccessUnits([[Nals.P1], [Nals.Sps, Nals.Pps, Nals.Idr], [Nals.P2], [Nals.Idr]])!;
+        Assert.Equal(3, clip.Frames.Count);
+        Assert.Equal([Nals.Sps, Nals.Pps, Nals.Idr], clip.Frames[0]);
+        Assert.Equal([Nals.Sps, Nals.Pps, Nals.Idr], clip.Frames[2]);
+        Assert.Null(StillClip.FromAccessUnits([[Nals.P1]]));
+        Assert.Throws<ArgumentException>(() => new StillClip([[Nals.P1]]));
+        Assert.Throws<ArgumentException>(() => new StillClip([]));
+    }
+
+    [Fact]
+    public void Still_cursor_loops_and_restarts_for_a_new_clip_or_after_a_reset()
+    {
+        var cursor = new StillCursor();
+        Assert.Same(Card.Frames[0], cursor.Next(Card));
+        Assert.Same(Card.Frames[1], cursor.Next(Card));
+        Assert.Same(Card.Frames[0], cursor.Next(Card));
+        cursor.Reset();
+        Assert.Same(Card.Frames[0], cursor.Next(Card));
+        var other = new StillClip([[CardIdr]]);
+        Assert.Same(other.Frames[0], cursor.Next(other));
+        Assert.Same(Card.Frames[0], cursor.Next(Card));
+    }
 }

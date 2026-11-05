@@ -57,6 +57,12 @@ public sealed record VideoPlayerOptions
 
     /// <summary>Runs on the player thread before each FFmpeg start (e.g. register the video SSRC with DAVE).</summary>
     public Action? OnSegmentStarting { get; init; }
+
+    /// <summary>Loading card (spec 015): sent while the read-ahead fills; null until encoded or not configured.</summary>
+    public Func<StillClip?>? LoadingStill { get; init; }
+
+    /// <summary>Pause card (spec 015): sent while paused; null until encoded or not configured.</summary>
+    public Func<StillClip?>? PausedStill { get; init; }
 }
 
 /// <summary>Why the player finished.</summary>

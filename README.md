@@ -145,6 +145,8 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_BUFFER_SECONDS` | No | `8` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
 | `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
+| `STREAM_LOADING_IMAGE` | No | — | Image (file path or http(s) URL) shown on the stream while it loads (start and after a jump), e.g. a test card. Downloaded once at startup. |
+| `STREAM_PAUSED_IMAGE` | No | — | Image (file path or URL) shown on the stream while paused. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
 
 ### Logs
