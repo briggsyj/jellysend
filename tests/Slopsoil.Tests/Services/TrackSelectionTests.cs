@@ -39,10 +39,10 @@ public sealed class TrackSelectionTests
         var stream = await _client.StartPlaybackAsync("i", null, Ct);
         Assert.Equal(
             [
-                new MediaTrack(1, true, "eng", "English - Dolby Digital+ - 5.1 - Default", true, false),
-                new MediaTrack(2, true, "jpn", "jpn — AAC", false, false),
-                new MediaTrack(3, false, "eng", "English - SRT", false, false),
-                new MediaTrack(4, false, "eng", "eng — PGSSUB", false, true),
+                new MediaTrack(1, true, "eng", "English - Dolby Digital+ - 5.1 - Default", true, false, EmbeddedOrdinal: 0),
+                new MediaTrack(2, true, "jpn", "jpn — AAC", false, false, EmbeddedOrdinal: 1),
+                new MediaTrack(3, false, "eng", "English - SRT", false, false, EmbeddedOrdinal: 0),
+                new MediaTrack(4, false, "eng", "eng — PGSSUB", false, true, EmbeddedOrdinal: 1),
             ],
             stream!.Tracks);
         Assert.Equal(TrackSelection.Default, stream.Selection);
@@ -223,5 +223,66 @@ public sealed class DirectStreamTests
         var f = JellyfinClient.FormatOf(doc.RootElement, null);
         Assert.Equal((video, audio), (f.VideoCodec, f.AudioCodec));
         Assert.Equal("video ?, audio none", new DirectStreamFormat(null, null, false, null).ToString());
+    }
+
+    // ── spec 013: Jellyfin indices vs the file's streams ──
+
+    /// <summary>Thunderball in production: two external subtitle files listed first, so the AC-3 audio is Jellyfin index 3.</summary>
+    private static object ExternalFirstSource(bool externalAudio = false) => new
+    {
+        Id = "src",
+        Protocol = "File",
+        VideoType = "VideoFile",
+        TranscodingUrl = "/t.m3u8",
+        MediaStreams = new object[]
+        {
+            new { Type = "Subtitle", Index = 0, Codec = "subrip", Language = "eng", IsExternal = true },
+            new { Type = "Subtitle", Index = 1, Codec = "subrip", Language = "fre", IsExternal = true },
+            new { Type = "Video", Index = 2, Codec = "h264" },
+            new { Type = "Audio", Index = 3, Codec = "ac3", Language = "eng", IsDefault = true },
+            new { Type = "Audio", Index = 4, Codec = "aac", Language = "eng", DisplayTitle = "Commentary.mka", IsExternal = externalAudio },
+        },
+    };
+
+    [Fact]
+    public async Task Tracks_know_their_position_in_the_file()
+    {
+        Respond(ExternalFirstSource());
+        var s = await Client().StartPlaybackAsync("i", null, Ct);
+        Assert.True(s!.IsDirect);
+        var audio = s.Tracks.Where(t => t.IsAudio).ToList();
+        Assert.Equal([(3, 0), (4, 1)], audio.Select(t => (t.Index, t.EmbeddedOrdinal!.Value)));
+        Assert.All(s.Tracks.Where(t => !t.IsAudio), t => Assert.True(t.IsExternal));
+        Assert.All(s.Tracks.Where(t => !t.IsAudio), t => Assert.Null(t.EmbeddedOrdinal));
+        Assert.Equal(0, JellyfinClient.PlayingAudio(s.Tracks, null)!.EmbeddedOrdinal); // the default: 0:a:0, not 0:3
+    }
+
+    [Fact]
+    public async Task An_external_audio_file_needs_jellyfins_transcode()
+    {
+        Respond(ExternalFirstSource(externalAudio: true));
+        var client = Client();
+        Assert.True((await client.StartPlaybackAsync("i", null, Ct))!.IsDirect);            // default audio is embedded
+        var s = await client.StartPlaybackAsync("i", new TrackSelection(4, null), Ct);       // the external file
+        Assert.False(s!.IsDirect);
+        var external = s.Tracks.Single(t => t.Index == 4);
+        Assert.True(external.IsExternal);
+        Assert.Null(external.EmbeddedOrdinal);
+    }
+
+    [Fact]
+    public void Playing_audio_is_the_chosen_then_default_then_first_track()
+    {
+        MediaTrack[] tracks =
+        [
+            new(5, false, "eng", "Subs", true, false),
+            new(6, true, "jpn", "Japanese", false, false, EmbeddedOrdinal: 0),
+            new(7, true, "eng", "English", true, false, EmbeddedOrdinal: 1),
+        ];
+        Assert.Equal(6, JellyfinClient.PlayingAudio(tracks, 6)!.Index);
+        Assert.Equal(7, JellyfinClient.PlayingAudio(tracks, null)!.Index);
+        Assert.Equal(7, JellyfinClient.PlayingAudio(tracks, 99)!.Index);
+        Assert.Equal(6, JellyfinClient.PlayingAudio([tracks[0], tracks[1]], null)!.Index);
+        Assert.Null(JellyfinClient.PlayingAudio([tracks[0]], null));
     }
 }

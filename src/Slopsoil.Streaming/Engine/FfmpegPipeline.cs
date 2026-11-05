@@ -89,7 +89,7 @@ internal sealed class FfmpegPipeline : IPipeline
             Fps = fps,
             Live = request.Live,
             HasAudio = request.HasAudio,
-            AudioStreamIndex = request.AudioStreamIndex,
+            AudioTrack = request.AudioTrack,
             ProbeSize = request.ProbeSize,
             StartOffset = request.StartOffset,
             Aspect = request.Aspect,

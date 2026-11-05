@@ -1059,10 +1059,9 @@ public sealed class MediaModule : IStreamControl
             Live = true,
             HasAudio = hasAudio,
             // Direct stream: the bot picks the audio itself — the chosen track, else Jellyfin's default track (which is not
-            // always the file's first audio stream, e.g. a commentary track first).
-            AudioStreamIndex = stream.IsDirect
-                ? stream.Selection.AudioIndex ?? stream.Tracks.FirstOrDefault(t => t.IsAudio && t.IsDefault)?.Index
-                : null,
+            // always the file's first audio stream, e.g. a commentary track first) — by its position among the file's
+            // own audio tracks: Jellyfin's index also counts external files, so it is not the file's stream index.
+            AudioTrack = stream.IsDirect ? JellyfinClient.PlayingAudio(stream.Tracks, stream.Selection.AudioIndex)?.EmbeddedOrdinal : null,
             ProbeSize = 10_000_000,
             StartOffset = start,
             Aspect = _aspect.TryGetValue(guild, out var aspect) ? aspect : null,
@@ -1076,7 +1075,7 @@ public sealed class MediaModule : IStreamControl
         _log.LogInformation(
             "starting {Label}: {Mode}, video {Codec}, audio {Audio}, source {Fps} fps, from {Start:0.0}s, tracks {Tracks}, height {Height}",
             label, stream.IsDirect ? "original file" : "Jellyfin transcode", codec,
-            !hasAudio ? "none" : request.AudioStreamIndex is { } ai ? $"input stream {ai}" : "default",
+            !hasAudio ? "none" : request.AudioTrack is { } ai ? $"file audio track {ai} (0:a:{ai})" : "default",
             request.SourceFps?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "?", start,
             stream.Selection, request.OutputHeight?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "configured");
 

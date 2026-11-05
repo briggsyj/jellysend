@@ -14,10 +14,11 @@ public sealed class MediaDirectStreamTests
         _h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
         _h.Library.Tracks["f"] =
         [
-            new(1, true, "eng", "Commentary", false, false),
-            new(2, true, "eng", "English 5.1", true, false),
-            new(3, true, "jpn", "Japanese", false, false),
-            new(4, false, "eng", "English", false, false),
+            // Jellyfin indices count an external subtitle file first (index 0): the file's own audio tracks are 0:a:0..2.
+            new(1, true, "eng", "Commentary", false, false, EmbeddedOrdinal: 0),
+            new(2, true, "eng", "English 5.1", true, false, EmbeddedOrdinal: 1),
+            new(3, true, "jpn", "Japanese", false, false, EmbeddedOrdinal: 2),
+            new(4, false, "eng", "English", false, false, EmbeddedOrdinal: 0),
         ];
     }
 
@@ -27,7 +28,7 @@ public sealed class MediaDirectStreamTests
         await _h.Send("!play film");
         var r = _h.Current.Request;
         Assert.Equal("http://jf/Videos/f/stream?static=true&api_key=SECRET", r.Url);
-        Assert.Equal(2, r.AudioStreamIndex);   // the default track, not the first (commentary)
+        Assert.Equal(1, r.AudioTrack);   // the default track (0:a:1), not the first (commentary) nor Jellyfin's index 2
         Assert.Equal("hevc", r.SourceCodec);
         Assert.Equal(0, _h.Library.Resolves);
     }
@@ -62,16 +63,16 @@ public sealed class MediaDirectStreamTests
     {
         await _h.Send("!play film");
         await _h.Send("!media audio 3");
-        Assert.Equal(3, _h.Current.Request.AudioStreamIndex);
+        Assert.Equal(2, _h.Current.Request.AudioTrack); // Japanese: the file's third audio track
         Assert.StartsWith("http://jf/Videos/f/stream?static=true", _h.Current.Request.Url, StringComparison.Ordinal);
 
         await _h.Send("!media subs 2");    // subtitles on → Jellyfin transcodes with burn-in; it picks the audio
         Assert.Contains("variant.m3u8", _h.Current.Request.Url, StringComparison.Ordinal);
-        Assert.Null(_h.Current.Request.AudioStreamIndex);
+        Assert.Null(_h.Current.Request.AudioTrack);
         Assert.Equal(new TrackSelection(3, 4), _h.Library.PlaybackCalls[^1].Tracks);
 
         await _h.Send("!media subs off");  // and back to the original file
         Assert.StartsWith("http://jf/Videos/f/stream?static=true", _h.Current.Request.Url, StringComparison.Ordinal);
-        Assert.Equal(3, _h.Current.Request.AudioStreamIndex);
+        Assert.Equal(2, _h.Current.Request.AudioTrack);
     }
 }

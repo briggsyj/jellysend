@@ -343,6 +343,15 @@ public sealed class JellyfinClient : IDisposable
 
     private bool Decodable(string itemId, JsonElement source, TrackSelection tracks)
     {
+        // The original file only holds its embedded tracks: an external audio file needs Jellyfin's transcode.
+        if (PlayingAudio(ParseTracks(source), tracks.AudioIndex) is { IsExternal: true } external)
+        {
+            _log.LogInformation(
+                "Jellyfin: item {ItemId} plays the external audio file {Track}; using Jellyfin's transcode instead of the original file",
+                itemId, external.Label);
+            return false;
+        }
+
         if (CanDecode is not { } canDecode)
         {
             return true;
@@ -358,6 +367,16 @@ public sealed class JellyfinClient : IDisposable
             "Jellyfin: the bot's FFmpeg cannot decode item {ItemId} ({Format}); using Jellyfin's transcode instead of the original file",
             itemId, format);
         return false;
+    }
+
+    /// <summary>
+    /// The audio track that plays: <paramref name="audioIndex"/> (Jellyfin index) when given, else Jellyfin's default
+    /// audio track, else the first one. Null without audio tracks.
+    /// </summary>
+    public static MediaTrack? PlayingAudio(IReadOnlyList<MediaTrack> tracks, int? audioIndex)
+    {
+        var audio = tracks.Where(t => t.IsAudio).ToList();
+        return audio.Find(t => t.Index == audioIndex) ?? audio.Find(t => t.IsDefault) ?? audio.FirstOrDefault();
     }
 
     /// <summary>
@@ -454,10 +473,20 @@ public sealed class JellyfinClient : IDisposable
         }
 
         var tracks = new List<MediaTrack>();
+        var embeddedAudio = 0;
+        var embeddedSubtitles = 0;
         foreach (var s in streams.EnumerateArray())
         {
             var type = NonEmptyString(s, "Type");
-            if (type is not ("Audio" or "Subtitle") || !s.TryGetProperty("Index", out var i) || !i.TryGetInt32(out var index))
+            if (type is not ("Audio" or "Subtitle"))
+            {
+                continue;
+            }
+
+            // Count every embedded stream of the kind (even one without a usable Index): the ordinal is FFmpeg's view.
+            var external = Flag(s, "IsExternal");
+            int? ordinal = external ? null : type == "Audio" ? embeddedAudio++ : embeddedSubtitles++;
+            if (!s.TryGetProperty("Index", out var i) || !i.TryGetInt32(out var index))
             {
                 continue;
             }
@@ -466,7 +495,7 @@ public sealed class JellyfinClient : IDisposable
             var codec = NonEmptyString(s, "Codec")?.ToUpperInvariant();
             var label = NonEmptyString(s, "DisplayTitle")
                 ?? string.Join(" — ", new[] { language ?? "Unknown", codec }.Where(x => x is not null));
-            tracks.Add(new MediaTrack(index, type == "Audio", language, label, Flag(s, "IsDefault"), Flag(s, "IsForced")));
+            tracks.Add(new MediaTrack(index, type == "Audio", language, label, Flag(s, "IsDefault"), Flag(s, "IsForced"), external, ordinal));
         }
 
         return tracks;

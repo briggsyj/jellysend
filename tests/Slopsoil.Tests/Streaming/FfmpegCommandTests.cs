@@ -17,12 +17,12 @@ public sealed class FfmpegCommandTests
     private static int IndexOf(IReadOnlyList<string> cmd, string value) => cmd.ToList().IndexOf(value);
 
     [Fact]
-    public void Audio_stream_index_maps_that_input_stream_and_is_ignored_without_audio()
+    public void Audio_track_maps_that_audio_track_of_the_file_and_is_ignored_without_audio()
     {
-        var cmd = FfmpegCommand.Build(Options() with { AudioStreamIndex = 3 });
-        Assert.Equal(["-map", "0:3", "-af"], cmd.TakeLast(13).Take(3));
-        var silent = FfmpegCommand.Build(Options() with { AudioStreamIndex = 3, HasAudio = false });
-        Assert.DoesNotContain("0:3", silent);
+        var cmd = FfmpegCommand.Build(Options() with { AudioTrack = 3 });
+        Assert.Equal(["-map", "0:a:3", "-af"], cmd.TakeLast(13).Take(3));
+        var silent = FfmpegCommand.Build(Options() with { AudioTrack = 3, HasAudio = false });
+        Assert.DoesNotContain("0:a:3", silent);
         Assert.Contains("1:a:0", silent);
     }
 
