@@ -113,6 +113,6 @@ public sealed class MediaStartAtTests
     public async Task Help_documents_the_start_time_form()
     {
         await _h.Send("!media help");
-        Assert.Contains("`!play <title> 1:23:45` — start at a time", _h.Texts[0], StringComparison.Ordinal);
+        Assert.Contains("`!play <title> 1:20:00` — start partway through", _h.Texts[0], StringComparison.Ordinal);
     }
 }

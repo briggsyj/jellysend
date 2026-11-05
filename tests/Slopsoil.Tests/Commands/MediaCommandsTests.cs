@@ -55,8 +55,8 @@ public sealed class MediaCommandsTests
     public void Help_text_shows_aliases_and_the_media_form()
     {
         var ar = CommandCatalog.Find("ar")!.HelpText();
-        Assert.StartsWith("**`!aspect-ratio`** (also `!aspect`, `!ar`)\n`!ar` — list", ar, StringComparison.Ordinal);
-        Assert.EndsWith("-# also `!media aspect-ratio`", ar, StringComparison.Ordinal);
+        Assert.StartsWith("**`!aspect-ratio`** (also `!aspect`, `!ar`)\nAspect ratio — the picture shape", ar, StringComparison.Ordinal);
+        Assert.EndsWith("-# Also works as `!media aspect-ratio`.", ar, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -337,5 +337,88 @@ public sealed class MediaResolutionTests
     {
         await _h.Send("!res 480p", author: 30);
         Assert.Equal(["_quack_ no."], _h.Texts);
+    }
+}
+
+/// <summary>Spec 019: <c>!help all</c> and <c>!language</c>.</summary>
+public sealed class MediaHelpAllAndLanguageTests
+{
+    private readonly MediaHarness _h = new();
+
+    public MediaHelpAllAndLanguageTests()
+    {
+        _h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
+        _h.Library.Tracks["f"] =
+        [
+            new(1, true, "eng", "English 5.1", true, false, EmbeddedOrdinal: 0),
+            new(2, true, "jpn", "Japanese", false, false, EmbeddedOrdinal: 1),
+            new(3, false, "eng", "English", false, false, EmbeddedOrdinal: 0),
+            new(4, false, "fre", "French", false, false, EmbeddedOrdinal: 1),
+        ];
+    }
+
+    [Fact]
+    public async Task Help_all_documents_every_command_in_messages_under_the_limit()
+    {
+        await _h.Send("!help all");
+        Assert.Equal(CommandCatalog.FullGuide(), _h.Texts);
+        Assert.All(_h.Texts, t => Assert.True(t.Length <= 2000, $"{t.Length} characters"));
+        var all = string.Join("\n", _h.Texts);
+        Assert.All(CommandCatalog.All, c => Assert.Contains($"**`!{c.Name}`**", all, StringComparison.Ordinal));
+        Assert.StartsWith("## 📺 Slopsoil — the full guide\n### ▶️ Watch", _h.Texts[0], StringComparison.Ordinal);
+        Assert.Equal(CommandCatalog.Sections.Count, _h.Texts.Count(t => t.Contains("### ", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void A_section_too_long_for_one_message_continues()
+    {
+        Assert.All(CommandCatalog.FullGuide(), m => Assert.True(m.Length <= CommandCatalog.MessageLimit + 200));
+        Assert.Contains(CommandCatalog.All, c => c.Section == CommandCatalog.PictureAndSound && c.Name == "language");
+        Assert.Equal("language", CommandCatalog.Find("lang")!.Name);
+    }
+
+    [Fact]
+    public async Task Language_sets_audio_and_subtitles_in_one_switch()
+    {
+        await _h.Send("!play film");
+        _h.Sender.Sent.Clear();
+        await _h.Send("!language japanese english");
+        Assert.Equal("🎧 audio: **Japanese** · 💬 subtitles: **English** — switching…", _h.Texts[0]);
+        Assert.Equal(new TrackSelection(2, 3), _h.Library.PlaybackCalls[^1].Tracks);
+        Assert.Equal(2, _h.Pipelines.Created.Count); // one restart for both
+    }
+
+    [Fact]
+    public async Task Language_variants()
+    {
+        await _h.Send("!play film");
+        await _h.Send("!lang jpn");                     // audio only
+        Assert.Equal(new TrackSelection(2, null), _h.Library.PlaybackCalls[^1].Tracks);
+        await _h.Send("!media language english fr");    // both
+        Assert.Equal(new TrackSelection(1, 4), _h.Library.PlaybackCalls[^1].Tracks);
+        await _h.Send("!language english off");         // subtitles off
+        Assert.Equal(new TrackSelection(1, null), _h.Library.PlaybackCalls[^1].Tracks);
+        var calls = _h.Library.PlaybackCalls.Count;
+        await _h.Send("!language english off");         // unchanged
+        Assert.Equal("🎧 audio: **English 5.1** · 💬 subtitles: **off** (already on)", _h.Texts[^1]);
+        Assert.Equal(calls, _h.Library.PlaybackCalls.Count);
+        await _h.Send("!language");
+        Assert.StartsWith("🎧 audio: **English 5.1** · 💬 subtitles: **off**\n-# `!language <audio> <subtitles>`", _h.Texts[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Language_errors_list_what_the_item_has()
+    {
+        await _h.Send("!language japanese english");     // nothing playing: its help
+        Assert.Equal("nothing is playing", _h.Texts[^1]);
+        await _h.Send("!language");
+        Assert.Equal(CommandCatalog.Find("language")!.HelpText(), _h.Texts[^1]);
+        await _h.Send("!play film");
+        await _h.Send("!language klingon");
+        Assert.Equal("no audio track matches `klingon` — this one has: English 5.1, Japanese", _h.Texts[^1]);
+        await _h.Send("!language english klingon");
+        Assert.Equal("no subtitles match `klingon` — this one has: English, French (or `off`)", _h.Texts[^1]);
+        await _h.Send("!language a b c");
+        Assert.Equal(CommandCatalog.Find("language")!.HelpText(), _h.Texts[^1]);
     }
 }

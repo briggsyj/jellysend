@@ -71,7 +71,7 @@ public sealed class MediaControlTests
         await _h.Send("!media time");
         Assert.Equal("⏱ 0:01:05 / 2:00:00 (paused)", _h.Texts[^1]);
         await _h.Send("!media resume");
-        Assert.StartsWith("-# `!media resume` is gone: `!play` resumes, `!time <time>` jumps\n\n**🎬 slopsoil**", _h.Texts[^1], StringComparison.Ordinal);
+        Assert.StartsWith("-# `!media resume` is gone: `!play` resumes, `!time <time>` jumps\n\n### 📺 Slopsoil — now broadcasting", _h.Texts[^1], StringComparison.Ordinal);
     }
 
     [Fact]

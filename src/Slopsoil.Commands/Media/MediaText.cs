@@ -77,27 +77,33 @@ public static partial class MediaText
     }
 
     public const string HelpText = """
-        **🎬 slopsoil**
-
-        **Play**
-        `!play <title>` — e.g. `!play big buck bunny`
-        `!play <show> s03e05` — an episode (also `3x5`, `season 3 episode 5`)
-        `!play <show>` — pick season → episode · `!play <show> s03` — pick from season 3
-        `!play <title> 1:23:45` — start at a time · `!play "<title>"` — quotes: all title
-
-        **Control**
-        `!pause` · `!play` (resume) · `!skip`
-        `!time` — where we are · `!time 1:23:45` — jump (`1:23` = 1h 23m; also `45m`, `90s`)
-        `!stop` — stop, stay in voice · `!leave` — stop and leave · `!join` — join your voice channel
-        `!subs` — subtitles (`!subs english`, `!subs off`) · `!audio` — audio track (`!audio japanese`)
-        `!ar` — picture shape (`!ar 16:9`) · `!res` — resolution (`!res 480p`)
-        `!debug on` / `off` — stats on the stream
-
-        **Playlist** (max 10, plays in order)
-        `!queue <title>` or `!queue <show> s01e02`
-        `!playlist` · `!order <#> <new #>` · `!remove <#>`
-
-        -# Every command also works as `!media <command>`. `!help <command>` for details.
+        ### 📺 Slopsoil — now broadcasting
+        **▶️ Watch**
+        `!play <title>` — find a film or show and play it
+        `!play <show> s2e5` — jump straight to an episode
+        `!play <show> s1e1-3` — several episodes in a row
+        `!play <title> 1:20:00` — start partway through
+        ### ⏯️ While watching
+        `!pause` — pause
+        `!play` — carry on
+        `!time 1:20:00` — jump to a time
+        `!time` — where are we?
+        `!skip` — next in the playlist
+        `!stop` — stop (stay in voice)
+        `!leave` — stop and leave
+        ### 📜 Playlist
+        `!queue <title>` — add to the end (pick several episodes: `2,5,8`)
+        `!playlist` — what's on and up next, numbered
+        `!remove 2` — take item 2 off the playlist
+        `!order 3 1` — move item 3 to the top (position 1)
+        ### 🎛️ Picture & sound
+        `!language japanese english` — audio + subtitles shortcut: set both at once
+        `!subs` — subtitles: shows the choices · `!subs english`, `!subs off`
+        `!audio` — audio language: shows the choices · `!audio japanese`
+        `!ar` — aspect ratio (picture shape): shows the choices · `!ar 16:9`
+        `!res` — resolution (picture size): shows the choices · `!res 720p`
+        `!debug on` — stream stats on screen
+        -# More on any command: `!help play` · everything in detail: `!help all` · every command also works as `!media <command>`.
         """;
 
     /// <summary>

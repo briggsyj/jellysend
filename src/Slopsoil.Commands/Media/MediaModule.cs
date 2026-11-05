@@ -116,6 +116,7 @@ public sealed class MediaModule : IStreamControl
             ["remove"] = RemoveAsync,
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
+            ["language"] = LanguageAsync,
             ["aspect-ratio"] = AspectAsync,
             ["resolution"] = ResolutionAsync,
             ["debug"] = DebugAsync,
@@ -282,6 +283,17 @@ public sealed class MediaModule : IStreamControl
         if (arg.Length == 0)
         {
             await SendHelpTextAsync(c, null).ConfigureAwait(false);
+            return;
+        }
+
+        if (arg.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            // Spec 019: every command in detail, a message per section (Discord's 2000-character limit).
+            foreach (var message in CommandCatalog.FullGuide())
+            {
+                await c.ReplyAsync(message).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -1928,6 +1940,81 @@ public sealed class MediaModule : IStreamControl
             : now.Stream.Selection with { SubtitleIndex = track?.Index };
         await c.ReplyAsync($"{emoji}: {name} — switching…").ConfigureAwait(false);
         await RestartWithTracksAsync(guild.Value, state, now, selection).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <c>!language &lt;audio&gt; [subtitles]</c> (<c>!lang</c>, spec 019): the audio + subtitles shortcut — both set in one
+    /// switch, e.g. <c>!language japanese english</c>; one word sets only the audio; <c>off</c> turns subtitles off. Bare: what
+    /// is on now, and how to use it.
+    /// </summary>
+    private async Task LanguageAsync(CommandContext c)
+    {
+        var guild = ContextGuild(c);
+        if (guild is null || !_states.TryGetValue(guild.Value, out var state) || state.Now is not { } now || _engine.GetPlayback(guild.Value) is null)
+        {
+            await c.ReplyAsync(c.Rest.Length == 0 ? CommandCatalog.Find("language")!.HelpText() : "nothing is playing").ConfigureAwait(false);
+            return;
+        }
+
+        var audioTracks = now.Stream.Tracks.Where(t => t.IsAudio).ToList();
+        var subtitleOptions = new List<MediaTrack?> { null };
+        subtitleOptions.AddRange(now.Stream.Tracks.Where(t => !t.IsAudio));
+        var playingAudio = JellyfinClient.PlayingAudio(now.Stream.Tracks, now.Stream.Selection.AudioIndex);
+        var playingSubs = now.Stream.Tracks.FirstOrDefault(t => !t.IsAudio && t.Index == now.Stream.Selection.SubtitleIndex);
+        var words = c.Rest.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+        {
+            await c.ReplyAsync(
+                $"🎧 audio: **{(playingAudio is null ? "none" : TrackLabel(playingAudio))}** · 💬 subtitles: **{(playingSubs is null ? "off" : TrackLabel(playingSubs))}**\n"
+                + "-# `!language <audio> <subtitles>` sets both, e.g. `!language japanese english` · `!language english off`").ConfigureAwait(false);
+            return;
+        }
+
+        if (words.Length > 2)
+        {
+            await c.ReplyAsync(CommandCatalog.Find("language")!.HelpText()).ConfigureAwait(false);
+            return;
+        }
+
+        // Audio: one of the item's tracks by language / name / number.
+        var audioPick = TrackMatch.Find([.. audioTracks], words[0], audio: true) is { } a ? audioTracks[a] : null;
+        if (audioPick is null)
+        {
+            var choices = string.Join(", ", audioTracks.Select(t => TrackLabel(t)));
+            await c.ReplyAsync($"no audio track matches `{words[0]}` — this one has: {(choices.Length > 0 ? choices : "no audio")}").ConfigureAwait(false);
+            return;
+        }
+
+        // Subtitles: unchanged when not given; `off` or a language / name / number otherwise.
+        var subtitlePick = playingSubs;
+        if (words.Length == 2)
+        {
+            if (TrackMatch.Find(subtitleOptions, words[1], audio: false) is not { } s)
+            {
+                var choices = string.Join(", ", subtitleOptions.Skip(1).Select(t => TrackLabel(t!)));
+                await c.ReplyAsync($"no subtitles match `{words[1]}` — this one has: {(choices.Length > 0 ? choices : "none")} (or `off`)").ConfigureAwait(false);
+                return;
+            }
+
+            subtitlePick = subtitleOptions[s];
+        }
+
+        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(false, null, null)) with { AudioLanguage = audioPick.Language };
+        if (words.Length == 2)
+        {
+            prefs = prefs with { SubtitlesOn = subtitlePick is not null, SubtitleLanguage = subtitlePick?.Language };
+        }
+
+        _trackPrefs[guild.Value] = prefs;
+        var summary = $"🎧 audio: **{TrackLabel(audioPick)}** · 💬 subtitles: **{(subtitlePick is null ? "off" : TrackLabel(subtitlePick))}**";
+        if (audioPick.Index == playingAudio?.Index && subtitlePick?.Index == playingSubs?.Index)
+        {
+            await c.ReplyAsync($"{summary} (already on)").ConfigureAwait(false);
+            return;
+        }
+
+        await c.ReplyAsync($"{summary} — switching…").ConfigureAwait(false);
+        await RestartWithTracksAsync(guild.Value, state, now, new TrackSelection(audioPick.Index, subtitlePick?.Index)).ConfigureAwait(false);
     }
 
     private static string TrackLabel(MediaTrack t) =>

@@ -236,8 +236,8 @@ public sealed class MediaPlayTests
     {
         await _h.Send("!media stop-making-sense");
         await _h.Send("!media search sample film");
-        Assert.StartsWith("-# `!media <title>` is now `!play <title>` — e.g. `!play stop-making-sense`\n\n**🎬 slopsoil**", _h.Texts[0], StringComparison.Ordinal);
-        Assert.StartsWith("-# `!media search` is gone: use `!play <title>`\n\n**🎬 slopsoil**", _h.Texts[1], StringComparison.Ordinal);
+        Assert.StartsWith("-# `!media <title>` is now `!play <title>` — e.g. `!play stop-making-sense`\n\n### 📺 Slopsoil — now broadcasting", _h.Texts[0], StringComparison.Ordinal);
+        Assert.StartsWith("-# `!media search` is gone: use `!play <title>`\n\n### 📺 Slopsoil — now broadcasting", _h.Texts[1], StringComparison.Ordinal);
         Assert.Empty(_h.Pipelines.Created);
         _h.Library.Search["queue"] = [MediaHarness.Movie("q", "Queue")];
         await _h.Send("!play queue");

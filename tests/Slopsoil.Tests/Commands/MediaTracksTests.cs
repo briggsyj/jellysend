@@ -129,7 +129,7 @@ public sealed class MediaTracksTests
     public async Task Help_lists_the_track_commands()
     {
         await _h.Send("!media help");
-        Assert.Contains("`!subs` — subtitles (`!subs english`, `!subs off`) · `!audio` — audio track (`!audio japanese`)", _h.Texts[0], StringComparison.Ordinal);
+        Assert.Contains("`!language japanese english` — audio + subtitles shortcut: set both at once", _h.Texts[0], StringComparison.Ordinal);
     }
 }
 

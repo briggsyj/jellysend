@@ -75,8 +75,9 @@ public sealed class MediaTextTests
             MediaText.AspectOptions.Select(o => o.Label));
         Assert.Null(MediaText.AspectOptions[0].Ratio);
         Assert.Equal(2.39, MediaText.AspectOptions[3].Ratio);
-        Assert.StartsWith("**🎬 slopsoil**\n\n**Play**\n`!play <title>`", MediaText.HelpText, StringComparison.Ordinal);
-        Assert.EndsWith("-# Every command also works as `!media <command>`. `!help <command>` for details.", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.StartsWith("### 📺 Slopsoil — now broadcasting\n**▶️ Watch**\n`!play <title>`", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.EndsWith("-# More on any command: `!help play` · everything in detail: `!help all` · every command also works as `!media <command>`.", MediaText.HelpText, StringComparison.Ordinal);
+        Assert.True(MediaText.HelpText.Length < 1900);
         Assert.DoesNotContain("!media search", MediaText.HelpText, StringComparison.Ordinal);
         Assert.Equal(10, MediaText.PlaylistMax);
     }
