@@ -613,4 +613,47 @@ public sealed class JellyfinClientTests
         var inner = new IOException("x");
         Assert.Same(inner, new JellyfinException("m", inner).InnerException);
     }
+
+    // ── spec 017: Jellyfin's transcode stats ──
+
+    [Fact]
+    public void Transcode_stats_are_one_line_from_the_matching_session()
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse("""
+            [
+              {"NowPlayingItem": {"Id": "other"}, "TranscodingInfo": {"VideoCodec": "h264", "Framerate": 10}},
+              {"NowPlayingItem": {"Id": "7ca87ddf-21ba-2c57-ab72-9bc1f4613381"},
+               "TranscodingInfo": {"VideoCodec": "h264", "AudioCodec": "aac", "Width": 1920, "Height": 1080, "Bitrate": 8120000,
+                                   "Framerate": 72.4, "CompletionPercentage": 12.6, "HardwareAccelerationType": "VAAPI", "IsVideoDirect": false}},
+              {"NowPlayingItem": {"Id": "x"}}
+            ]
+            """);
+        Assert.Equal(
+            "→h264 1920x1080 8.1 Mbit/s 72 fps 13% done hw vaapi audio →aac",
+            JellyfinClient.FormatTranscodeStats(doc.RootElement, "7ca87ddf21ba2c57ab729bc1f4613381"));
+    }
+
+    [Theory]
+    [InlineData("""[{"TranscodingInfo": {"IsVideoDirect": true, "IsAudioDirect": true, "HardwareAccelerationType": "none"}}]""", "video copied software audio copied")]
+    [InlineData("""[{"TranscodingInfo": {}}]""", "software")]
+    [InlineData("""[{"TranscodingInfo": {"VideoCodec": "h264"}}, {"TranscodingInfo": {"VideoCodec": "h264"}}]""", null)] // ambiguous
+    [InlineData("""[{"NowPlayingItem": {"Id": "i"}}]""", null)]
+    [InlineData("""{}""", null)]
+    public void Transcode_stats_edge_cases(string json, string? expected)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(expected, JellyfinClient.FormatTranscodeStats(doc.RootElement, "nope"));
+    }
+
+    [Fact]
+    public async Task Transcode_stats_query_the_bots_device_sessions_and_fail_quietly()
+    {
+        _client.CachedUserId = "u";
+        _http.Responder = _ => FakeHttpHandler.Json("""[{"NowPlayingItem": {"Id": "i"}, "TranscodingInfo": {"VideoCodec": "h264"}}]""");
+        Assert.Equal("→h264 software", await _client.GetTranscodeStatsAsync("i", Ct));
+        Assert.Contains("/Sessions?deviceId=", _http.Requests[^1].Url, StringComparison.Ordinal);
+
+        _http.Responder = _ => FakeHttpHandler.Json("{}", System.Net.HttpStatusCode.InternalServerError);
+        Assert.Null(await _client.GetTranscodeStatsAsync("i", Ct));
+    }
 }

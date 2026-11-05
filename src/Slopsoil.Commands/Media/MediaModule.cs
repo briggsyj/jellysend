@@ -1192,13 +1192,15 @@ public sealed class MediaModule : IStreamControl
             OutputHeight = _height.TryGetValue(guild, out var height) ? height : null,
             DebugOverlay = _debug.TryGetValue(guild, out var debug) && debug,
             SourceCodec = codec,
+            JellyfinTranscodeReason = stream.IsDirect ? null : stream.TranscodeReason ?? "Jellyfin chose it",
+            JellyfinStats = stream.IsDirect ? null : ct => library.GetTranscodeStatsAsync(item.Id, ct),
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
             SourceFps = sourceFps,
         };
 
         _log.LogInformation(
             "starting {Label}: {Mode}, video {Codec}, audio {Audio}, source {Fps} fps, from {Start:0.0}s, tracks {Tracks}, height {Height}",
-            label, stream.IsDirect ? "original file" : "Jellyfin transcode", codec,
+            label, stream.IsDirect ? "original file" : $"Jellyfin transcode ({stream.TranscodeReason ?? "Jellyfin chose it"})", codec,
             !hasAudio ? "none" : request.AudioTrack is { } ai ? $"file audio track {ai} (0:a:{ai})" : "default",
             request.SourceFps?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "?", start,
             stream.Selection, request.OutputHeight?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "configured");

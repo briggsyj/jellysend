@@ -72,6 +72,30 @@ public sealed class FfmpegPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task Ffmpeg_progress_and_jellyfin_stats_reach_the_stats()
+    {
+        Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");
+        var clip = MakeClip(4);
+        var factory = new FfmpegPipelineFactory(Options()) { TempDirectory = _dir };
+        var polls = 0;
+        var pipeline = factory.Create(
+            new StreamRequest
+            {
+                Title = "stats", Url = clip, Live = false, JellyfinTranscodeReason = "burning in subtitles",
+                JellyfinStats = _ => { Interlocked.Increment(ref polls); return Task.FromResult<string?>("→h264 software"); },
+            },
+            new CapturingLink());
+        pipeline.Start();
+        await Waits.UntilAsync(() => pipeline.Playback.DiagnosticsSnapshot()!.EncodeSpeed is not null, "an FFmpeg progress block");
+        var snapshot = pipeline.Playback.DiagnosticsSnapshot()!;
+        Assert.Equal("→h264 software", snapshot.JellyfinStats);
+        Assert.True(polls >= 1);
+        Assert.Contains("JELLYFIN Jellyfin transcode (burning in subtitles): →h264 software", pipeline.Playback.DiagnosticsText(), StringComparison.Ordinal);
+        Assert.Contains("FFMPEG   ", pipeline.Playback.DiagnosticsText(), StringComparison.Ordinal);
+        await pipeline.StopAsync();
+    }
+
+    [Fact]
     public async Task Runtime_output_height_sets_the_box_and_bitrate()
     {
         Assert.SkipUnless(HasFfmpeg(), "ffmpeg not installed");

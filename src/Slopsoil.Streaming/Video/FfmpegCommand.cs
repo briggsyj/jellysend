@@ -61,6 +61,8 @@ public static class FfmpegCommand
             o.Executable,
             "-y", // overwrite the FIFO without an interactive prompt
             "-loglevel", "warning",
+            // Spec 017: machine-readable progress (fps, speed, dropped / duplicated frames) on stderr for the stats.
+            "-progress", "pipe:2", "-stats_period", "2",
             // Tolerate initial decode errors (mpeg2video frames before the first sequence header).
             "-max_error_rate", "1",
         };

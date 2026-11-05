@@ -30,6 +30,8 @@ public sealed class MediaDirectStreamTests
         Assert.Equal("http://jf/Videos/f/stream?static=true&api_key=SECRET", r.Url);
         Assert.Equal(1, r.AudioTrack);   // the default track (0:a:1), not the first (commentary) nor Jellyfin's index 2
         Assert.Equal("hevc", r.SourceCodec);
+        Assert.Null(r.JellyfinTranscodeReason);           // the original file: encoded once
+        Assert.Null(r.JellyfinStats);                     // nothing to poll
         Assert.Equal(0, _h.Library.Resolves);
     }
 
@@ -67,6 +69,8 @@ public sealed class MediaDirectStreamTests
         Assert.StartsWith("http://jf/Videos/f/stream?static=true", _h.Current.Request.Url, StringComparison.Ordinal);
 
         await _h.Send("!media subs 2");    // subtitles on → Jellyfin transcodes with burn-in; it picks the audio
+        Assert.Equal("burning in subtitles", _h.Current.Request.JellyfinTranscodeReason);
+        Assert.Null(await _h.Current.Request.JellyfinStats!(TestContext.Current.CancellationToken)); // polled while transcoding
         Assert.Contains("variant.m3u8", _h.Current.Request.Url, StringComparison.Ordinal);
         Assert.Null(_h.Current.Request.AudioTrack);
         Assert.Equal(new TrackSelection(3, 4), _h.Library.PlaybackCalls[^1].Tracks);

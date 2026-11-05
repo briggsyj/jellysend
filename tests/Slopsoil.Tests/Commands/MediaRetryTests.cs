@@ -67,3 +67,16 @@ public sealed class MediaRetryTests
         Assert.Single(_h.Pipelines.Created);
     }
 }
+
+/// <summary>Spec 017: the stats say where the picture comes from.</summary>
+public sealed class MediaTranscodeReasonTests
+{
+    [Fact]
+    public async Task A_jellyfin_transcode_without_a_reason_still_says_so()
+    {
+        var h = new MediaHarness();
+        h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
+        await h.Send("!play film");
+        Assert.Equal("Jellyfin chose it", h.Current.Request.JellyfinTranscodeReason);
+    }
+}

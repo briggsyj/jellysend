@@ -161,6 +161,8 @@ internal sealed class FakeLibrary : IMediaLibrary
             FrameRate = FrameRate,
             Selection = tracks ?? TrackSelection.Default,
             IsDirect = Direct && allowDirect && tracks?.SubtitleIndex is null,
+            TranscodeReason = Direct && allowDirect && tracks?.SubtitleIndex is null ? null
+                : !Direct ? null : tracks?.SubtitleIndex is not null ? "burning in subtitles" : "the original file failed to start",
             Url = Direct && allowDirect && tracks?.SubtitleIndex is null ? $"http://jf/Videos/{itemId}/stream?static=true&api_key=SECRET" : stream.Url,
         };
     }

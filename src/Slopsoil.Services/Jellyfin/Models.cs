@@ -92,6 +92,9 @@ public sealed record PlaybackStream(string Url, string? PlaySessionId, bool? Has
     /// follows it up to <c>STREAM_FPS</c> (spec 007). A Jellyfin transcode keeps the source rate.
     /// </summary>
     public double? FrameRate { get; init; }
+
+    /// <summary>Why Jellyfin transcodes instead of handing over the original file (spec 017); null for a direct stream.</summary>
+    public string? TranscodeReason { get; init; }
 }
 
 /// <summary>

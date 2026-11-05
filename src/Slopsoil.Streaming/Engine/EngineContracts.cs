@@ -60,6 +60,15 @@ public sealed record StreamRequest
     /// <summary>Source video codec, for diagnostics.</summary>
     public string? SourceCodec { get; init; }
 
+    /// <summary>
+    /// Where the input comes from, for diagnostics (spec 017): null = the original file (the bot encodes once),
+    /// else why Jellyfin transcodes it first (the picture is encoded twice).
+    /// </summary>
+    public string? JellyfinTranscodeReason { get; init; }
+
+    /// <summary>Fetches Jellyfin's live transcode stats line (spec 017); polled every 10 s while the stream runs.</summary>
+    public Func<CancellationToken, Task<string?>>? JellyfinStats { get; init; }
+
     /// <summary>Item runtime in seconds when known, for diagnostics.</summary>
     public double? RuntimeSeconds { get; init; }
 
