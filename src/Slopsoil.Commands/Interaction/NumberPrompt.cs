@@ -9,7 +9,7 @@ public static partial class NumberPrompt
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// The choice, or null after replying "timed out — cancelled", "cancelled" or an out-of-range message.
+    /// The choice, or null after replying "⌛ No answer — cancelled.", "Cancelled." or an out-of-range message.
     /// <paramref name="match"/> also accepts a reply that names an option (spec 008: <c>english</c>, <c>16:9</c>) — it
     /// returns the 1-based choice, or null for chat that names nothing (ignored, like any other chat).
     /// </summary>
@@ -27,7 +27,7 @@ public static partial class NumberPrompt
         var reply = await context.Hub.WaitForAsync(Check, Timeout, context.Cancellation).ConfigureAwait(false);
         if (reply is null)
         {
-            await context.ReplyAsync("timed out — cancelled").ConfigureAwait(false);
+            await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
             return null;
         }
 
@@ -35,7 +35,7 @@ public static partial class NumberPrompt
         if (content.StartsWith(CommandRouter.Prefix))
         {
             // A new command cancels the prompt but still runs through the router.
-            await context.ReplyAsync("cancelled").ConfigureAwait(false);
+            await context.ReplyAsync("Cancelled.").ConfigureAwait(false);
             return null;
         }
 
@@ -46,11 +46,52 @@ public static partial class NumberPrompt
 
         if (!int.TryParse(content, NumberStyles.None, CultureInfo.InvariantCulture, out var choice) || choice < 1 || choice > max)
         {
-            await context.ReplyAsync($"invalid selection — pick a number between 1 and {max}").ConfigureAwait(false);
+            await context.ReplyAsync($"🙅 That's not on the list — pick a number between 1 and {max}.").ConfigureAwait(false);
             return null;
         }
 
         return choice;
+    }
+
+    /// <summary>
+    /// An optional menu (spec 021): waits for the invoking user to reply with one of <paramref name="words"/>
+    /// (case-insensitive) and returns it. Other chat is ignored; a timeout or a new command ends it silently.
+    /// </summary>
+    public static async Task<string?> AskWordAsync(CommandContext context, IReadOnlyList<string> words)
+    {
+        string? Word(string text) => words.FirstOrDefault(w => w.Equals(text.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        var reply = await context.Hub.WaitForAsync(
+            m => m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId
+                && (Word(m.Content) is not null || m.Content.TrimStart().StartsWith(CommandRouter.Prefix)),
+            Timeout, context.Cancellation).ConfigureAwait(false);
+        return reply is null ? null : Word(reply.Content);
+    }
+
+    /// <summary>
+    /// Free text from the invoking user in the same channel within <see cref="Timeout"/> (spec 021: the arguments of a
+    /// playlist action picked from the <c>!playlist</c> menu). Null after replying "⌛ No answer — cancelled." or, when the
+    /// reply is a new command (which still runs), "Cancelled.".
+    /// </summary>
+    public static async Task<string?> AskTextAsync(CommandContext context)
+    {
+        var reply = await context.Hub.WaitForAsync(
+            m => m.AuthorId == context.AuthorId && m.ChannelId == context.ChannelId && m.Content.Trim().Length > 0,
+            Timeout, context.Cancellation).ConfigureAwait(false);
+        if (reply is null)
+        {
+            await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
+            return null;
+        }
+
+        var content = reply.Content.Trim();
+        if (content.StartsWith(CommandRouter.Prefix))
+        {
+            await context.ReplyAsync("Cancelled.").ConfigureAwait(false);
+            return null;
+        }
+
+        return content;
     }
 
     /// <summary>Python <c>str.isdecimal()</c> restricted to ASCII digits (Discord digits are ASCII in practice).</summary>
@@ -58,7 +99,7 @@ public static partial class NumberPrompt
 
     /// <summary>
     /// Like <see cref="AskAsync"/>, but the reply may pick several, in order (spec 014): <c>2,5,8</c>, <c>3-6</c>,
-    /// <c>1, 3-5, 9</c>. Duplicates are dropped. Null after replying "timed out — cancelled", "cancelled" or an
+    /// <c>1, 3-5, 9</c>. Duplicates are dropped. Null after replying "⌛ No answer — cancelled.", "Cancelled." or an
     /// invalid-selection message.
     /// </summary>
     public static async Task<IReadOnlyList<int>?> AskManyAsync(CommandContext context, int max)
@@ -73,20 +114,20 @@ public static partial class NumberPrompt
         var reply = await context.Hub.WaitForAsync(Check, Timeout, context.Cancellation).ConfigureAwait(false);
         if (reply is null)
         {
-            await context.ReplyAsync("timed out — cancelled").ConfigureAwait(false);
+            await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
             return null;
         }
 
         var content = reply.Content.Trim();
         if (content.StartsWith(CommandRouter.Prefix))
         {
-            await context.ReplyAsync("cancelled").ConfigureAwait(false);
+            await context.ReplyAsync("Cancelled.").ConfigureAwait(false);
             return null;
         }
 
         if (ParseList(content, max) is not { } picks)
         {
-            await context.ReplyAsync($"invalid selection — pick numbers between 1 and {max} (e.g. `2`, `2,5,8` or `3-6`)").ConfigureAwait(false);
+            await context.ReplyAsync($"🙅 That's not on the list — pick numbers between 1 and {max} (e.g. `2`, `2,5,8` or `3-6`).").ConfigureAwait(false);
             return null;
         }
 

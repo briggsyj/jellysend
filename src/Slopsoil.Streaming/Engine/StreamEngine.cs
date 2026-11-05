@@ -38,7 +38,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         if (!pipelines.EncoderAvailable)
         {
             _log.LogWarning("no H.264 encoder available — go-live requires video encoding");
-            await Say("go-live requires a working H.264 encoder; none found").ConfigureAwait(false);
+            await Say("❌ We can't broadcast — no video encoder works on this server. Ask an admin to check the logs.").ConfigureAwait(false);
             return false;
         }
 
@@ -51,7 +51,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
 
         _sessions[guildId] = session;
         _log.LogInformation("starting go-live stream: {Title} → {Url}", request.Title, Redactor.RedactUrl(request.Url));
-        await Say($"📺 **{request.Title}** (go-live)").ConfigureAwait(false);
+        await Say($"📺 Now showing: **{request.Title}**{(request.TitleNote is { } note ? $" ({note})" : "")}").ConfigureAwait(false);
 
         IGoLiveLink link;
         try
@@ -68,7 +68,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         {
             _log.LogError(ex, "failed to establish go-live connection");
             Release(guildId, session);
-            await Say($"go-live connection failed: {ex.Message}").ConfigureAwait(false);
+            await Say("❌ We couldn't open the screenshare. Try again in a moment — if it keeps happening, ask an admin to check the logs.").ConfigureAwait(false);
             return false;
         }
 
@@ -92,7 +92,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
         {
             _log.LogError(ex, "go-live pipeline failed to start for {Title}", request.Title);
             await CleanupAsync(guildId, session).ConfigureAwait(false);
-            await Say($"go-live error: {ex.Message}").ConfigureAwait(false);
+            await Say("❌ Something went wrong getting on air. Try again — if it keeps happening, ask an admin to check the logs.").ConfigureAwait(false);
             return false;
         }
 
@@ -132,7 +132,7 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
     }
 
     /// <summary>Shown when the screenshare connection drops under a running stream (the media layer may then resume).</summary>
-    public const string ConnectionLostMessage = "⚠ the screenshare connection dropped";
+    public const string ConnectionLostMessage = "📴 We've lost the signal — the screenshare dropped. `!play` to start again.";
 
     private async Task RunAsync(ulong guildId, Session session, string title, Func<string, Task> send, Func<PipelineEnd, Task>? onEnd)
     {
@@ -159,7 +159,8 @@ public sealed class StreamEngine(IGoLiveConnector connector, IPipelineFactory pi
             session.Link.Closed.IsCompleted ? $"closed by Discord ({closeCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no code"})" : "open");
         var unstopped = end.Reason != PipelineEndReason.Stopped && !session.Stopping;
         await CleanupAsync(guildId, session).ConfigureAwait(false);
-        if (end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost && end.Error is not null && unstopped)
+        // With an end callback the media layer words the ending (spec 020: one message — a recovery, or a clear failure).
+        if (end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost && end.Error is not null && unstopped && onEnd is null)
         {
             await SafeAsync(() => send(end.Error), "error reply").ConfigureAwait(false);
         }

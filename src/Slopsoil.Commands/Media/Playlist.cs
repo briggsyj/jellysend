@@ -96,7 +96,7 @@ public sealed class Playlist<T>(Func<T, string> label)
         }
     }
 
-    /// <summary><c>!media order &lt;# or title&gt; &lt;pos&gt;</c>: the reply to send.</summary>
+    /// <summary><c>!playlist order &lt;# or title&gt; &lt;pos&gt;</c>: the reply to send.</summary>
     public string Move(string args)
     {
         var trimmed = args.Trim();
@@ -105,14 +105,14 @@ public sealed class Playlist<T>(Func<T, string> label)
         var posText = split < 0 ? "" : trimmed[(split + 1)..];
         if (target.Length == 0 || !IsDecimal(posText))
         {
-            return "usage: `!order <# or title> <new #>`";
+            return "🙅 Say which item and where to — e.g. `!playlist order 3 1` (item 3 to the top).";
         }
 
         lock (_lock)
         {
             if (_items.Count == 0)
             {
-                return "the playlist is empty";
+                return "📭 The playlist is empty.";
             }
 
             var (index, error) = Find(target);
@@ -123,29 +123,29 @@ public sealed class Playlist<T>(Func<T, string> label)
 
             if (!int.TryParse(posText, NumberStyles.None, CultureInfo.InvariantCulture, out var position) || position < 1 || position > _items.Count)
             {
-                return $"position must be between 1 and {_items.Count}";
+                return $"🙅 The new position must be between 1 and {_items.Count}.";
             }
 
             var item = _items[index];
             _items.RemoveAt(index);
             _items.Insert(position - 1, item);
-            return $"moved **{label(item)}** to #{position}";
+            return $"↕️ Moved **{label(item)}** to #{position}.";
         }
     }
 
-    /// <summary><c>!media remove &lt;# or title&gt;</c>: the reply to send.</summary>
+    /// <summary><c>!playlist remove &lt;# or title&gt;</c>: the reply to send.</summary>
     public string Remove(string target)
     {
         if (target.Trim().Length == 0)
         {
-            return "usage: `!remove <# or title>`";
+            return "🙅 Say which item — e.g. `!playlist remove 2`.";
         }
 
         lock (_lock)
         {
             if (_items.Count == 0)
             {
-                return "the playlist is empty";
+                return "📭 The playlist is empty.";
             }
 
             var (index, error) = Find(target);
@@ -156,7 +156,7 @@ public sealed class Playlist<T>(Func<T, string> label)
 
             var item = _items[index];
             _items.RemoveAt(index);
-            return $"removed **{label(item)}** from the playlist";
+            return $"➖ Took **{label(item)}** off the playlist.";
         }
     }
 
@@ -171,7 +171,7 @@ public sealed class Playlist<T>(Func<T, string> label)
                 return (n - 1, null);
             }
 
-            return (-1, $"there's no #{target.TrimStart('0').PadLeft(1, '0')} in the playlist (1–{_items.Count})");
+            return (-1, $"🙅 There's no #{target.TrimStart('0').PadLeft(1, '0')} on the playlist (1–{_items.Count}).");
         }
 
         var matches = _items.Select((item, i) => (item, i))
@@ -180,9 +180,9 @@ public sealed class Playlist<T>(Func<T, string> label)
             .ToList();
         return matches.Count switch
         {
-            0 => (-1, $"nothing in the playlist matches `{target}`"),
+            0 => (-1, $"🔎 Nothing on the playlist matches `{target}`."),
             1 => (matches[0], null),
-            _ => (-1, $"`{target}` matches several items — use its number from `!playlist`"),
+            _ => (-1, $"🙅 `{target}` matches several items — use its number from `!playlist`."),
         };
     }
 

@@ -33,7 +33,6 @@ public sealed class MediaCommandsTests
         Assert.DoesNotContain("resume", names);
         Assert.DoesNotContain("search", names);
         Assert.All(CommandCatalog.All, c => Assert.StartsWith($"**`!{c.Name}`**", c.HelpText(), StringComparison.Ordinal));
-        Assert.Equal(["order", "queue", "remove"], CommandCatalog.All.Where(c => c.NeedsArgs).Select(c => c.Name).Order());
     }
 
     [Theory]
@@ -63,7 +62,7 @@ public sealed class MediaCommandsTests
     [InlineData("!help play", "play")]
     [InlineData("!help !subs", "subtitles")]
     [InlineData("!media help media ar", "aspect-ratio")]
-    [InlineData("!HELP Queue", "queue")]
+    [InlineData("!HELP Playlist", "playlist")]
     public async Task Help_for_one_command(string content, string name)
     {
         await _h.Send(content);
@@ -71,29 +70,30 @@ public sealed class MediaCommandsTests
     }
 
     [Theory]
-    [InlineData("!queue", "queue")]
-    [InlineData("!media queue", "queue")]
-    [InlineData("!order", "order")]
-    [InlineData("!media remove", "remove")]
-    public async Task Bare_commands_that_need_arguments_show_their_help(string content, string name)
+    [InlineData("!queue", "queue", "add", "➕ **What should we add?**")]
+    [InlineData("!media order 1 2", "order", "order", "📭 The playlist is empty.")]
+    [InlineData("!remove 1", "remove", "remove", "📭 The playlist is empty.")]
+    public async Task Old_playlist_commands_point_to_their_new_name(string content, string old, string action, string then)
     {
-        await _h.Send(content);
-        Assert.Equal([CommandCatalog.Find(name)!.HelpText()], _h.Texts);
+        _ = _h.Start(content);
+        await _h.Until(() => _h.Texts.Count == 2, "two replies");
+        Assert.Equal($"-# `!{old}` is now `!playlist {action}`.", _h.Texts[0]);
+        Assert.StartsWith(then, _h.Texts[1], StringComparison.Ordinal);
+        Assert.Null(CommandCatalog.Find(content));
     }
 
     [Theory]
     [InlineData("!pause", "!media pause")]
     [InlineData("!skip", "!media skip")]
     [InlineData("!time", "!media time")]
-    [InlineData("!playlist", "!media playlist")]
     [InlineData("!debug", "!media debug")]
     [InlineData("!ar 2", "!media aspect-ratio 2")]
     [InlineData("!aspect 2", "!media ar 2")]
     [InlineData("!subs", "!media subtitles")]
     [InlineData("!sub off", "!media subs off")]
     [InlineData("!audio", "!media audio")]
-    [InlineData("!remove 1", "!media remove 1")]
-    [InlineData("!order 1 2", "!media order 1 2")]
+    [InlineData("!playlist remove 1", "!media playlist remove 1")]
+    [InlineData("!playlist order 1 2", "!media playlist order 1 2")]
     [InlineData("!Play", "!media play")]
     public async Task Shortcuts_and_media_forms_reply_alike(string shortcut, string full)
     {
@@ -131,7 +131,7 @@ public sealed class MediaCommandsTests
     {
         await _h.Send("!play example s02e01 10m");
         Assert.Equal(600, _h.Current.Request.StartOffset);
-        Assert.Contains("⏩ starting at 0:10:00", _h.Texts);
+        Assert.Contains("⏩ Starting at 0:10:00", _h.Texts);
     }
 
     [Theory]
@@ -140,7 +140,7 @@ public sealed class MediaCommandsTests
     public async Task Season_only_skips_the_season_picker(string content)
     {
         var run = _h.Start(content);
-        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
+        await _h.UntilReply("📺 **Example Show — Season 2**. Reply with an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("2");
         await run;
         Assert.Equal("Example Show — S02E02 — Second Chances", _h.Current.Request.Title);
@@ -150,9 +150,9 @@ public sealed class MediaCommandsTests
     public async Task Missing_season_says_so_and_offers_the_seasons()
     {
         var run = _h.Start("!play example s9");
-        await _h.UntilReply("**Example Show** has no season 9. **Example Show** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
+        await _h.UntilReply("🔎 **Example Show** has no season 9. 📺 **Example Show** — 2 seasons. Reply with a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
+        await _h.UntilReply("📺 **Example Show — Season 2**. Reply with an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("1");
         await run;
         Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
@@ -163,7 +163,7 @@ public sealed class MediaCommandsTests
     {
         _h.Library.Search["example"] = [MediaHarness.Movie("m", "Example", 2015), Example];
         var run = _h.Start("!play example s2");
-        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
+        await _h.UntilReply("📺 **Example Show — Season 2**. Reply with an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("1");
         await run;
         Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
@@ -194,7 +194,7 @@ public sealed class MediaCommandsTests
         await _h.Send("!play nothing s4");
         await _h.Send("!play nothing 1:00");
         Assert.Equal(
-            ["S02E03 of `nothing` not found in Jellyfin", "nothing found in Jellyfin for `nothing s4`", "nothing found in Jellyfin for `nothing 1:00`"],
+            ["🔎 S02E03 of `nothing` isn't in the library.", "🔎 Nothing found for `nothing s4` — check the spelling?", "🔎 Nothing found for `nothing 1:00` — check the spelling?"],
             _h.Texts);
     }
 
@@ -207,7 +207,7 @@ public sealed class MediaCommandsTests
         Assert.Equal(600, _h.Current.Request.StartOffset);
         _h.Sender.Sent.Clear();
         await _h.Send("!play \"gone\" 0:10");
-        Assert.Equal(["nothing found in Jellyfin for `gone 0:10`"], _h.Texts);
+        Assert.Equal(["🔎 Nothing found for `gone 0:10` — check the spelling?"], _h.Texts);
     }
 
     [Fact]
@@ -215,9 +215,9 @@ public sealed class MediaCommandsTests
     {
         await _h.Send("!play film");
         _h.Library.Search["film 1:00"] = [MediaHarness.Movie("w", "Film One", 2001)];
-        await _h.Send("!queue example 2x1");
-        await _h.Send("!queue film 1:00");
-        Assert.Equal(["➕ queued **Example Show — S02E01 — Awards Night** at #1", "➕ queued **Film One (2001)** at #2"], _h.Texts.TakeLast(2));
+        await _h.Send("!playlist add example 2x1");
+        await _h.Send("!playlist add film 1:00");
+        Assert.Equal(["➕ Added to the playlist: **Example Show — S02E01 — Awards Night** (#1)", "➕ Added to the playlist: **Film One (2001)** (#2)"], _h.Texts.TakeLast(2));
     }
 
     // ── casual names for pickers ─────────────────────────────────────────
@@ -232,7 +232,7 @@ public sealed class MediaCommandsTests
     {
         await _h.Send("!ar 2");
         await _h.Send($"!ar {arg}");
-        Assert.Equal($"📐 aspect ratio set to **{shown}**", _h.Texts[^1]);
+        Assert.Equal($"📐 Aspect ratio set to **{shown}**.", _h.Texts[^1]);
     }
 
     [Theory]
@@ -278,11 +278,11 @@ public sealed class MediaResolutionTests
     public async Task Idle_choice_applies_to_the_next_item()
     {
         await _h.Send("!res 480p");
-        Assert.Equal(["📺 resolution set to **480p** — applies to the next item"], _h.Texts);
+        Assert.Equal(["📺 Resolution set to **480p** — from the next programme."], _h.Texts);
         await _h.Send("!play film");
         Assert.Equal(480, _h.Current.Request.OutputHeight);
         await _h.Send("!media resolution 480");
-        Assert.Equal("📺 resolution set to **480p**", _h.Texts[^1]);
+        Assert.Equal("📺 Resolution set to **480p**.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class MediaResolutionTests
         _h.Current.Fake.Position = 125;
         _h.Sender.Sent.Clear();
         await _h.Send("!res 720p");
-        Assert.Equal("📺 resolution set to **720p** — switching…", _h.Texts[0]);
+        Assert.Equal("📺 Resolution set to **720p** — adjusting the picture…", _h.Texts[0]);
         Assert.Equal(2, _h.Pipelines.Created.Count);
         Assert.Equal((720, 125.0), (_h.Current.Request.OutputHeight!.Value, _h.Current.Request.StartOffset));
         await _h.Send("!res default");
@@ -306,22 +306,22 @@ public sealed class MediaResolutionTests
     {
         await _h.Send("!res 540p");
         var run = _h.Start("!res");
-        await _h.UntilReply("**Resolution** — reply with a number or name:\n`1` Default — the configured resolution\n`2` 360p\n`3` 480p\n`4` 540p  ← current\n`5` 720p\n`6` 1080p");
+        await _h.UntilReply("📺 **Resolution** — reply with a number or name:\n`1` Default — the configured resolution\n`2` 360p\n`3` 480p\n`4` 540p  ← current\n`5` 720p\n`6` 1080p");
         await _h.Answer("360p");
         await run;
-        Assert.Equal("📺 resolution set to **360p** — applies to the next item", _h.Texts[^1]);
+        Assert.Equal("📺 Resolution set to **360p** — from the next programme.", _h.Texts[^1]);
     }
 
     [Fact]
     public async Task Unknown_words_show_the_picker_and_bad_numbers_say_so()
     {
         await _h.Send("!res 9");
-        Assert.Equal(["pick a number between 1 and 6 — see `!res`"], _h.Texts);
+        Assert.Equal(["🙅 Pick a number between 1 and 6 — see `!res`."], _h.Texts);
         var run = _h.Start("!res huge");
-        await _h.UntilReply("`huge` isn't a resolution. **Resolution** — reply with a number or name:\n`1` Default — the configured resolution  ← current\n`2` 360p\n`3` 480p\n`4` 540p\n`5` 720p\n`6` 1080p");
+        await _h.UntilReply("🙅 `huge` isn't a resolution. 📺 **Resolution** — reply with a number or name:\n`1` Default — the configured resolution  ← current\n`2` 360p\n`3` 480p\n`4` 540p\n`5` 720p\n`6` 1080p");
         await _h.Answer("1");
         await run;
-        Assert.Equal("📺 resolution set to **Default**", _h.Texts[^1]);
+        Assert.Equal("📺 Resolution set to **Default**.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public sealed class MediaResolutionTests
     {
         _h.Gateway.States.Clear();
         await _h.Send("!res 480p", guild: null);
-        Assert.Equal(["you're not in a voice channel"], _h.Texts);
+        Assert.Equal(["🙅 Join a voice channel first, then try again."], _h.Texts);
     }
 
     [Fact]
@@ -383,7 +383,7 @@ public sealed class MediaHelpAllAndLanguageTests
         await _h.Send("!play film");
         _h.Sender.Sent.Clear();
         await _h.Send("!language japanese english");
-        Assert.Equal("🎧 audio: **Japanese** · 💬 subtitles: **English** — switching…", _h.Texts[0]);
+        Assert.Equal("🎧 Audio: **Japanese** · 💬 Subtitles: **English** — switching over…", _h.Texts[0]);
         Assert.Equal(new TrackSelection(2, 3), _h.Library.PlaybackCalls[^1].Tracks);
         Assert.Equal(2, _h.Pipelines.Created.Count); // one restart for both
     }
@@ -400,24 +400,24 @@ public sealed class MediaHelpAllAndLanguageTests
         Assert.Equal(new TrackSelection(1, null), _h.Library.PlaybackCalls[^1].Tracks);
         var calls = _h.Library.PlaybackCalls.Count;
         await _h.Send("!language english off");         // unchanged
-        Assert.Equal("🎧 audio: **English 5.1** · 💬 subtitles: **off** (already on)", _h.Texts[^1]);
+        Assert.Equal("🎧 Audio: **English 5.1** · 💬 Subtitles: **off** — already on.", _h.Texts[^1]);
         Assert.Equal(calls, _h.Library.PlaybackCalls.Count);
         await _h.Send("!language");
-        Assert.StartsWith("🎧 audio: **English 5.1** · 💬 subtitles: **off**\n-# `!language <audio> <subtitles>`", _h.Texts[^1], StringComparison.Ordinal);
+        Assert.StartsWith("🎧 Audio: **English 5.1** · 💬 Subtitles: **off**\n-# `!language <audio> <subtitles>`", _h.Texts[^1], StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task Language_errors_list_what_the_item_has()
     {
         await _h.Send("!language japanese english");     // nothing playing: its help
-        Assert.Equal("nothing is playing", _h.Texts[^1]);
+        Assert.Equal("🙅 Nothing's on air right now.", _h.Texts[^1]);
         await _h.Send("!language");
         Assert.Equal(CommandCatalog.Find("language")!.HelpText(), _h.Texts[^1]);
         await _h.Send("!play film");
         await _h.Send("!language klingon");
-        Assert.Equal("no audio track matches `klingon` — this one has: English 5.1, Japanese", _h.Texts[^1]);
+        Assert.Equal("🙅 No audio track matches `klingon` — this one has: English 5.1, Japanese.", _h.Texts[^1]);
         await _h.Send("!language english klingon");
-        Assert.Equal("no subtitles match `klingon` — this one has: English, French (or `off`)", _h.Texts[^1]);
+        Assert.Equal("🙅 No subtitles match `klingon` — this one has: English, French (or `off`).", _h.Texts[^1]);
         await _h.Send("!language a b c");
         Assert.Equal(CommandCatalog.Find("language")!.HelpText(), _h.Texts[^1]);
     }

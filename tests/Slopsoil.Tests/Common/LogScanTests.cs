@@ -56,7 +56,7 @@ public sealed class LogScanTests : IDisposable
         await Task.Delay(500, TestContext.Current.CancellationToken);
         await Send("!media debug on");
         await Task.Delay(1500, TestContext.Current.CancellationToken);
-        await Send("!media playlist");
+        _ = Task.Run(() => Send("!media playlist"), TestContext.Current.CancellationToken); // its menu waits for a reply
         await Send("!media debug");
         await Send("!media leave");
 
@@ -64,7 +64,7 @@ public sealed class LogScanTests : IDisposable
         Assert.Contains("api_key=***", text, StringComparison.Ordinal); // the URL was logged — redacted
         Assert.DoesNotContain(Secret, text, StringComparison.Ordinal);
         Assert.DoesNotContain(Secret, string.Join('\n', sender.Texts), StringComparison.Ordinal);
-        Assert.Contains("⏹ stopped and left the voice channel", sender.Texts);
+        Assert.Contains("📴 Signing off — left the voice channel.", sender.Texts);
     }
 
     private static bool HasFfmpeg()

@@ -172,7 +172,7 @@ public sealed class FfmpegPipelineTests : IDisposable
         var pipeline = factory.Create(new StreamRequest { Title = "x", Url = Path.Combine(_dir, "missing.mp4"), Live = false }, new CapturingLink());
         pipeline.Start();
         var end = await pipeline.Completion.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
-        Assert.Equal(new PipelineEnd(PipelineEndReason.Failed, "go-live stream failed to start"), end);
+        Assert.Equal(new PipelineEnd(PipelineEndReason.Failed, FfmpegPipeline.FailedToStart), end);
         await pipeline.StopAsync();
     }
 

@@ -30,7 +30,7 @@ public sealed class MediaControlTests
         await _h.Send("!media pause");
         await _h.Send("!media play");
         await _h.Send("!media play");
-        Assert.Equal(["⏸ paused at 0:01:05", "already paused — `!play` to carry on", "▶ resumed at 0:01:05", "already playing"], _h.Texts);
+        Assert.Equal(["⏸ Paused at 0:01:05 — we'll be right back. `!play` to carry on.", "⏸ Already paused — `!play` to carry on.", "▶️ Back on air at 0:01:05", "▶️ Already on air."], _h.Texts);
         Assert.Equal(["pause", "resume"], _h.Current.Fake.Calls);
     }
 
@@ -39,7 +39,7 @@ public sealed class MediaControlTests
     {
         await _h.Send("!media pause");
         await _h.Send("!media play");
-        Assert.Equal(["nothing is playing", "nothing is paused — use `!play <title>` to play something"], _h.Texts);
+        Assert.Equal(["🙅 Nothing's on air right now.", "🙅 Nothing's paused — `!play <title>` to put something on."], _h.Texts);
     }
 
     [Fact]
@@ -52,8 +52,8 @@ public sealed class MediaControlTests
         await _h.Send("!time 2:00:00");
         await _h.Send("!time 1:75");
         Assert.Equal(
-            ["⏸ paused at 0:00:00", "⏩ jumping to 1:00:00", "2:00:00 is past the end (2:00:00)",
-             "`1:75` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`"],
+            ["⏸ Paused at 0:00:00 — we'll be right back. `!play` to carry on.", "⏩ Jumping to 1:00:00", "🙅 2:00:00 is past the end (2:00:00).",
+             "🙅 `1:75` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`."],
             _h.Texts);
         Assert.Equal(["pause", "seek 3600", "resume"], _h.Current.Fake.Calls);
     }
@@ -62,7 +62,7 @@ public sealed class MediaControlTests
     public async Task Time_shows_the_position_and_old_resume_points_to_play_and_time()
     {
         await _h.Send("!time");
-        Assert.Equal(["nothing is playing"], _h.Texts);
+        Assert.Equal(["🙅 Nothing's on air right now."], _h.Texts);
         await PlayFilm();
         _h.Current.Fake.Position = 65;
         await _h.Send("!time");
@@ -92,7 +92,7 @@ public sealed class MediaControlTests
         Assert.Equal("3:33 (2017)", _h.Current.Request.Title); // nothing playing: a title
         _h.Sender.Sent.Clear();
         await _h.Send("!play 0:10");
-        Assert.Equal(["⏩ jumping to 0:10:00"], _h.Texts);
+        Assert.Equal(["⏩ Jumping to 0:10:00"], _h.Texts);
         Assert.Equal(600, _h.Current.Fake.Position);
     }
 
@@ -100,10 +100,10 @@ public sealed class MediaControlTests
     public async Task Media_leave_stops_tears_down_and_leaves()
     {
         await _h.Send("!media leave");
-        Assert.Equal(["not in a voice channel"], _h.Texts);
+        Assert.Equal(["🙅 I'm not in a voice channel."], _h.Texts);
         await PlayFilm();
         await _h.Send("!media leave");
-        Assert.Equal(["⏹ stopped and left the voice channel"], _h.Texts);
+        Assert.Equal(["📴 Signing off — left the voice channel."], _h.Texts);
         Assert.False(_h.Media.IsStreaming(5));
         Assert.False(_h.Gateway.Links[0].IsConnected);
         Assert.Equal(["ps1"], _h.Library.Stopped);
@@ -113,14 +113,12 @@ public sealed class MediaControlTests
     public async Task Voice_stop_keeps_voice_and_playlist_leave_drops_both()
     {
         await PlayFilm();
-        await _h.Send("!media queue other");
+        await _h.Send("!media playlist add other");
         await _h.Send("!stop");
         Assert.True(_h.Gateway.Links[0].IsConnected);
-        await _h.Send("!media playlist");
-        Assert.Equal("**Up next** (1/10):\n  `1` Other (2001)", _h.Texts[^1]);
+        Assert.Equal("📜 **Coming up** (1/10):\n  `1` Other (2001)", await _h.ShowPlaylist("!media playlist"));
         await _h.Send("!leave");
-        await _h.Send("!media playlist");
-        Assert.Equal("nothing playing and the playlist is empty", _h.Texts[^1]);
+        Assert.Equal("📭 Nothing on air and nothing on the playlist.", await _h.ShowPlaylist("!media playlist"));
     }
 
     [Fact]
@@ -129,15 +127,15 @@ public sealed class MediaControlTests
         await PlayFilm();
         var run = _h.Start("!media aspect-ratio");
         await _h.UntilReply(
-            "**Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape  ← current\n`2` 16:9 — widescreen\n"
+            "📐 **Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape  ← current\n`2` 16:9 — widescreen\n"
             + "`3` 4:3 — classic TV\n`4` 2.39:1 — cinema scope (21:9)\n`5` 1.85:1 — theatrical widescreen");
         await _h.Answer("3");
         await run;
-        Assert.Equal("📐 aspect ratio set to **4:3** — applying now", _h.Texts[^1]);
+        Assert.Equal("📐 Aspect ratio set to **4:3** — adjusting the picture…", _h.Texts[^1]);
         Assert.Equal(4.0 / 3.0, _h.Current.Fake.Aspect);
 
         await _h.Send("!media ar 3");                 // same ratio: nothing to restart
-        Assert.Equal("📐 aspect ratio set to **4:3**", _h.Texts[^1]);
+        Assert.Equal("📐 Aspect ratio set to **4:3**.", _h.Texts[^1]);
         await _h.Send("!leave");
         await _h.Send("!play film");
         Assert.Equal(4.0 / 3.0, _h.Current.Request.Aspect); // remembered across leaving voice
@@ -151,15 +149,15 @@ public sealed class MediaControlTests
         _h.Library.Search["ar sample"] = [MediaHarness.Movie("r", "AR Sample Live", 2015)];
         await _h.Send("!media ar 9");
         await _h.Send("!ar widescreen");
-        Assert.Equal(["pick a number between 1 and 5 — see `!ar`", "📐 aspect ratio set to **16:9**"], _h.Texts);
+        Assert.Equal(["🙅 Pick a number between 1 and 5 — see `!ar`.", "📐 Aspect ratio set to **16:9**."], _h.Texts);
         var run = _h.Start("!ar sample");
-        await _h.UntilReply("`sample` isn't a picture shape. **Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape\n`2` 16:9 — widescreen  ← current\n"
+        await _h.UntilReply("🙅 `sample` isn't a picture shape. 📐 **Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape\n`2` 16:9 — widescreen  ← current\n"
             + "`3` 4:3 — classic TV\n`4` 2.39:1 — cinema scope (21:9)\n`5` 1.85:1 — theatrical widescreen");
         await _h.Answer("scope");
         await run;
-        Assert.Equal("📐 aspect ratio set to **2.39:1**", _h.Texts[^1]);
+        Assert.Equal("📐 Aspect ratio set to **2.39:1**.", _h.Texts[^1]);
         await _h.Send("!media aspect 2", guild: 9, author: 20);
-        Assert.Equal("📐 aspect ratio set to **16:9**", _h.Texts[^1]);
+        Assert.Equal("📐 Aspect ratio set to **16:9**.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -167,7 +165,7 @@ public sealed class MediaControlTests
     {
         _h.Gateway.States.Clear();
         await _h.Send("!media ar 2", guild: null);
-        Assert.Equal(["you're not in a voice channel"], _h.Texts);
+        Assert.Equal(["🙅 Join a voice channel first, then try again."], _h.Texts);
     }
 
     [Fact]
@@ -175,7 +173,7 @@ public sealed class MediaControlTests
     {
         await _h.Send("!media debug");
         await _h.Send("!media debug on");
-        Assert.Equal(["🐞 debug overlay is **off** — nothing is playing", "🐞 debug overlay **on** — applies to the next item"], _h.Texts);
+        Assert.Equal(["🐞 Stats overlay is **off** — nothing's on air.", "🐞 Stats overlay **on** — from the next programme."], _h.Texts);
         await PlayFilm();
         Assert.True(_h.Current.Request.DebugOverlay);
         await _h.Send("!media debug");
@@ -183,7 +181,7 @@ public sealed class MediaControlTests
         await _h.Send("!media debug off");
         await _h.Send("!media debug on");
         Assert.Equal(
-            ["🐞 debug overlay is **on**\n```\ndiag\n```", "🐞 debug overlay **off** — applying now", "🐞 debug overlay **off**", "🐞 debug overlay **on** — applying now"],
+            ["🐞 Stats overlay is **on**\n```\ndiag\n```", "🐞 Stats overlay **off**.", "🐞 Stats overlay **off**.", "🐞 Stats overlay **on**."],
             _h.Texts);
         await _h.Send("!leave");
         await _h.Send("!play film");
@@ -198,7 +196,7 @@ public sealed class MediaControlTests
         Assert.Equal(CommandCatalog.Find("debug")!.HelpText(), _h.Texts[^1]);
         _h.Gateway.States.Clear();
         await _h.Send("!media debug on", guild: null);
-        Assert.Equal("🐞 debug overlay **on** — applying now", _h.Texts[^1]); // DM: applies where the bot is in voice
+        Assert.Equal("🐞 Stats overlay **on**.", _h.Texts[^1]); // DM: applies where the bot is in voice
     }
 
     [Fact]
@@ -217,7 +215,7 @@ public sealed class MediaControlTests
     {
         await PlayFilm();
         await _h.Send("!pause the sample");
-        Assert.Equal("⏸ paused at 0:00:00", _h.Texts[^1]);
+        Assert.Equal("⏸ Paused at 0:00:00 — we'll be right back. `!play` to carry on.", _h.Texts[^1]);
         Assert.Single(_h.Pipelines.Created);
     }
 
@@ -243,7 +241,7 @@ public sealed class MediaControlTests
     public async Task A_failed_stream_releases_its_transcode_and_advances()
     {
         await PlayFilm();
-        await _h.Send("!media queue other");
+        await _h.Send("!media playlist add other");
         _h.Current.End(PipelineEndReason.Failed, "go-live error: encoder failed");
         await _h.Until(() => _h.Pipelines.Created.Count == 2 && _h.Current.Started);
         Assert.Equal("Other (2001)", _h.Current.Request.Title);
@@ -257,7 +255,7 @@ public sealed class MediaControlTests
         await PlayFilm();
         _h.Gateway.Links[0].IsConnected = false;   // kicked
         await _h.Send("!media leave");
-        Assert.Equal(["⏹ stopped and left the voice channel"], _h.Texts);
+        Assert.Equal(["📴 Signing off — left the voice channel."], _h.Texts);
         Assert.False(_h.Media.IsStreaming(5));
     }
 
@@ -265,7 +263,7 @@ public sealed class MediaControlTests
     public async Task Dropped_screenshare_resumes_the_same_item_at_its_position_up_to_three_times()
     {
         await PlayFilm();
-        await _h.Send("!media queue other");
+        await _h.Send("!media playlist add other");
         for (var attempt = 1; attempt <= MediaModule.MaxReconnects; attempt++)
         {
             var count = _h.Pipelines.Created.Count;
@@ -285,9 +283,9 @@ public sealed class MediaControlTests
     public async Task Stop_during_auto_advance_keeps_the_playlist()
     {
         await PlayFilm();
-        await _h.Send("!media queue other");
+        await _h.Send("!media playlist add other");
         _h.Library.Search["third"] = [MediaHarness.Movie("t", "Third", 2002)];
-        await _h.Send("!media queue third");
+        await _h.Send("!media playlist add third");
         _h.Library.PlaybackGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _h.Library.PlaybackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _h.Current.End(PipelineEndReason.Natural);       // auto-advance starts "Other"…
@@ -296,8 +294,7 @@ public sealed class MediaControlTests
         _h.Library.PlaybackGate.SetResult();
         await _h.Until(() => !_h.Media.IsStarting(5));
         Assert.Single(_h.Pipelines.Created);             // neither Other nor Third started
-        await _h.Send("!media playlist");
-        Assert.Equal("**Up next** (2/10):\n  `1` Other (2001)\n  `2` Third (2002)", _h.Texts[^1]);
+        Assert.Equal("📜 **Coming up** (2/10):\n  `1` Other (2001)\n  `2` Third (2002)", await _h.ShowPlaylist("!media playlist"));
     }
 
     [Fact]
@@ -316,13 +313,12 @@ public sealed class MediaControlTests
     public async Task Media_stop_stops_but_stays_in_voice_and_keeps_the_playlist()
     {
         await PlayFilm();
-        await _h.Send("!media queue other");
+        await _h.Send("!media playlist add other");
         await _h.Send("!media stop");
         Assert.Equal(Slopsoil.Commands.Voice.VoiceModule.StoppedReply, _h.Texts[^1]);
         Assert.False(_h.Media.IsStreaming(5));
         Assert.True(_h.Gateway.Links[0].IsConnected);
-        await _h.Send("!media playlist");
-        Assert.Equal("**Up next** (1/10):\n  `1` Other (2001)", _h.Texts[^1]);
+        Assert.Equal("📜 **Coming up** (1/10):\n  `1` Other (2001)", await _h.ShowPlaylist("!media playlist"));
     }
 
     [Theory]
@@ -359,7 +355,7 @@ public sealed class MediaControlTests
         await _h.Send("!help sample film", author: 30);      // not a command: never a search
         await _h.Send("!play film", author: 30);           // viewers can't play
         await _h.Send("!join", author: 30);
-        Assert.Equal([MediaText.HelpText, "pong!", "no command `sample film` — `!help` lists them all", "_quack_ no.", "_quack_ no."], _h.Texts);
+        Assert.Equal([MediaText.HelpText, "🏓 Pong! Still broadcasting.", "🙅 No command called `sample film` — `!help` lists them all.", "_quack_ no.", "_quack_ no."], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
 
@@ -380,7 +376,7 @@ public sealed class MediaControlTests
     public async Task Pipeline_failure_message_reaches_the_channel()
     {
         await PlayFilm();
-        _h.Current.End(PipelineEndReason.Failed, "go-live stream failed to start");
-        await _h.UntilReply("go-live stream failed to start");
+        _h.Current.End(PipelineEndReason.Failed, FfmpegPipeline.FailedToStart);
+        await _h.UntilReply(FfmpegPipeline.FailedToStart);
     }
 }

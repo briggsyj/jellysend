@@ -38,8 +38,10 @@ public sealed class MediaModule : IStreamControl
     /// <summary>How long the SyncPlay queue waits for the first frame before using the requested start.</summary>
     public static readonly TimeSpan FirstFrameWait = TimeSpan.FromSeconds(60);
 
+    private const string NothingOnAir = "🙅 Nothing's on air right now.";
+
     private const string NotConfigured =
-        "Jellyfin is not configured. Set `JELLYFIN_URL` and `JELLYFIN_API_KEY` (or `JELLYFIN_USERNAME` / "
+        "❌ The Jellyfin library isn't set up. An admin needs to set `JELLYFIN_URL` and `JELLYFIN_API_KEY` (or `JELLYFIN_USERNAME` / "
         + "`JELLYFIN_PASSWORD`) in `.env` and restart the bot.";
 
     private readonly IMediaLibrary? _library;
@@ -110,10 +112,7 @@ public sealed class MediaModule : IStreamControl
             ["stop"] = voice.StopAsync,
             ["leave"] = voice.LeaveAsync,
             ["join"] = voice.JoinAsync,
-            ["queue"] = QueueAsync,
             ["playlist"] = PlaylistAsync,
-            ["order"] = OrderAsync,
-            ["remove"] = RemoveAsync,
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
             ["language"] = LanguageAsync,
@@ -127,16 +126,25 @@ public sealed class MediaModule : IStreamControl
         var media = router.Add("media", Role.Friend, MediaGroupAsync);
         foreach (var info in CommandCatalog.All)
         {
-            var handler = handlers[info.Name];
-            CommandHandler run = info.NeedsArgs
-                ? c => c.Rest.Length == 0 ? c.ReplyAsync(info.HelpText()) : handler(c)
-                : handler;
+            var run = handlers[info.Name];
             media.Sub(info.Name, info.Role, run, info.Aliases);
             router.Add(info.Name, info.Role, run, info.Aliases);
         }
+
+        // Spec 021: the old playlist commands still work, with a pointer to their new name.
+        foreach (var (old, action) in new[] { ("queue", "add"), ("order", "order"), ("remove", "remove") })
+        {
+            CommandHandler legacy = async c =>
+            {
+                await c.ReplyAsync($"-# `!{old}` is now `!playlist {action}`.").ConfigureAwait(false);
+                await PlaylistAsync(c.WithRest($"{action} {c.Rest}".Trim())).ConfigureAwait(false);
+            };
+            media.Sub(old, Role.Friend, legacy);
+            router.Add(old, Role.Friend, legacy);
+        }
     }
 
-    private static Task PingAsync(CommandContext c) => c.ReplyAsync("pong!");
+    private static Task PingAsync(CommandContext c) => c.ReplyAsync("🏓 Pong! Still broadcasting.");
 
     // ── IStreamControl (voice commands) ──────────────────────────────────────
 
@@ -203,13 +211,13 @@ public sealed class MediaModule : IStreamControl
         var start = fellBack ? 0 : query.Start ?? 0;
         if (item.RuntimeSeconds is { } runtime && start >= runtime)
         {
-            await c.ReplyAsync($"{MediaText.FormatTimestamp(start)} is past the end ({MediaText.FormatTimestamp(runtime)})").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 {MediaText.FormatTimestamp(start)} is past the end ({MediaText.FormatTimestamp(runtime)}).").ConfigureAwait(false);
             return;
         }
 
         if (start > 0)
         {
-            await c.ReplyAsync($"⏩ starting at {MediaText.FormatTimestamp(start)}").ConfigureAwait(false);
+            await c.ReplyAsync($"⏩ Starting at {MediaText.FormatTimestamp(start)}").ConfigureAwait(false);
         }
 
         if (await PlayItemAsync(c, item, start).ConfigureAwait(false) && more.Count > 0 && ContextGuild(c) is { } guild
@@ -225,10 +233,10 @@ public sealed class MediaModule : IStreamControl
     private static string QueuedText(IReadOnlyList<MediaItem> items, int queued, string where)
     {
         var names = string.Join(", ", items.Take(queued).Select(i => $"**{MediaLabels.Format(i)}**"));
-        var text = queued > 0 ? $"➕ queued{(where.Length > 0 ? " " + where : "")}: {names}" : "";
+        var text = queued > 0 ? $"➕ Added to the playlist{(where.Length > 0 ? " " + where : "")}: {names}" : "";
         if (queued < items.Count)
         {
-            text += (text.Length > 0 ? "\n" : "") + $"the playlist is full ({MediaText.PlaylistMax} items) — {items.Count - queued} not queued";
+            text += (text.Length > 0 ? "\n" : "") + $"🙅 The playlist is full ({MediaText.PlaylistMax} items) — {items.Count - queued} not added.";
         }
 
         return text;
@@ -265,10 +273,10 @@ public sealed class MediaModule : IStreamControl
     }
 
     private static string NotFoundText(PlayQuery query) => query.Spans is { } spans
-        ? $"{string.Join(", ", spans)} of `{query.Title}` not found in Jellyfin"
+        ? $"🔎 {string.Join(", ", spans)} of `{query.Title}` isn't in the library."
         : query is { Season: { } s, Episode: { } e }
-        ? $"S{s:00}E{e:00} of `{query.Title}` not found in Jellyfin"
-        : $"nothing found in Jellyfin for `{query.Text}`";
+        ? $"🔎 S{s:00}E{e:00} of `{query.Title}` isn't in the library."
+        : $"🔎 Nothing found for `{query.Text}` — check the spelling?";
 
     /// <summary>Lets the first, formats-applied search of a fall-back pair skip its "nothing found" reply.</summary>
     private sealed class QuietMiss
@@ -299,7 +307,7 @@ public sealed class MediaModule : IStreamControl
 
         await c.ReplyAsync(CommandCatalog.Find(arg) is { } info
             ? info.HelpText()
-            : $"no command `{arg.TrimStart('!')}` — `!help` lists them all").ConfigureAwait(false);
+            : $"🙅 No command called `{arg.TrimStart('!')}` — `!help` lists them all.").ConfigureAwait(false);
     }
 
     private async Task SendHelpTextAsync(CommandContext c, string? prefix)
@@ -321,18 +329,18 @@ public sealed class MediaModule : IStreamControl
         var player = guild is { } g ? _engine.GetPlayback(g) : null;
         if (guild is null || player is null)
         {
-            await c.ReplyAsync("nothing is playing").ConfigureAwait(false);
+            await c.ReplyAsync(NothingOnAir).ConfigureAwait(false);
             return;
         }
 
         if (player.IsPaused)
         {
-            await c.ReplyAsync("already paused — `!play` to carry on").ConfigureAwait(false);
+            await c.ReplyAsync("⏸ Already paused — `!play` to carry on.").ConfigureAwait(false);
             return;
         }
 
         player.Pause();
-        await c.ReplyAsync($"⏸ paused at {MediaText.FormatTimestamp(player.Position)}").ConfigureAwait(false);
+        await c.ReplyAsync($"⏸ Paused at {MediaText.FormatTimestamp(player.Position)} — we'll be right back. `!play` to carry on.").ConfigureAwait(false);
         await SyncCallAsync(guild.Value, (s, ct) => s.PauseAsync(ct), "pause").ConfigureAwait(false);
     }
 
@@ -366,12 +374,12 @@ public sealed class MediaModule : IStreamControl
         {
             if (!player.IsPaused)
             {
-                await c.ReplyAsync("already playing").ConfigureAwait(false);
+                await c.ReplyAsync("▶️ Already on air.").ConfigureAwait(false);
                 return;
             }
 
             player.Resume();
-            await c.ReplyAsync($"▶ resumed at {MediaText.FormatTimestamp(player.Position)}").ConfigureAwait(false);
+            await c.ReplyAsync($"▶️ Back on air at {MediaText.FormatTimestamp(player.Position)}").ConfigureAwait(false);
             await SyncCallAsync(guild.Value, (s, ct) => s.UnpauseAsync(ct), "unpause").ConfigureAwait(false);
             return;
         }
@@ -388,7 +396,7 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        await c.ReplyAsync("nothing is paused — use `!play <title>` to play something").ConfigureAwait(false);
+        await c.ReplyAsync("🙅 Nothing's paused — `!play <title>` to put something on.").ConfigureAwait(false);
     }
 
     /// <summary><c>!time</c> — where the stream is; <c>!time &lt;time&gt;</c> — jump there.</summary>
@@ -398,7 +406,7 @@ public sealed class MediaModule : IStreamControl
         var seconds = text.Length > 0 ? MediaText.ParseTimestamp(text) : null;
         if (text.Length > 0 && seconds is null)
         {
-            await c.ReplyAsync($"`{text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 `{text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`.").ConfigureAwait(false);
             return;
         }
 
@@ -406,7 +414,7 @@ public sealed class MediaModule : IStreamControl
         var player = guild is { } g ? _engine.GetPlayback(g) : null;
         if (guild is null || player is null)
         {
-            await c.ReplyAsync("nothing is playing").ConfigureAwait(false);
+            await c.ReplyAsync(NothingOnAir).ConfigureAwait(false);
             return;
         }
 
@@ -426,14 +434,14 @@ public sealed class MediaModule : IStreamControl
         var runtime = _states.TryGetValue(guild, out var state) ? state.Now?.Item.RuntimeSeconds : null;
         if (runtime is { } total && seconds >= total)
         {
-            await c.ReplyAsync($"{MediaText.FormatTimestamp(seconds)} is past the end ({MediaText.FormatTimestamp(total)})").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 {MediaText.FormatTimestamp(seconds)} is past the end ({MediaText.FormatTimestamp(total)}).").ConfigureAwait(false);
             return;
         }
 
         var wasPaused = player.IsPaused;
         player.Seek(seconds);
         player.Resume();
-        await c.ReplyAsync($"⏩ jumping to {MediaText.FormatTimestamp(seconds)}").ConfigureAwait(false);
+        await c.ReplyAsync($"⏩ Jumping to {MediaText.FormatTimestamp(seconds)}").ConfigureAwait(false);
         await SyncCallAsync(guild, (s, ct) => s.SeekAsync(seconds, ct), "seek").ConfigureAwait(false);
         if (wasPaused)
         {
@@ -447,14 +455,14 @@ public sealed class MediaModule : IStreamControl
         GuildState? state = null;
         if (guild is null || !_states.TryGetValue(guild.Value, out state) || (state.Queue.Count == 0 && state.Now is null))
         {
-            await c.ReplyAsync("nothing to skip").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Nothing to skip.").ConfigureAwait(false);
             return;
         }
 
         if (state.Queue.Count == 0)
         {
             await StopStreamAsync(guild.Value).ConfigureAwait(false);
-            await c.ReplyAsync("playlist is empty — stopped").ConfigureAwait(false);
+            await c.ReplyAsync("⏹ That's the end of the playlist — off air.").ConfigureAwait(false);
             return;
         }
 
@@ -485,14 +493,14 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null)
         {
-            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return;
         }
 
         var state = State(guild.Value, c.ReplyAsync);
         if (state.Queue.IsFull)
         {
-            await c.ReplyAsync($"the playlist is full ({MediaText.PlaylistMax} items)").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 The playlist is full ({MediaText.PlaylistMax} items).").ConfigureAwait(false);
             return;
         }
 
@@ -518,14 +526,14 @@ public sealed class MediaModule : IStreamControl
 
             if (state.Queue.Add(item) is null)
             {
-                await c.ReplyAsync($"the playlist is full ({MediaText.PlaylistMax} items)").ConfigureAwait(false);
+                await c.ReplyAsync($"🙅 The playlist is full ({MediaText.PlaylistMax} items).").ConfigureAwait(false);
                 return;
             }
 
             var appended = AppendAll(state, more);
             var head = state.Queue.TakeNext()!;
             await c.ReplyAsync(more.Count == 0
-                ? $"➕ queued **{MediaLabels.Format(item)}** at #{state.Queue.Count}"
+                ? $"➕ Added to the playlist: **{MediaLabels.Format(item)}** (#{state.Queue.Count})"
                 : QueuedText([item, .. more], appended + 1, "")).ConfigureAwait(false);
             if (!await PlayItemAsync(c, head).ConfigureAwait(false))
             {
@@ -538,13 +546,13 @@ public sealed class MediaModule : IStreamControl
         if (state.Queue.Add(item) is not { } position)
         {
             // Filled while the user was picking.
-            await c.ReplyAsync($"the playlist is full ({MediaText.PlaylistMax} items)").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 The playlist is full ({MediaText.PlaylistMax} items).").ConfigureAwait(false);
             return;
         }
 
         if (more.Count == 0)
         {
-            await c.ReplyAsync($"➕ queued **{MediaLabels.Format(item)}** at #{position}").ConfigureAwait(false);
+            await c.ReplyAsync($"➕ Added to the playlist: **{MediaLabels.Format(item)}** (#{position})").ConfigureAwait(false);
             return;
         }
 
@@ -568,19 +576,112 @@ public sealed class MediaModule : IStreamControl
         return added;
     }
 
-    private async Task OrderAsync(CommandContext c)
+    /// <summary>
+    /// <c>!playlist</c> (spec 021): on its own, the playlist and a menu of what to do with it; with <c>add</c>,
+    /// <c>remove</c> or <c>order</c>, that action — asking for what it needs when it is not given.
+    /// </summary>
+    private async Task PlaylistAsync(CommandContext c)
     {
-        var guild = ContextGuild(c);
-        var queue = guild is { } g && _states.TryGetValue(g, out var state) ? state.Queue : EmptyQueue;
-        await c.ReplyAsync(queue.Move(c.Rest)).ConfigureAwait(false);
+        var (word, rest) = CommandRouter.SplitFirst(c.Rest);
+        switch (word.ToLowerInvariant())
+        {
+            case "":
+                await ShowPlaylistAsync(c).ConfigureAwait(false);
+                break;
+            case "add":
+                await PlaylistAddAsync(c.WithRest(rest)).ConfigureAwait(false);
+                break;
+            case "remove":
+                await PlaylistRemoveAsync(c.WithRest(rest), listed: false).ConfigureAwait(false);
+                break;
+            case "order":
+                await PlaylistOrderAsync(c.WithRest(rest), listed: false).ConfigureAwait(false);
+                break;
+            default:
+                await c.ReplyAsync($"🙅 `!playlist` can `add`, `remove` or `order` — e.g. `!playlist add big buck bunny`. More: `!help playlist`.").ConfigureAwait(false);
+                break;
+        }
     }
 
-    private async Task RemoveAsync(CommandContext c)
+    private Playlist<MediaItem> QueueOf(CommandContext c) =>
+        ContextGuild(c) is { } g && _states.TryGetValue(g, out var state) ? state.Queue : EmptyQueue;
+
+    /// <summary><c>!playlist add [title]</c>: queue it, or ask for a title first.</summary>
+    private async Task PlaylistAddAsync(CommandContext c)
     {
-        var guild = ContextGuild(c);
-        var queue = guild is { } g && _states.TryGetValue(g, out var state) ? state.Queue : EmptyQueue;
-        await c.ReplyAsync(queue.Remove(c.Rest)).ConfigureAwait(false);
+        if (c.Rest.Length == 0)
+        {
+            await c.ReplyAsync(
+                "➕ **What should we add?** Reply with a title — e.g. `big buck bunny`, an episode `example show s1e2`, "
+                + "several `example show s1e1-6`, or just the show's name to pick from its episodes.").ConfigureAwait(false);
+            if (await NumberPrompt.AskTextAsync(c).ConfigureAwait(false) is not { } title)
+            {
+                return;
+            }
+
+            c = c.WithRest(title);
+        }
+
+        await QueueAsync(c).ConfigureAwait(false);
     }
+
+    /// <summary><c>!playlist remove [# or title]</c>: take it off, or ask which one first.</summary>
+    private async Task PlaylistRemoveAsync(CommandContext c, bool listed)
+    {
+        var queue = QueueOf(c);
+        var target = c.Rest;
+        if (target.Length == 0)
+        {
+            if (queue.Count == 0)
+            {
+                await c.ReplyAsync("📭 The playlist is empty.").ConfigureAwait(false);
+                return;
+            }
+
+            await c.ReplyAsync((listed ? "" : UpNextList(queue.Snapshot()) + "\n")
+                + "➖ **Which one comes off?** Reply with its number or name.").ConfigureAwait(false);
+            if (await NumberPrompt.AskTextAsync(c).ConfigureAwait(false) is not { } picked)
+            {
+                return;
+            }
+
+            target = picked;
+        }
+
+        await c.ReplyAsync(queue.Remove(target)).ConfigureAwait(false);
+    }
+
+    /// <summary><c>!playlist order [# or title] [new #]</c>: move it, or ask which one and where first.</summary>
+    private async Task PlaylistOrderAsync(CommandContext c, bool listed)
+    {
+        var queue = QueueOf(c);
+        var args = c.Rest;
+        if (args.Length == 0)
+        {
+            if (queue.Count < 2)
+            {
+                await c.ReplyAsync(queue.Count == 0
+                    ? "📭 The playlist is empty."
+                    : "🙅 There's only one thing on the playlist — nothing to reorder.").ConfigureAwait(false);
+                return;
+            }
+
+            await c.ReplyAsync((listed ? "" : UpNextList(queue.Snapshot()) + "\n")
+                + "↕️ **Which one moves, and where to?** Reply with its number (or name), then the new position — "
+                + "e.g. `3 1` moves item 3 to the top.").ConfigureAwait(false);
+            if (await NumberPrompt.AskTextAsync(c).ConfigureAwait(false) is not { } picked)
+            {
+                return;
+            }
+
+            args = picked;
+        }
+
+        await c.ReplyAsync(queue.Move(args)).ConfigureAwait(false);
+    }
+
+    private static string UpNextList(IReadOnlyList<MediaItem> queue) =>
+        string.Join('\n', [$"📜 **Coming up** ({queue.Count}/{MediaText.PlaylistMax}):", .. queue.Select((it, i) => $"  `{i + 1}` {MediaLabels.Format(it)}")]);
 
     private static Playlist<MediaItem> EmptyQueue => new(MediaLabels.Format);
 
@@ -589,7 +690,7 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null)
         {
-            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return;
         }
 
@@ -598,7 +699,7 @@ public sealed class MediaModule : IStreamControl
         var named = choice.Length > 0 ? MediaText.FindAspect(choice) : null;
         if (named is null && choice.Length > 0 && choice.All(char.IsAsciiDigit))
         {
-            await c.ReplyAsync($"pick a number between 1 and {MediaText.AspectOptions.Count} — see `!ar`").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 Pick a number between 1 and {MediaText.AspectOptions.Count} — see `!ar`.").ConfigureAwait(false);
             return;
         }
 
@@ -611,7 +712,7 @@ public sealed class MediaModule : IStreamControl
         {
             var lines = new List<string>
             {
-                (choice.Length > 0 ? $"`{choice}` isn't a picture shape. " : "") + "**Aspect ratio** — reply with a number or name:",
+                (choice.Length > 0 ? $"🙅 `{choice}` isn't a picture shape. " : "") + "📐 **Aspect ratio** — reply with a number or name:",
             };
             for (var i = 0; i < MediaText.AspectOptions.Count; i++)
             {
@@ -645,13 +746,13 @@ public sealed class MediaModule : IStreamControl
         if (player is not null && state?.Now is not null && player.IsSourceActive && !Nullable.Equals(player.Aspect, ratio))
         {
             player.SetAspect(ratio);
-            await c.ReplyAsync($"📐 aspect ratio set to **{name}** — applying now").ConfigureAwait(false);
+            await c.ReplyAsync($"📐 Aspect ratio set to **{name}** — adjusting the picture…").ConfigureAwait(false);
         }
         else
         {
             await c.ReplyAsync(player is not null && state?.Now is null
-                ? $"📐 aspect ratio set to **{name}** — applies to the next Jellyfin item"
-                : $"📐 aspect ratio set to **{name}**").ConfigureAwait(false);
+                ? $"📐 Aspect ratio set to **{name}** — from the next programme."
+                : $"📐 Aspect ratio set to **{name}**.").ConfigureAwait(false);
         }
     }
 
@@ -664,7 +765,7 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null)
         {
-            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return;
         }
 
@@ -673,7 +774,7 @@ public sealed class MediaModule : IStreamControl
         var named = arg.Length > 0 ? MediaText.FindResolution(arg) : null;
         if (named is null && arg.Length > 0 && arg.All(char.IsAsciiDigit) && arg.Length <= 1)
         {
-            await c.ReplyAsync($"pick a number between 1 and {MediaText.ResolutionOptions.Count} — see `!res`").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 Pick a number between 1 and {MediaText.ResolutionOptions.Count} — see `!res`.").ConfigureAwait(false);
             return;
         }
 
@@ -686,7 +787,7 @@ public sealed class MediaModule : IStreamControl
         {
             var lines = new List<string>
             {
-                (arg.Length > 0 ? $"`{arg}` isn't a resolution. " : "") + "**Resolution** — reply with a number or name:",
+                (arg.Length > 0 ? $"🙅 `{arg}` isn't a resolution. " : "") + "📺 **Resolution** — reply with a number or name:",
             };
             for (var i = 0; i < MediaText.ResolutionOptions.Count; i++)
             {
@@ -718,15 +819,16 @@ public sealed class MediaModule : IStreamControl
         _states.TryGetValue(guild.Value, out var state);
         if (choice.Height == current || state?.Now is not { } now || _engine.GetPlayback(guild.Value) is not { IsSourceActive: true })
         {
-            await c.ReplyAsync($"📺 resolution set to **{name}**" + (choice.Height == current ? "" : " — applies to the next item")).ConfigureAwait(false);
+            await c.ReplyAsync($"📺 Resolution set to **{name}**" + (choice.Height == current ? "." : " — from the next programme.")).ConfigureAwait(false);
             return;
         }
 
-        await c.ReplyAsync($"📺 resolution set to **{name}** — switching…").ConfigureAwait(false);
+        await c.ReplyAsync($"📺 Resolution set to **{name}** — adjusting the picture…").ConfigureAwait(false);
         await RestartWithTracksAsync(guild.Value, state, now, now.Stream.Selection).ConfigureAwait(false);
     }
 
-    private async Task PlaylistAsync(CommandContext c)
+    /// <summary><c>!playlist</c> on its own: what's on and coming up, then a menu (add / remove / order) for a while.</summary>
+    private async Task ShowPlaylistAsync(CommandContext c)
     {
         var guild = ContextGuild(c);
         GuildState? state = null;
@@ -741,21 +843,48 @@ public sealed class MediaModule : IStreamControl
         {
             var total = now.Item.RuntimeSeconds is { } rt ? $" / {MediaText.FormatTimestamp(rt)}" : "";
             var flag = player.IsPaused ? " (paused)" : "";
-            lines.Add($"**Now playing:** {MediaLabels.Format(now.Item)} — {MediaText.FormatTimestamp(player.Position)}{total}{flag}");
+            lines.Add($"📺 **Now showing:** {MediaLabels.Format(now.Item)} — {MediaText.FormatTimestamp(player.Position)}{total}{flag}");
         }
 
         var queue = state?.Queue.Snapshot() ?? [];
         if (queue.Count > 0)
         {
-            lines.Add($"**Up next** ({queue.Count}/{MediaText.PlaylistMax}):");
-            lines.AddRange(queue.Select((it, i) => $"  `{i + 1}` {MediaLabels.Format(it)}"));
+            lines.Add(UpNextList(queue));
         }
-        else if (lines.Count > 0)
+        else
         {
-            lines.Add("_playlist is empty — add with `!queue <title>`_");
+            lines.Add(lines.Count == 0 ? "📭 Nothing on air and nothing on the playlist." : "_Nothing else on the playlist._");
         }
 
-        await c.ReplyAsync(lines.Count == 0 ? "nothing playing and the playlist is empty" : string.Join('\n', lines)).ConfigureAwait(false);
+        // Spec 021: what can be done from here — remove needs an item, order needs two.
+        var actions = new List<(string Word, string What)> { ("add", "add something to the end") };
+        if (queue.Count > 0)
+        {
+            actions.Add(("remove", "take something off"));
+        }
+
+        if (queue.Count > 1)
+        {
+            actions.Add(("order", "move something up or down"));
+        }
+
+        lines.Add("");
+        lines.Add("**Change it?** Reply with:");
+        lines.AddRange(actions.Select(a => $"`{a.Word}` — {a.What}"));
+        await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
+
+        switch (await NumberPrompt.AskWordAsync(c, actions.Select(a => a.Word).ToList()).ConfigureAwait(false))
+        {
+            case "add":
+                await PlaylistAddAsync(c.WithRest("")).ConfigureAwait(false);
+                break;
+            case "remove":
+                await PlaylistRemoveAsync(c.WithRest(""), listed: true).ConfigureAwait(false);
+                break;
+            case "order":
+                await PlaylistOrderAsync(c.WithRest(""), listed: true).ConfigureAwait(false);
+                break;
+        }
     }
 
     /// <summary><c>!media debug [on|off]</c> (.NET only, FR-050–FR-052).</summary>
@@ -772,7 +901,7 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null)
         {
-            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return;
         }
 
@@ -780,8 +909,8 @@ public sealed class MediaModule : IStreamControl
         if (arg.Length == 0)
         {
             var on = _debug.TryGetValue(guild.Value, out var d) && d;
-            var text = $"🐞 debug overlay is **{(on ? "on" : "off")}**";
-            text += player is null ? " — nothing is playing" : $"\n```\n{player.DiagnosticsText()}\n```";
+            var text = $"🐞 Stats overlay is **{(on ? "on" : "off")}**";
+            text += player is null ? " — nothing's on air." : $"\n```\n{player.DiagnosticsText()}\n```";
             await c.ReplyAsync(text).ConfigureAwait(false);
             return;
         }
@@ -799,13 +928,13 @@ public sealed class MediaModule : IStreamControl
         if (player is not null && player.IsSourceActive && player.DebugOverlay != enable)
         {
             player.SetDebugOverlay(enable);
-            await c.ReplyAsync($"🐞 debug overlay **{lower}** — applying now").ConfigureAwait(false);
+            await c.ReplyAsync($"🐞 Stats overlay **{lower}**.").ConfigureAwait(false);
         }
         else
         {
             await c.ReplyAsync(player is null
-                ? $"🐞 debug overlay **{lower}** — applies to the next item"
-                : $"🐞 debug overlay **{lower}**").ConfigureAwait(false);
+                ? $"🐞 Stats overlay **{lower}** — from the next programme."
+                : $"🐞 Stats overlay **{lower}**.").ConfigureAwait(false);
         }
     }
 
@@ -851,7 +980,9 @@ public sealed class MediaModule : IStreamControl
             var unreachable = ex.InnerException is HttpRequestException or TaskCanceledException or TimeoutException
                 || (ex is JellyfinException && ex.Message.Contains("HTTP", StringComparison.Ordinal));
             _log.LogError(ex, unreachable ? "could not reach Jellyfin" : "Jellyfin search failed");
-            await c.ReplyAsync(unreachable ? $"could not reach Jellyfin: {ex.Message}" : $"Jellyfin search failed: {ex.Message}").ConfigureAwait(false);
+            await c.ReplyAsync(unreachable
+                ? "❌ We can't reach the Jellyfin library right now. Try again shortly — if it keeps happening, ask an admin."
+                : "❌ The Jellyfin search didn't work. Try again — if it keeps happening, ask an admin to check the logs.").ConfigureAwait(false);
             return null;
         }
 
@@ -874,7 +1005,7 @@ public sealed class MediaModule : IStreamControl
         }
         else
         {
-            var lines = new List<string> { $"Found {results.Count} result(s) for `{query.Describe()}`. Pick a number:\n" };
+            var lines = new List<string> { $"🔎 Found {results.Count} matches for `{query.Describe()}` — reply with a number:\n" };
             lines.AddRange(results.Select((it, i) => $"  `{i + 1}` [{it.Type ?? ""}] {MediaLabels.Format(it)}"));
             await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
             if (await NumberPrompt.AskAsync(c, results.Count).ConfigureAwait(false) is not { } choice)
@@ -917,7 +1048,7 @@ public sealed class MediaModule : IStreamControl
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
         {
             _log.LogError(ex, "failed to fetch episodes");
-            await c.ReplyAsync($"failed to fetch episodes: {ex.Message}").ConfigureAwait(false);
+            await c.ReplyAsync("❌ We couldn't load the episodes from Jellyfin. Try again in a moment.").ConfigureAwait(false);
             return null;
         }
 
@@ -981,13 +1112,13 @@ public sealed class MediaModule : IStreamControl
         found = [.. found.DistinctBy(e => e.Id)];
         if (found.Count == 0)
         {
-            await c.ReplyAsync($"{string.Join(", ", spans)} of **{name}** not found in Jellyfin").ConfigureAwait(false);
+            await c.ReplyAsync($"🔎 {string.Join(", ", spans)} of **{name}** isn't in the library.").ConfigureAwait(false);
             return null;
         }
 
         if (missing.Count > 0)
         {
-            await c.ReplyAsync($"{MissingText(missing)} of **{name}** not found — carrying on with the rest").ConfigureAwait(false);
+            await c.ReplyAsync($"🔎 {MissingText(missing)} of **{name}** isn't in the library — carrying on with the rest.").ConfigureAwait(false);
         }
 
         more.AddRange(found.Skip(1));
@@ -1037,13 +1168,13 @@ public sealed class MediaModule : IStreamControl
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
         {
             _log.LogError(ex, "failed to fetch seasons");
-            await c.ReplyAsync($"failed to fetch seasons: {ex.Message}").ConfigureAwait(false);
+            await c.ReplyAsync($"❌ We couldn't load the seasons of **{name}** from Jellyfin. Try again in a moment.").ConfigureAwait(false);
             return null;
         }
 
         if (seasons.Count == 0)
         {
-            await c.ReplyAsync($"no seasons found for **{name}**").ConfigureAwait(false);
+            await c.ReplyAsync($"🔎 No seasons of **{name}** in the library.").ConfigureAwait(false);
             return null;
         }
 
@@ -1055,7 +1186,7 @@ public sealed class MediaModule : IStreamControl
                 return await PickEpisodeAsync(c, series.Id, name, chosen, more).ConfigureAwait(false);
             }
 
-            missing = $"**{name}** has no season {wanted}. ";
+            missing = $"🔎 **{name}** has no season {wanted}. ";
         }
 
         if (seasons.Count == 1 && missing is null)
@@ -1063,7 +1194,7 @@ public sealed class MediaModule : IStreamControl
             return await PickEpisodeAsync(c, series.Id, name, seasons[0], more).ConfigureAwait(false);
         }
 
-        var lines = new List<string> { $"{missing}**{name}** — {seasons.Count} season{(seasons.Count == 1 ? "" : "s")}. Pick a season:\n" };
+        var lines = new List<string> { $"{missing}📺 **{name}** — {seasons.Count} season{(seasons.Count == 1 ? "" : "s")}. Reply with a season:\n" };
         lines.AddRange(seasons.Select((s, i) => $"  `{i + 1}` {s.Name ?? $"Season {i + 1}"}"));
         await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
         if (await NumberPrompt.AskAsync(c, seasons.Count).ConfigureAwait(false) is not { } choice)
@@ -1085,18 +1216,18 @@ public sealed class MediaModule : IStreamControl
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
         {
             _log.LogError(ex, "failed to fetch episodes");
-            await c.ReplyAsync($"failed to fetch episodes: {ex.Message}").ConfigureAwait(false);
+            await c.ReplyAsync("❌ We couldn't load the episodes from Jellyfin. Try again in a moment.").ConfigureAwait(false);
             return null;
         }
 
         if (episodes.Count == 0)
         {
-            await c.ReplyAsync($"no episodes found for **{season.Name}** of **{seriesName}**").ConfigureAwait(false);
+            await c.ReplyAsync($"🔎 No episodes of **{seriesName}** {season.Name} in the library.").ConfigureAwait(false);
             return null;
         }
 
-        var pick = more is null || episodes.Count == 1 ? "Pick an episode:" : "Pick an episode, or several in order (`2,5,8`, `3-6`):";
-        var lines = new List<string> { $"**{seriesName} — {season.Name ?? "Unknown"}**. {pick}\n" };
+        var pick = more is null || episodes.Count == 1 ? "Reply with an episode:" : "Reply with an episode, or several in order (`2,5,8`, `3-6`):";
+        var lines = new List<string> { $"📺 **{seriesName} — {season.Name ?? "Unknown"}**. {pick}\n" };
         lines.AddRange(episodes.Select((ep, i) =>
             $"  `{i + 1}` {(ep.IndexNumber is { } n ? $"E{n:00} — {ep.Name ?? "Unknown"}" : ep.Name ?? "Unknown")}"));
         await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
@@ -1122,7 +1253,7 @@ public sealed class MediaModule : IStreamControl
         var (guild, channel) = VoiceModule.ResolveAuthorVoice(_voice.Gateway, c.Message);
         if (guild is null || channel is null)
         {
-            await c.ReplyAsync("you're not in a voice channel").ConfigureAwait(false);
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return false;
         }
 
@@ -1176,7 +1307,7 @@ public sealed class MediaModule : IStreamControl
         var hours = MaxPlaytime.TotalHours.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
         _log.LogInformation("stream in guild {Guild} reached the {Hours} h playtime limit — stopping", guild, hours);
         await StopStreamAsync(guild).ConfigureAwait(false);
-        await state.Send($"⏹ stopped after {hours} hours of streaming — `!play` to start again (the playlist is kept)").ConfigureAwait(false);
+        await state.Send($"⏹ That's {hours} hours on air — time for a break. `!play` to start again (the playlist is kept).").ConfigureAwait(false);
     }
 
     /// <summary>How a start ended.</summary>
@@ -1247,7 +1378,7 @@ public sealed class MediaModule : IStreamControl
         var label = MediaLabels.Format(item);
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
 
-        await send("checking stream…").ConfigureAwait(false);
+        await send($"📡 Tuning in to **{label}**…").ConfigureAwait(false);
         var allowDirect = !_directFailed.ContainsKey(item.Id);
         var stream = await library.StartPlaybackAsync(item.Id, tracks, CancellationToken.None, allowDirect).ConfigureAwait(false);
         if (stream is not null && tracks is null && ResolveTracks(guild, stream.Tracks) is { } preferred && preferred != stream.Selection)
@@ -1259,7 +1390,7 @@ public sealed class MediaModule : IStreamControl
 
         if (stream is null)
         {
-            await send($"could not start a Jellyfin playback session for **{label}** — check that the server is reachable and the credentials are valid").ConfigureAwait(false);
+            await send($"❌ Jellyfin wouldn't play **{label}**. Ask an admin to check the server and the bot's Jellyfin login.").ConfigureAwait(false);
             return StillCurrent(guild, state, generation) ? StartResult.Failed : StartResult.Abandoned;
         }
 
@@ -1294,7 +1425,7 @@ public sealed class MediaModule : IStreamControl
             var info = await library.ProbeAsync(url, CancellationToken.None).ConfigureAwait(false);
             if (info is null)
             {
-                await send($"could not probe the Jellyfin stream for **{label}** — transcoding may have failed on the server").ConfigureAwait(false);
+                await send($"❌ Jellyfin couldn't prepare **{label}**. Try again — if it keeps happening, ask an admin to check the Jellyfin logs.").ConfigureAwait(false);
                 return await Release(StartResult.Failed).ConfigureAwait(false);
             }
 
@@ -1306,7 +1437,7 @@ public sealed class MediaModule : IStreamControl
         // which reads practically anything (av1, vp9, vc1, …).
         if (!stream.IsDirect && !SupportedCodecs.Contains(codec))
         {
-            await send($"unsupported video codec `{codec}` from Jellyfin for **{label}**").ConfigureAwait(false);
+            await send($"❌ **{label}** uses a video format (`{codec}`) we can't show.").ConfigureAwait(false);
             return await Release(StartResult.Failed).ConfigureAwait(false);
         }
 
@@ -1322,7 +1453,7 @@ public sealed class MediaModule : IStreamControl
         catch (Exception ex)
         {
             _log.LogError(ex, "could not join voice channel {Channel}", channel);
-            await send($"could not join the voice channel: {ex.Message}").ConfigureAwait(false);
+            await send("❌ We couldn't join your voice channel. Check the bot can see and join it, then try again.").ConfigureAwait(false);
             return await Release(StartResult.Failed).ConfigureAwait(false);
         }
 
@@ -1354,6 +1485,7 @@ public sealed class MediaModule : IStreamControl
             JellyfinStats = stream.IsDirect ? null : ct => library.GetTranscodeStatsAsync(item.Id, ct),
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
             SourceFps = sourceFps,
+            TitleNote = !stream.IsDirect && _directFailed.ContainsKey(item.Id) ? "backup feed" : null,
         };
 
         _log.LogInformation(
@@ -1432,6 +1564,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             var finished = state.Now;
+            var recovering = false;
             if (end.Reason == PipelineEndReason.Failed && !end.FirstFrameSent && finished is { Stream.IsDirect: true }
                 && _voice.Get(guild) is { } retryLink
                 && _directFailed.TryAdd(finished.Item.Id, 0))
@@ -1441,7 +1574,8 @@ public sealed class MediaModule : IStreamControl
                 _log.LogWarning(
                     "direct stream of {Item} failed before its first frame ({Error}); retrying through Jellyfin's transcode",
                     finished.Item.Id, end.Error);
-                await state.Send("↻ retrying through Jellyfin's transcode…").ConfigureAwait(false);
+                recovering = true;
+                await state.Send("😅 Technical difficulties — that copy wouldn't play. Don't worry, this happens sometimes! Trying a backup feed now…").ConfigureAwait(false);
                 await _library!.StopEncodingAsync(finished.Stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
                 StartResult retried;
                 try
@@ -1470,7 +1604,8 @@ public sealed class MediaModule : IStreamControl
                 // The screenshare dropped (voice server restart/migration) while we are still in voice: resume the
                 // same item where it was. Not after a kick (the bot is no longer in that channel).
                 _log.LogInformation("resuming {Item} at {Position:0.0}s after the go-live connection dropped (attempt {Attempt})", finished.Item.Id, end.Position, finished.Reconnects + 1);
-                await state.Send($"↻ reconnecting the screenshare (attempt {finished.Reconnects + 1} of {MaxReconnects})…").ConfigureAwait(false);
+                recovering = true;
+                await state.Send($"😅 Technical difficulties — the stream dropped. Don't worry, reconnecting ({finished.Reconnects + 1} of {MaxReconnects})…").ConfigureAwait(false);
                 state.ResumeReconnects = finished.Reconnects + 1;
                 StartResult resumed;
                 try
@@ -1493,6 +1628,12 @@ public sealed class MediaModule : IStreamControl
                 }
 
                 finished = state.Now; // a failed restart already released what it started
+            }
+
+            if (!recovering && end.Error is not null && end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost)
+            {
+                // Spec 020: no recovery was tried, so say plainly that it stopped (a failed recovery already said so).
+                await state.Send(end.Reason == PipelineEndReason.ConnectionLost ? StreamEngine.ConnectionLostMessage : end.Error).ConfigureAwait(false);
             }
 
             state.Now = null;
@@ -1543,7 +1684,7 @@ public sealed class MediaModule : IStreamControl
             }
 
             var item = state.Queue.TakeNext()!;
-            await state.Send($"⏭ up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
+            await state.Send($"⏭ Coming up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
             switch (await StartItemHoldingLockAsync(guild, state, link.ChannelId, item, 0, sync: true).ConfigureAwait(false))
             {
                 case StartResult.Started:
@@ -1629,7 +1770,7 @@ public sealed class MediaModule : IStreamControl
         }
 
         state.SyncPlay = group;
-        await state.Send($"👥 Jellyfin SyncPlay group **{group.GroupName}** is open — join it from a Jellyfin app to control playback together").ConfigureAwait(false);
+        await state.Send($"👥 The Jellyfin SyncPlay group **{group.GroupName}** is open — join it from a Jellyfin app to control playback together.").ConfigureAwait(false);
         return group;
     }
 
@@ -1707,7 +1848,7 @@ public sealed class MediaModule : IStreamControl
                 if (!player.IsPaused)
                 {
                     player.Pause();
-                    await state.Send($"⏸ paused from Jellyfin at {MediaText.FormatTimestamp(player.Position)}").ConfigureAwait(false);
+                    await state.Send($"⏸ Paused from Jellyfin at {MediaText.FormatTimestamp(player.Position)}").ConfigureAwait(false);
                 }
 
                 break;
@@ -1721,7 +1862,7 @@ public sealed class MediaModule : IStreamControl
                 if (player.IsPaused)
                 {
                     player.Resume();
-                    await state.Send("▶ resumed from Jellyfin").ConfigureAwait(false);
+                    await state.Send("▶️ Resumed from Jellyfin.").ConfigureAwait(false);
                 }
 
                 break;
@@ -1737,7 +1878,7 @@ public sealed class MediaModule : IStreamControl
 
             case "Stop":
                 await StopStreamAsync(guild).ConfigureAwait(false);
-                await state.Send("⏹ stopped from Jellyfin").ConfigureAwait(false);
+                await state.Send("⏹ Stopped from Jellyfin.").ConfigureAwait(false);
                 break;
         }
     }
@@ -1770,7 +1911,7 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        await state.Send($"🔀 Jellyfin group switched to **{MediaLabels.Format(item)}**").ConfigureAwait(false);
+        await state.Send($"🔀 The Jellyfin group switched to **{MediaLabels.Format(item)}**").ConfigureAwait(false);
         await StartItemAsync(guild, link.ChannelId, item, queue.StartSeconds, sync: false).ConfigureAwait(false);
     }
 
@@ -1866,14 +2007,14 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null || !_states.TryGetValue(guild.Value, out var state) || state.Now is not { } now || _engine.GetPlayback(guild.Value) is null)
         {
-            await c.ReplyAsync("nothing is playing").ConfigureAwait(false);
+            await c.ReplyAsync(NothingOnAir).ConfigureAwait(false);
             return;
         }
 
         var tracks = now.Stream.Tracks.Where(t => t.IsAudio == audio).ToList();
         if (tracks.Count == 0 && (audio || !TrackMatch.IsOff(arg)))
         {
-            await c.ReplyAsync(audio ? "this item has no audio tracks to choose from" : "this item has no subtitles").ConfigureAwait(false);
+            await c.ReplyAsync(audio ? "🙅 There are no other audio tracks to choose from." : "🙅 This one has no subtitles.").ConfigureAwait(false);
             return;
         }
 
@@ -1892,7 +2033,7 @@ public sealed class MediaModule : IStreamControl
         var named = arg.Length > 0 ? TrackMatch.Find(options, arg, audio) : null;
         if (named is null && arg.Length > 0 && arg.All(char.IsAsciiDigit))
         {
-            await c.ReplyAsync($"pick a number between 1 and {options.Count} — see `!{(audio ? "audio" : "subs")}`").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 Pick a number between 1 and {options.Count} — see `!{(audio ? "audio" : "subs")}`.").ConfigureAwait(false);
             return;
         }
 
@@ -1904,7 +2045,7 @@ public sealed class MediaModule : IStreamControl
         else
         {
             var title = audio ? "Audio track" : "Subtitles";
-            var lines = new List<string> { (arg.Length > 0 ? $"no {(audio ? "audio track" : "subtitles")} match `{arg}`. " : "") + $"**{title}** — reply with a number or language:" };
+            var lines = new List<string> { (arg.Length > 0 ? $"🙅 No {(audio ? "audio track" : "subtitles")} match `{arg}`. " : "") + $"{(audio ? "🎧" : "💬")} **{title}** — reply with a number or language:" };
             for (var i = 0; i < options.Count; i++)
             {
                 var label = options[i] is { } t ? TrackLabel(t) : "Off";
@@ -1927,18 +2068,18 @@ public sealed class MediaModule : IStreamControl
             ? prefs with { AudioLanguage = track?.Language }
             : prefs with { SubtitlesOn = track is not null, SubtitleLanguage = track?.Language };
 
-        var emoji = audio ? "🔊 audio" : "💬 subtitles";
+        var emoji = audio ? "🎧 Audio" : "💬 Subtitles";
         var name = track is null ? "off" : $"**{TrackLabel(track)}**";
         if (track?.Index == currentIndex)
         {
-            await c.ReplyAsync($"{emoji}: {name} (already on)").ConfigureAwait(false);
+            await c.ReplyAsync($"{emoji}: {name} — already on.").ConfigureAwait(false);
             return;
         }
 
         var selection = audio
             ? now.Stream.Selection with { AudioIndex = track!.Index }
             : now.Stream.Selection with { SubtitleIndex = track?.Index };
-        await c.ReplyAsync($"{emoji}: {name} — switching…").ConfigureAwait(false);
+        await c.ReplyAsync($"{emoji}: {name} — switching over…").ConfigureAwait(false);
         await RestartWithTracksAsync(guild.Value, state, now, selection).ConfigureAwait(false);
     }
 
@@ -1952,7 +2093,7 @@ public sealed class MediaModule : IStreamControl
         var guild = ContextGuild(c);
         if (guild is null || !_states.TryGetValue(guild.Value, out var state) || state.Now is not { } now || _engine.GetPlayback(guild.Value) is null)
         {
-            await c.ReplyAsync(c.Rest.Length == 0 ? CommandCatalog.Find("language")!.HelpText() : "nothing is playing").ConfigureAwait(false);
+            await c.ReplyAsync(c.Rest.Length == 0 ? CommandCatalog.Find("language")!.HelpText() : NothingOnAir).ConfigureAwait(false);
             return;
         }
 
@@ -1965,7 +2106,7 @@ public sealed class MediaModule : IStreamControl
         if (words.Length == 0)
         {
             await c.ReplyAsync(
-                $"🎧 audio: **{(playingAudio is null ? "none" : TrackLabel(playingAudio))}** · 💬 subtitles: **{(playingSubs is null ? "off" : TrackLabel(playingSubs))}**\n"
+                $"🎧 Audio: **{(playingAudio is null ? "none" : TrackLabel(playingAudio))}** · 💬 Subtitles: **{(playingSubs is null ? "off" : TrackLabel(playingSubs))}**\n"
                 + "-# `!language <audio> <subtitles>` sets both, e.g. `!language japanese english` · `!language english off`").ConfigureAwait(false);
             return;
         }
@@ -1981,7 +2122,7 @@ public sealed class MediaModule : IStreamControl
         if (audioPick is null)
         {
             var choices = string.Join(", ", audioTracks.Select(t => TrackLabel(t)));
-            await c.ReplyAsync($"no audio track matches `{words[0]}` — this one has: {(choices.Length > 0 ? choices : "no audio")}").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 No audio track matches `{words[0]}` — this one has: {(choices.Length > 0 ? choices : "no audio")}.").ConfigureAwait(false);
             return;
         }
 
@@ -1992,7 +2133,7 @@ public sealed class MediaModule : IStreamControl
             if (TrackMatch.Find(subtitleOptions, words[1], audio: false) is not { } s)
             {
                 var choices = string.Join(", ", subtitleOptions.Skip(1).Select(t => TrackLabel(t!)));
-                await c.ReplyAsync($"no subtitles match `{words[1]}` — this one has: {(choices.Length > 0 ? choices : "none")} (or `off`)").ConfigureAwait(false);
+                await c.ReplyAsync($"🙅 No subtitles match `{words[1]}` — this one has: {(choices.Length > 0 ? choices : "none")} (or `off`).").ConfigureAwait(false);
                 return;
             }
 
@@ -2006,14 +2147,14 @@ public sealed class MediaModule : IStreamControl
         }
 
         _trackPrefs[guild.Value] = prefs;
-        var summary = $"🎧 audio: **{TrackLabel(audioPick)}** · 💬 subtitles: **{(subtitlePick is null ? "off" : TrackLabel(subtitlePick))}**";
+        var summary = $"🎧 Audio: **{TrackLabel(audioPick)}** · 💬 Subtitles: **{(subtitlePick is null ? "off" : TrackLabel(subtitlePick))}**";
         if (audioPick.Index == playingAudio?.Index && subtitlePick?.Index == playingSubs?.Index)
         {
-            await c.ReplyAsync($"{summary} (already on)").ConfigureAwait(false);
+            await c.ReplyAsync($"{summary} — already on.").ConfigureAwait(false);
             return;
         }
 
-        await c.ReplyAsync($"{summary} — switching…").ConfigureAwait(false);
+        await c.ReplyAsync($"{summary} — switching over…").ConfigureAwait(false);
         await RestartWithTracksAsync(guild.Value, state, now, new TrackSelection(audioPick.Index, subtitlePick?.Index)).ConfigureAwait(false);
     }
 

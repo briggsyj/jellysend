@@ -29,7 +29,7 @@ public sealed class VoiceModuleTests
     public async Task Join_requires_the_author_in_voice()
     {
         await Send("!join");
-        Assert.Equal(["you're not in a voice channel"], _sender.Texts);
+        Assert.Equal(["🙅 Join a voice channel first, then try again."], _sender.Texts);
         Assert.Empty(_gateway.Links);
     }
 
@@ -46,7 +46,7 @@ public sealed class VoiceModuleTests
         Assert.Equal(2, _gateway.Links.Count);
         Assert.Equal(1, _gateway.Links[0].Disconnects);
         Assert.Equal(51UL, _voice.Get(5)!.ChannelId);
-        Assert.Equal(["joined!", "joined!", "joined!"], _sender.Texts);
+        Assert.Equal(["📡 Joined — ready to broadcast.", "📡 Joined — ready to broadcast.", "📡 Joined — ready to broadcast."], _sender.Texts);
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class VoiceModuleTests
         await Send("!join");
         _streams.Streaming.Add(5);
         await Send("!leave");
-        Assert.Equal(["not in a voice channel", "joined!", VoiceModule.LeftReply], _sender.Texts);
+        Assert.Equal(["🙅 I'm not in a voice channel.", "📡 Joined — ready to broadcast.", VoiceModule.LeftReply], _sender.Texts);
         Assert.Equal([(5UL, "leave")], _streams.Stops);
         Assert.False(_gateway.Links[0].IsConnected);
         Assert.Null(_voice.Get(5));
@@ -96,7 +96,7 @@ public sealed class VoiceModuleTests
         await Send("!stop");
         _streams.Streaming.Add(5);
         await Send("!stop");
-        Assert.Equal(["nothing is playing", "joined!", "nothing is playing", VoiceModule.StoppedReply], _sender.Texts);
+        Assert.Equal(["🙅 Nothing's on air right now.", "📡 Joined — ready to broadcast.", "🙅 Nothing's on air right now.", VoiceModule.StoppedReply], _sender.Texts);
         Assert.Equal([(5UL, "stop")], _streams.Stops);
         Assert.NotNull(_voice.Get(5));
     }
@@ -361,7 +361,7 @@ public sealed class VoiceModuleTests
         await Send("!stop");
         _streams.Streaming.Add(5);
         await Send("!leave");
-        Assert.Equal(["joined!", VoiceModule.StoppedReply, VoiceModule.LeftReply], _sender.Texts);
+        Assert.Equal(["📡 Joined — ready to broadcast.", VoiceModule.StoppedReply, VoiceModule.LeftReply], _sender.Texts);
         Assert.Equal([(5UL, "stop"), (5UL, "leave")], _streams.Stops);
     }
 }

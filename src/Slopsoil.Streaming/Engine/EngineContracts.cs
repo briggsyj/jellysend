@@ -57,6 +57,9 @@ public sealed record StreamRequest
 
     public bool DebugOverlay { get; init; }
 
+    /// <summary>Said after the title in "Now showing", e.g. <c>backup feed</c> (spec 020); null = nothing.</summary>
+    public string? TitleNote { get; init; }
+
     /// <summary>Source video codec, for diagnostics.</summary>
     public string? SourceCodec { get; init; }
 

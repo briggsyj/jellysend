@@ -28,7 +28,7 @@ public sealed class MediaSyncPlayTests
     {
         var g = await PlayAndSync();
         Assert.Equal(["open slopsoil · Movie Night", "queue f 12"], g.Calls);
-        Assert.Contains("👥 Jellyfin SyncPlay group **slopsoil · Movie Night** is open — join it from a Jellyfin app to control playback together", _h.Texts);
+        Assert.Contains("👥 The Jellyfin SyncPlay group **slopsoil · Movie Night** is open — join it from a Jellyfin app to control playback together.", _h.Texts);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class MediaSyncPlayTests
         await g.Command("Seek", 500);
         await g.Command("Unpause", 900);          // not paused but far: seek, no reply
         Assert.Equal(["pause", "resume", "seek 500", "seek 900"], _h.Current.Fake.Calls);
-        Assert.Equal(["⏸ paused from Jellyfin at 0:01:40", "▶ resumed from Jellyfin", "⏩ Jellyfin jumped to 0:08:20"], _h.Texts.Skip(_h.Texts.Count - 3));
+        Assert.Equal(["⏸ Paused from Jellyfin at 0:01:40", "▶️ Resumed from Jellyfin.", "⏩ Jellyfin jumped to 0:08:20"], _h.Texts.Skip(_h.Texts.Count - 3));
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class MediaSyncPlayTests
     {
         var g = await PlayAndSync();
         await g.Command("Stop", null);
-        Assert.Equal("⏹ stopped from Jellyfin", _h.Texts[^1]);
+        Assert.Equal("⏹ Stopped from Jellyfin.", _h.Texts[^1]);
         Assert.False(_h.Media.IsStreaming(5));
         await g.Command("Pause", 1);              // nothing playing: ignored
     }
@@ -84,7 +84,7 @@ public sealed class MediaSyncPlayTests
         await g.Queue(null, 0);
         await g.Queue("missing", 0);
         await g.Queue("o", 30);
-        Assert.Equal("🔀 Jellyfin group switched to **Other (2001)**", _h.Texts.First(t => t.StartsWith("🔀", StringComparison.Ordinal)));
+        Assert.Equal("🔀 The Jellyfin group switched to **Other (2001)**", _h.Texts.First(t => t.StartsWith("🔀", StringComparison.Ordinal)));
         Assert.Equal(("Other (2001)", 30.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
         await _h.Drain();
         Assert.Equal(2, g.Calls.Count);           // sync: false — not re-queued to the group

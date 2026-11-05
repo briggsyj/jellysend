@@ -92,10 +92,10 @@ public static partial class MediaText
         `!stop` — stop (stay in voice)
         `!leave` — stop and leave
         ### 📜 Playlist
-        `!queue <title>` — add to the end (pick several episodes: `2,5,8`)
-        `!playlist` — what's on and up next, numbered
-        `!remove 2` — take item 2 off the playlist
-        `!order 3 1` — move item 3 to the top (position 1)
+        `!playlist` — what's on and up next, numbered; reply to change it
+        `!playlist add <title>` — add to the end
+        `!playlist remove 2` — take item 2 off
+        `!playlist order 3 1` — move item 3 to the top (position 1)
         ### 🎛️ Picture & sound
         `!language japanese english` — audio + subtitles shortcut: set both at once
         `!subs` — subtitles: shows the choices · `!subs english`, `!subs off`

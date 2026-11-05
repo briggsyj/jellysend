@@ -11,12 +11,11 @@ namespace Slopsoil.Commands.Media;
 /// <param name="Role">Role needed to run it.</param>
 /// <param name="Section">Where it is listed in <c>!help all</c> (spec 019).</param>
 /// <param name="Help">Its full help: what it does, one usage line per form, examples.</param>
-/// <param name="NeedsArgs">Run without arguments, it shows <see cref="Help"/> (nothing useful to do bare).</param>
-public sealed record CommandInfo(string Name, string[] Aliases, Role Role, string Section, string Help, bool NeedsArgs = false)
+public sealed record CommandInfo(string Name, string[] Aliases, Role Role, string Section, string Help)
 {
     public IEnumerable<string> Names => [Name, .. Aliases];
 
-    /// <summary>The reply to <c>!help &lt;name&gt;</c> and to a bare command that needs arguments.</summary>
+    /// <summary>The reply to <c>!help &lt;name&gt;</c>.</summary>
     public string HelpText() => $"{Block()}\n-# Also works as `!media {Name}`.";
 
     /// <summary>This command's entry in <c>!help all</c>.</summary>
@@ -62,24 +61,16 @@ public static class CommandCatalog
         new("stop", [], Role.Friend, WhileWatching, "`!stop` — stop the stream; the bot stays in voice and keeps the playlist (`!play` starts it again)."),
         new("leave", [], Role.Friend, WhileWatching, "`!leave` — stop and leave the voice channel. The bot also leaves on its own when the channel stays empty."),
         new("join", [], Role.Friend, WhileWatching, "`!join` — bring the bot into your voice channel (`!play` does this for you)."),
-        new("queue", [], Role.Friend, Schedule, """
-            Add to the end of the playlist (up to 10 items; they play in order, each from the start).
-            `!queue <title>` — e.g. `!queue big buck bunny`
-            `!queue <show> s1e2` — one episode · `!queue <show> s1e1-6` — several
-            `!queue <show>` — pick from the episode list; reply `2,5,8` or `3-6` for several
-            -# Nothing playing? The first one starts straight away.
-            """, NeedsArgs: true),
-        new("playlist", [], Role.Friend, Schedule, "`!playlist` — what's on now and what's coming up, numbered (use those numbers with `!remove` and `!order`)."),
-        new("order", [], Role.Friend, Schedule, """
-            Move an item on the playlist. Use the numbers from `!playlist`.
-            `!order 3 1` — move item 3 to the top (position 1)
-            `!order pilot 2` — you can name the item instead of its number
-            """, NeedsArgs: true),
-        new("remove", [], Role.Friend, Schedule, """
-            Take an item off the playlist. Use the numbers from `!playlist`.
-            `!remove 2` — take item 2 off
-            `!remove pilot` — you can name the item instead of its number
-            """, NeedsArgs: true),
+        new("playlist", [], Role.Friend, Schedule, """
+            The playlist: up to 10 things that play in order, each from the start.
+            `!playlist` — what's on now and coming up, numbered; then reply `add`, `remove` or `order` to change it
+            `!playlist add <title>` — add to the end, e.g. `!playlist add big buck bunny`
+            `!playlist add <show> s1e2` — one episode · `!playlist add <show> s1e1-6` — several
+            `!playlist add <show>` — pick from the episode list; reply `2,5,8` or `3-6` for several
+            `!playlist remove 2` — take item 2 off (or name it: `!playlist remove pilot`)
+            `!playlist order 3 1` — move item 3 to the top, position 1 (or name it: `!playlist order pilot 2`)
+            -# Leave out what comes after `add`, `remove` or `order` and the bot asks for it. Nothing playing? The first thing added starts straight away.
+            """),
         new("subtitles", ["subs", "sub"], Role.Friend, PictureAndSound, """
             Subtitles, drawn onto the picture.
             `!subs` — shows the subtitles this has; reply with a number or language

@@ -59,7 +59,7 @@ public sealed class StreamEngineTests
     public async Task Start_connects_go_live_and_runs_the_pipeline()
     {
         Assert.True(await _engine.StartAsync(5, Req(), Send, OnEnd, Ct));
-        Assert.Equal(["📺 **Film** (go-live)"], _sent);
+        Assert.Equal(["📺 Now showing: **Film**"], _sent);
         Assert.Equal(["connect 5", "start Film"], _connector.Log);
         Assert.True(_engine.IsStreaming(5));
         Assert.Equal(5.0, _engine.GetPlayback(5)!.Position);
@@ -120,22 +120,32 @@ public sealed class StreamEngineTests
 
         Assert.Equal(
             [
-                "go-live requires a working H.264 encoder; none found",
-                "📺 **Film** (go-live)", "go-live connection failed: no STREAM_CREATE",
-                "📺 **Film** (go-live)", "go-live error: ffmpeg missing",
+                "❌ We can't broadcast — no video encoder works on this server. Ask an admin to check the logs.",
+                "📺 Now showing: **Film**", "❌ We couldn't open the screenshare. Try again in a moment — if it keeps happening, ask an admin to check the logs.",
+                "📺 Now showing: **Film**", "❌ Something went wrong getting on air. Try again — if it keeps happening, ask an admin to check the logs.",
             ],
             _sent);
     }
 
     [Fact]
-    public async Task Pipeline_failure_replies_with_its_error_and_reports_the_end()
+    public async Task Pipeline_failure_reports_the_end_and_leaves_the_wording_to_the_caller()
     {
         await _engine.StartAsync(5, Req(), Send, OnEnd, Ct);
-        _pipelines.Created[0].End(PipelineEndReason.Failed, "go-live stream failed to start");
+        _pipelines.Created[0].End(PipelineEndReason.Failed, FfmpegPipeline.FailedToStart);
         await Until(() => _ends == 1);
-        Assert.Equal("go-live stream failed to start", _sent[1]);
+        Assert.Equal(["📺 Now showing: **Film**"], _sent);   // spec 020: the media layer says one thing — a recovery or the failure
         Assert.False(_engine.IsStreaming(5));
         Assert.Equal([PipelineEndReason.Failed], _endReasons); // like Python: any unstopped end may auto-advance
+    }
+
+    [Fact]
+    public async Task Without_an_end_callback_a_failure_replies_with_its_error()
+    {
+        await _engine.StartAsync(5, Req(), Send, null, Ct);
+        _pipelines.Created[0].End(PipelineEndReason.Failed, FfmpegPipeline.FailedToStart);
+        await Until(() => _sent.Count == 2);
+        Assert.Equal(FfmpegPipeline.FailedToStart, _sent[1]);
+        Assert.False(_engine.IsStreaming(5));
     }
 
     [Theory]
@@ -166,7 +176,7 @@ public sealed class StreamEngineTests
         Assert.Equal(42.5, _lastEnd.Position);
         Assert.True(_pipelines.Created[0].Stops >= 1); // stopped before the end is reported (cleanup may repeat it)
         Assert.Equal(1, _connector.Links[0].Disconnects);
-        Assert.Contains(StreamEngine.ConnectionLostMessage, _sent);
+        Assert.DoesNotContain(StreamEngine.ConnectionLostMessage, _sent); // the media layer decides: reconnect or say so
         Assert.False(_engine.IsStreaming(5));
     }
 

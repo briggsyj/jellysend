@@ -147,6 +147,9 @@ internal sealed class FfmpegPipeline : IPipeline
         }
     }
 
+    /// <summary>The end message when FFmpeg never produced audio (spec 020 wording).</summary>
+    public const string FailedToStart = "❌ We couldn't get it on air. Try `!play` again — if it keeps happening, ask an admin to check the logs.";
+
     /// <summary>How often Jellyfin's transcode stats are fetched (spec 017).</summary>
     internal static readonly TimeSpan JellyfinStatsInterval = TimeSpan.FromSeconds(10);
 
@@ -210,7 +213,7 @@ internal sealed class FfmpegPipeline : IPipeline
                 {
                     _log.LogError("go-live: no audio from FFmpeg (it exited or did not open the audio FIFO in time)");
                     _player.Stop();
-                    _end.TrySetResult(new PipelineEnd(PipelineEndReason.Failed, "go-live stream failed to start"));
+                    _end.TrySetResult(new PipelineEnd(PipelineEndReason.Failed, FailedToStart));
                 }
 
                 return;
@@ -244,14 +247,14 @@ internal sealed class FfmpegPipeline : IPipeline
             {
                 VideoPlayerEnd.Natural => new PipelineEnd(PipelineEndReason.Natural),
                 VideoPlayerEnd.Stopped => new PipelineEnd(PipelineEndReason.Stopped),
-                _ => new PipelineEnd(PipelineEndReason.Failed, "go-live error: the video encoder failed — see the logs"),
+                _ => new PipelineEnd(PipelineEndReason.Failed, "❌ We lost the picture — the video encoder stopped. Try `!play` again — if it keeps happening, ask an admin to check the logs."),
             });
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "go-live pipeline error");
             _player.Stop();
-            _end.TrySetResult(new PipelineEnd(PipelineEndReason.Failed, $"go-live error: {ex.Message}"));
+            _end.TrySetResult(new PipelineEnd(PipelineEndReason.Failed, "❌ Something went wrong on air. Try `!play` again — if it keeps happening, ask an admin to check the logs."));
         }
     }
 

@@ -277,6 +277,21 @@ internal sealed class MediaHarness
     /// <summary>Send without awaiting (the handler waits for a picker reply).</summary>
     public Task Start(string content) => Task.Run(() => Send(content));
 
+    /// <summary>
+    /// <c>!playlist</c> on its own (spec 021): its reply without the menu at the end. The menu keeps waiting for a reply
+    /// in the background.
+    /// </summary>
+    public async Task<string> ShowPlaylist(string command = "!playlist")
+    {
+        var before = Texts.Count;
+        _ = Start(command);
+        await Until(() => Texts.Skip(before).Any(t => t.Contains(MenuMarker, StringComparison.Ordinal)), "the playlist menu");
+        var reply = Texts.Skip(before).First(t => t.Contains(MenuMarker, StringComparison.Ordinal));
+        return reply[..reply.IndexOf("\n\n" + MenuMarker, StringComparison.Ordinal)];
+    }
+
+    public const string MenuMarker = "**Change it?**";
+
     public async Task Until(Func<bool> condition, string? what = null)
     {
         for (var i = 0; i < 600 && !condition(); i++)

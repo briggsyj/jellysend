@@ -193,7 +193,7 @@ Every command works as a short form (`!play`) and under `!media` (`!media play`)
 | `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
 | `!play <show>` | Pick season → episode |
 | `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |
-| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!queue` they all go to the end of the playlist (max 10). |
+| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!playlist add` they all go to the end of the playlist (max 10). |
 | `!play <title> 1:23:45` | Start at a time (also `45m`, `90s`, `1h30m`) |
 | `!play "<title>"` | Quotes: read it all as the title |
 
@@ -210,6 +210,7 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!stop` | Stop, stay in voice |
 | `!leave` | Stop and leave the voice channel |
 | `!join` | Join your voice channel |
+| `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
 | `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
@@ -222,16 +223,18 @@ Pickers accept a number or a name, and time out after 30 seconds.
 
 | Command | Description |
 |---|---|
-| `!queue <title>` | Add to the playlist (max 10, plays from the start); `!queue <show> s01e02` |
-| `!playlist` | What's playing and up next |
-| `!order <# or title> <new #>` | Move an item |
-| `!remove <# or title>` | Remove an item |
+| `!playlist` | What's playing and up next, numbered. Then reply `add`, `remove` or `order` to change it — the bot asks for the rest. |
+| `!playlist add <title>` | Add to the end (max 10, plays from the start); `!playlist add <show> s01e02`, `s1e1-6` |
+| `!playlist remove <# or title>` | Take an item off, e.g. `!playlist remove 2` |
+| `!playlist order <# or title> <new #>` | Move an item, e.g. `!playlist order 3 1` (item 3 to the top) |
+
+Leave out what comes after `add`, `remove` or `order` and the bot asks for it. The old `!queue`, `!remove` and `!order` still work and point to their new names.
 
 ### General
 
 | Command | Description |
 |---|---|
-| `!help` | All commands; `!help <command>` for one |
+| `!help` | All commands; `!help <command>` for one; `!help all` for every command in detail |
 | `!ping` | Is the bot alive? |
 
 #### Jellyfin SyncPlay (group watch)

@@ -7,7 +7,7 @@ public sealed class MediaPlaytimeTests
 {
     private readonly MediaHarness _h = new();
 
-    private const string Limit = "⏹ stopped after 12 hours of streaming — `!play` to start again (the playlist is kept)";
+    private const string Limit = "⏹ That's 12 hours on air — time for a break. `!play` to start again (the playlist is kept).";
 
     public MediaPlaytimeTests()
     {
@@ -20,7 +20,7 @@ public sealed class MediaPlaytimeTests
     public async Task The_stream_stops_at_12_hours_and_keeps_the_playlist()
     {
         await _h.Send("!play a");
-        await _h.Send("!queue b");
+        await _h.Send("!playlist add b");
         _h.Time.Advance(TimeSpan.FromHours(11.9));
         await Task.Delay(20, TestContext.Current.CancellationToken);
         Assert.True(_h.Media.IsStreaming(5));
@@ -31,8 +31,7 @@ public sealed class MediaPlaytimeTests
         Assert.False(_h.Media.IsStreaming(5));
         Assert.Equal(1, _h.Current.Stops);
         Assert.NotNull(_h.Voice.Get(5));                 // still in voice
-        await _h.Send("!playlist");
-        Assert.Contains("`1` B (2001)", _h.Texts[^1], StringComparison.Ordinal);
+        Assert.Contains("`1` B (2001)", await _h.ShowPlaylist(), StringComparison.Ordinal);
         await _h.Send("!play");                           // resume the playlist: a fresh 12 hours
         Assert.Equal("B (2001)", _h.Current.Request.Title);
         Assert.False(_h.Media.PlaytimeLimits[5].Task.IsCompleted);
@@ -42,7 +41,7 @@ public sealed class MediaPlaytimeTests
     public async Task Auto_advance_keeps_counting_from_the_users_start()
     {
         await _h.Send("!play a");
-        await _h.Send("!queue b");
+        await _h.Send("!playlist add b");
         _h.Time.Advance(TimeSpan.FromHours(6));
         _h.Current.End(PipelineEndReason.Natural);        // A ends; B plays on its own
         await _h.Until(() => _h.Pipelines.Created.Count == 2, "auto-advance");

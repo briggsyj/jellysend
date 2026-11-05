@@ -17,9 +17,9 @@ public sealed class VoiceModule(
     /// <summary>The empty-channel countdown task per guild (tests await it).</summary>
     internal System.Collections.Concurrent.ConcurrentDictionary<ulong, Task> EmptyCountdowns { get; } = new();
 
-    public const string StoppedReply = "⏹ stopped — still in voice (`!leave` to leave)";
+    public const string StoppedReply = "⏹ Off air — still in the channel. `!leave` to sign off.";
 
-    public const string LeftReply = "⏹ stopped and left the voice channel";
+    public const string LeftReply = "📴 Signing off — left the voice channel.";
 
     /// <summary>How long a self "left voice" waits before tearing down: a move (leave + join) rejoins within it.</summary>
     public static readonly TimeSpan SelfLeftGrace = TimeSpan.FromSeconds(2);
@@ -45,12 +45,12 @@ public sealed class VoiceModule(
         var (guild, channel) = ResolveAuthorVoice(voice.Gateway, c.Message);
         if (guild is null || channel is null)
         {
-            await c.ReplyAsync("you're not in a voice channel");
+            await c.ReplyAsync("🙅 Join a voice channel first, then try again.");
             return;
         }
 
         await voice.EnsureAsync(guild.Value, channel.Value, c.Cancellation);
-        await c.ReplyAsync("joined!");
+        await c.ReplyAsync("📡 Joined — ready to broadcast.");
     }
 
     /// <summary><c>!media leave</c> / <c>!leave</c>: stop the stream, discard the session and leave voice.</summary>
@@ -61,7 +61,7 @@ public sealed class VoiceModule(
         var guild = link?.GuildId ?? c.GuildId;
         if (guild is null || (link is null && !streams.IsStreaming(guild.Value)))
         {
-            await c.ReplyAsync("not in a voice channel");
+            await c.ReplyAsync("🙅 I'm not in a voice channel.");
             return;
         }
 
@@ -78,7 +78,7 @@ public sealed class VoiceModule(
         guild ??= c.GuildId ?? voice.FindAny()?.GuildId;
         if (guild is null || !streams.IsStreaming(guild.Value))
         {
-            await c.ReplyAsync("nothing is playing");
+            await c.ReplyAsync("🙅 Nothing's on air right now.");
             return;
         }
 

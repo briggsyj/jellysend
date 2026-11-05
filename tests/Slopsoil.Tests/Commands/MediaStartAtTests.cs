@@ -15,14 +15,14 @@ public sealed class MediaStartAtTests
     }
 
     [Theory]
-    [InlineData("!play sample film 1:12:30", 4350.0, "⏩ starting at 1:12:30")]
-    [InlineData("!play sample film 1.12", 4320.0, "⏩ starting at 1:12:00")]
-    [InlineData("!play sample film 45m", 2700.0, "⏩ starting at 0:45:00")]
+    [InlineData("!play sample film 1:12:30", 4350.0, "⏩ Starting at 1:12:30")]
+    [InlineData("!play sample film 1.12", 4320.0, "⏩ Starting at 1:12:00")]
+    [InlineData("!play sample film 45m", 2700.0, "⏩ Starting at 0:45:00")]
     public async Task Starts_directly_at_the_time(string command, double offset, string reply)
     {
         await _h.Send(command);
         Assert.Equal(offset, _h.Current.Request.StartOffset);
-        Assert.Equal([reply, "checking stream…", "📺 **Sample Film (2010)** (go-live)"], _h.Texts);
+        Assert.Equal([reply, "📡 Tuning in to **Sample Film (2010)**…", "📺 Now showing: **Sample Film (2010)**"], _h.Texts);
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class MediaStartAtTests
     {
         await _h.Send("!play sample film 0:00");
         Assert.Equal(0.0, _h.Current.Request.StartOffset);
-        Assert.Equal("checking stream…", _h.Texts[0]);
+        Assert.Equal("📡 Tuning in to **Sample Film (2010)**…", _h.Texts[0]);
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class MediaStartAtTests
     public async Task Nothing_found_reports_the_full_text_once()
     {
         await _h.Send("!play zzz 1:00");
-        Assert.Equal(["nothing found in Jellyfin for `zzz 1:00`"], _h.Texts);
+        Assert.Equal(["🔎 Nothing found for `zzz 1:00` — check the spelling?"], _h.Texts);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class MediaStartAtTests
     {
         await _h.Send("!play sample film 9:00:00");
         await _h.Send("!play sample film 2:28");
-        Assert.Equal(["9:00:00 is past the end (2:28:00)", "2:28:00 is past the end (2:28:00)"], _h.Texts);
+        Assert.Equal(["🙅 9:00:00 is past the end (2:28:00).", "🙅 2:28:00 is past the end (2:28:00)."], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
 
@@ -105,7 +105,7 @@ public sealed class MediaStartAtTests
     public async Task Queue_does_not_take_a_start_time()
     {
         _h.Library.Search["sample film 1:12"] = [MediaHarness.Movie("q", "Sample Film 1:12 Cut", 2011)];
-        await _h.Send("!media queue sample film 1:12");
+        await _h.Send("!media playlist add sample film 1:12");
         Assert.Equal(("Sample Film 1:12 Cut (2011)", 0.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
     }
 

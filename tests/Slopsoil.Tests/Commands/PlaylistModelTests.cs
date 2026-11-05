@@ -37,17 +37,17 @@ public sealed class PlaylistModelTests
     }
 
     [Theory]
-    [InlineData("3 1", "moved **Gamma** to #1", "Gamma,Alpha,Beta")]
-    [InlineData("alp 3", "moved **Alpha** to #3", "Beta,Gamma,Alpha")]
-    [InlineData("the  big   gamma 2", "nothing in the playlist matches `the  big   gamma`", "Alpha,Beta,Gamma")]
-    [InlineData("a 2", "`a` matches several items — use its number from `!playlist`", "Alpha,Beta,Gamma")]
-    [InlineData("4 1", "there's no #4 in the playlist (1–3)", "Alpha,Beta,Gamma")]
-    [InlineData("0 1", "there's no #0 in the playlist (1–3)", "Alpha,Beta,Gamma")]
-    [InlineData("1 4", "position must be between 1 and 3", "Alpha,Beta,Gamma")]
-    [InlineData("1 0", "position must be between 1 and 3", "Alpha,Beta,Gamma")]
-    [InlineData("1", "usage: `!order <# or title> <new #>`", "Alpha,Beta,Gamma")]
-    [InlineData("1 x", "usage: `!order <# or title> <new #>`", "Alpha,Beta,Gamma")]
-    [InlineData("", "usage: `!order <# or title> <new #>`", "Alpha,Beta,Gamma")]
+    [InlineData("3 1", "↕️ Moved **Gamma** to #1.", "Gamma,Alpha,Beta")]
+    [InlineData("alp 3", "↕️ Moved **Alpha** to #3.", "Beta,Gamma,Alpha")]
+    [InlineData("the  big   gamma 2", "🔎 Nothing on the playlist matches `the  big   gamma`.", "Alpha,Beta,Gamma")]
+    [InlineData("a 2", "🙅 `a` matches several items — use its number from `!playlist`.", "Alpha,Beta,Gamma")]
+    [InlineData("4 1", "🙅 There's no #4 on the playlist (1–3).", "Alpha,Beta,Gamma")]
+    [InlineData("0 1", "🙅 There's no #0 on the playlist (1–3).", "Alpha,Beta,Gamma")]
+    [InlineData("1 4", "🙅 The new position must be between 1 and 3.", "Alpha,Beta,Gamma")]
+    [InlineData("1 0", "🙅 The new position must be between 1 and 3.", "Alpha,Beta,Gamma")]
+    [InlineData("1", "🙅 Say which item and where to — e.g. `!playlist order 3 1` (item 3 to the top).", "Alpha,Beta,Gamma")]
+    [InlineData("1 x", "🙅 Say which item and where to — e.g. `!playlist order 3 1` (item 3 to the top).", "Alpha,Beta,Gamma")]
+    [InlineData("", "🙅 Say which item and where to — e.g. `!playlist order 3 1` (item 3 to the top).", "Alpha,Beta,Gamma")]
     public void Move(string args, string reply, string after)
     {
         var p = Make("Alpha", "Beta", "Gamma");
@@ -56,10 +56,10 @@ public sealed class PlaylistModelTests
     }
 
     [Theory]
-    [InlineData("2", "removed **Beta** from the playlist", "Alpha,Gamma")]
-    [InlineData("GAMMA", "removed **Gamma** from the playlist", "Alpha,Beta")]
-    [InlineData("zzz", "nothing in the playlist matches `zzz`", "Alpha,Beta,Gamma")]
-    [InlineData("  ", "usage: `!remove <# or title>`", "Alpha,Beta,Gamma")]
+    [InlineData("2", "➖ Took **Beta** off the playlist.", "Alpha,Gamma")]
+    [InlineData("GAMMA", "➖ Took **Gamma** off the playlist.", "Alpha,Beta")]
+    [InlineData("zzz", "🔎 Nothing on the playlist matches `zzz`.", "Alpha,Beta,Gamma")]
+    [InlineData("  ", "🙅 Say which item — e.g. `!playlist remove 2`.", "Alpha,Beta,Gamma")]
     public void Remove(string target, string reply, string after)
     {
         var p = Make("Alpha", "Beta", "Gamma");
@@ -70,7 +70,7 @@ public sealed class PlaylistModelTests
     [Fact]
     public void Empty_playlist_replies()
     {
-        Assert.Equal("the playlist is empty", Make().Move("1 1"));
-        Assert.Equal("the playlist is empty", Make().Remove("1"));
+        Assert.Equal("📭 The playlist is empty.", Make().Move("1 1"));
+        Assert.Equal("📭 The playlist is empty.", Make().Remove("1"));
     }
 }

@@ -42,10 +42,10 @@ public sealed class MediaTracksTests
     {
         await PlayFilm();
         var run = _h.Start("!media subtitles");
-        await _h.UntilReply("**Subtitles** — reply with a number or language:\n`1` Off  ← current\n`2` English - SRT\n`3` French\n`4` English signs (forced)");
+        await _h.UntilReply("💬 **Subtitles** — reply with a number or language:\n`1` Off  ← current\n`2` English - SRT\n`3` French\n`4` English signs (forced)");
         await _h.Answer("2");
         await run;
-        Assert.Contains("💬 subtitles: **English - SRT** — switching…", _h.Texts);
+        Assert.Contains("💬 Subtitles: **English - SRT** — switching over…", _h.Texts);
         Assert.Equal(("f", new TrackSelection(null, 3)), _h.Library.PlaybackCalls[^1]);
         Assert.Equal(("Film (2000)", 600.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset)); // same item, same place
         Assert.Equal(2, _h.Pipelines.Created.Count);
@@ -60,9 +60,9 @@ public sealed class MediaTracksTests
         await _h.Send("!media sub off");
         Assert.Equal(new TrackSelection(null, null), _h.Library.PlaybackCalls[^1].Tracks);
         await _h.Send("!media subs off");                    // already off
-        Assert.Equal("💬 subtitles: off (already on)", _h.Texts[^1]);
+        Assert.Equal("💬 Subtitles: off — already on.", _h.Texts[^1]);
         await _h.Send("!media subs 9");
-        Assert.Equal("pick a number between 1 and 4 — see `!subs`", _h.Texts[^1]);
+        Assert.Equal("🙅 Pick a number between 1 and 4 — see `!subs`.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public sealed class MediaTracksTests
     {
         await PlayFilm();
         var run = _h.Start("!media audio");
-        await _h.UntilReply("**Audio track** — reply with a number or language:\n`1` English 5.1  ← current\n`2` Japanese");
+        await _h.UntilReply("🎧 **Audio track** — reply with a number or language:\n`1` English 5.1  ← current\n`2` Japanese");
         await _h.Answer("2");
         await run;
-        Assert.Contains("🔊 audio: **Japanese** — switching…", _h.Texts);
+        Assert.Contains("🎧 Audio: **Japanese** — switching over…", _h.Texts);
         Assert.Equal(new TrackSelection(2, null), _h.Library.PlaybackCalls[^1].Tracks);
         await _h.Send("!media audio 2");
-        Assert.Equal("🔊 audio: **Japanese** (already on)", _h.Texts[^1]);
+        Assert.Equal("🎧 Audio: **Japanese** — already on.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -113,16 +113,16 @@ public sealed class MediaTracksTests
     public async Task Nothing_playing_and_no_subtitles()
     {
         await _h.Send("!media subs");
-        Assert.Equal(["nothing is playing"], _h.Texts);
+        Assert.Equal(["🙅 Nothing's on air right now."], _h.Texts);
         _h.Library.Search["bare"] = [MediaHarness.Movie("b", "Bare", 1999)];
         await _h.Send("!play bare");
         _h.Sender.Sent.Clear();
         await _h.Send("!media subtitles");
-        Assert.Equal(["this item has no subtitles"], _h.Texts);
+        Assert.Equal(["🙅 This one has no subtitles."], _h.Texts);
         await _h.Send("!media audio");
-        Assert.Equal("this item has no audio tracks to choose from", _h.Texts[^1]);
+        Assert.Equal("🙅 There are no other audio tracks to choose from.", _h.Texts[^1]);
         await _h.Send("!subs off");
-        Assert.Equal("💬 subtitles: off (already on)", _h.Texts[^1]);
+        Assert.Equal("💬 Subtitles: off — already on.", _h.Texts[^1]);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public sealed class MediaTrackNamesTests
         await _h.Send("!play film");
         _h.Sender.Sent.Clear();
         var run = _h.Start("!audio klingon");
-        await _h.UntilReply("no audio track match `klingon`. **Audio track** — reply with a number or language:\n`1` English 5.1  ← current\n`2` Japanese");
+        await _h.UntilReply("🙅 No audio track match `klingon`. 🎧 **Audio track** — reply with a number or language:\n`1` English 5.1  ← current\n`2` Japanese");
         await _h.Answer("japanese");
         await run;
         Assert.Equal(new TrackSelection(2, null), _h.Library.PlaybackCalls[^1].Tracks);
@@ -179,7 +179,7 @@ public sealed class MediaTrackNamesTests
     {
         await _h.Send("!play film");
         var run = _h.Start("!subs");
-        await _h.UntilReply("**Subtitles** — reply with a number or language:\n`1` Off  ← current\n`2` English - SRT\n`3` French");
+        await _h.UntilReply("💬 **Subtitles** — reply with a number or language:\n`1` Off  ← current\n`2` English - SRT\n`3` French");
         await _h.Answer("lol which one");
         await _h.Answer("french");
         await run;

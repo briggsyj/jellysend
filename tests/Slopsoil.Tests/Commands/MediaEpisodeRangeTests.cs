@@ -24,8 +24,7 @@ public sealed class MediaEpisodeRangeTests
 
     private async Task<string[]> Playlist()
     {
-        await _h.Send("!playlist");
-        return [.. _h.Texts[^1].Split('\n').Skip(2).Select(l => l.Trim())];
+        return [.. (await _h.ShowPlaylist()).Split('\n').Skip(2).Select(l => l.Trim())];
     }
 
     [Fact]
@@ -48,7 +47,7 @@ public sealed class MediaEpisodeRangeTests
     public async Task Missing_episodes_are_reported_and_the_rest_play()
     {
         await _h.Send("!play show s1e8-12");
-        Assert.Contains("S01E11–E12 of **Example Show** not found — carrying on with the rest", _h.Texts);
+        Assert.Contains("🔎 S01E11–E12 of **Example Show** isn't in the library — carrying on with the rest.", _h.Texts);
         Assert.Equal(L(1, 8), _h.Current.Request.Title);
         Assert.Equal(["`1` " + L(1, 9), "`2` " + L(1, 10)], await Playlist());
     }
@@ -57,7 +56,7 @@ public sealed class MediaEpisodeRangeTests
     public async Task Missing_seasons_are_reported()
     {
         await _h.Send("!play show s2e3-s4e1");
-        Assert.Contains("season 4 of **Example Show** not found — carrying on with the rest", _h.Texts);
+        Assert.Contains("🔎 season 4 of **Example Show** isn't in the library — carrying on with the rest.", _h.Texts);
         Assert.Equal(L(2, 3), _h.Current.Request.Title);
     }
 
@@ -65,11 +64,11 @@ public sealed class MediaEpisodeRangeTests
     public async Task Nothing_found_at_all_plays_nothing()
     {
         await _h.Send("!play show s5e1-3");
-        Assert.Equal(["S05E01–E03 of **Example Show** not found in Jellyfin"], _h.Texts);
+        Assert.Equal(["🔎 S05E01–E03 of **Example Show** isn't in the library."], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
         _h.Sender.Sent.Clear();
         await _h.Send("!play nothing s1e1-3");
-        Assert.Equal(["S01E01–E03 of `nothing` not found in Jellyfin"], _h.Texts);
+        Assert.Equal(["🔎 S01E01–E03 of `nothing` isn't in the library."], _h.Texts);
     }
 
     [Fact]
@@ -77,7 +76,7 @@ public sealed class MediaEpisodeRangeTests
     {
         _h.Library.Search["show 2x4"] = [MediaHarness.Episode("b4", "Example Show", 2, 4, "Two4")];
         await _h.Send("!play show s2e4");
-        await _h.Send("!queue show s1e5,2,7");
+        await _h.Send("!playlist add show s1e5,2,7");
         Assert.Equal(["`1` " + L(1, 5), "`2` " + L(1, 2), "`3` " + L(1, 7)], await Playlist());
     }
 

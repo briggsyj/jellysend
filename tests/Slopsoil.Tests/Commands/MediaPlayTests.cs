@@ -16,7 +16,7 @@ public sealed class MediaPlayTests
         _h.Library.Search["sample film"] = [MediaHarness.Movie("m1", "Sample Film")];
         await _h.Send("!play sample film");
 
-        Assert.Equal(["checking stream…", "📺 **Sample Film (2010)** (go-live)"], _h.Texts);
+        Assert.Equal(["📡 Tuning in to **Sample Film (2010)**…", "📺 Now showing: **Sample Film (2010)**"], _h.Texts);
         var p = _h.Current;
         Assert.Equal("Sample Film (2010)", p.Request.Title);
         Assert.Equal("http://jf/videos/m1/variant.m3u8?api_key=SECRET", p.Request.Url);
@@ -49,10 +49,10 @@ public sealed class MediaPlayTests
     {
         var h = new MediaHarness(configured: false);
         await h.Send("!play sample film");
-        await h.Send("!media queue sample film");
+        await h.Send("!media playlist add sample film");
         await h.Send("!media");
-        Assert.StartsWith("Jellyfin is not configured.", h.Texts[0], StringComparison.Ordinal);
-        Assert.StartsWith("Jellyfin is not configured.", h.Texts[1], StringComparison.Ordinal);
+        Assert.StartsWith("❌ The Jellyfin library isn't set up.", h.Texts[0], StringComparison.Ordinal);
+        Assert.StartsWith("❌ The Jellyfin library isn't set up.", h.Texts[1], StringComparison.Ordinal);
         Assert.Equal(MediaText.HelpText, h.Texts[2]);
     }
 
@@ -61,7 +61,7 @@ public sealed class MediaPlayTests
     {
         _h.Library.Search["creature"] = [MediaHarness.Movie("a1", "Creature", 1979), MediaHarness.Movie("a2", "Creatures", 1986)];
         var run = _h.Start("!play creature");
-        await _h.UntilReply("Found 2 result(s) for `creature`. Pick a number:\n\n  `1` [Movie] Creature (1979)\n  `2` [Movie] Creatures (1986)");
+        await _h.UntilReply("🔎 Found 2 matches for `creature` — reply with a number:\n\n  `1` [Movie] Creature (1979)\n  `2` [Movie] Creatures (1986)");
         await _h.Answer("2");
         await run;
         Assert.Equal("Creatures (1986)", _h.Current.Request.Title);
@@ -81,7 +81,7 @@ public sealed class MediaPlayTests
         }
 
         await run;
-        Assert.Equal("timed out — cancelled", _h.Texts[^1]);
+        Assert.Equal("⌛ No answer — cancelled.", _h.Texts[^1]);
         Assert.Empty(_h.Pipelines.Created);
     }
 
@@ -92,9 +92,9 @@ public sealed class MediaPlayTests
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1", Name = "Season 1" }, new MediaItem { Id = "se2", Name = "Season 2" }];
         _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "Example Show", 2, 1, "Awards Night"), new MediaItem { Id = "e2", Name = "Special", Type = "Episode", SeriesName = "Example Show" }];
         var run = _h.Start("!play example");
-        await _h.UntilReply("**Example Show** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
+        await _h.UntilReply("📺 **Example Show** — 2 seasons. Reply with a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` Special");
+        await _h.UntilReply("📺 **Example Show — Season 2**. Reply with an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` Special");
         await _h.Answer("1");
         await run;
         Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
@@ -107,15 +107,15 @@ public sealed class MediaPlayTests
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1" }];
         _h.Library.Episodes["se1"] = [new MediaItem { Id = "e1", Name = "Pilot", Type = "Episode", SeriesName = "Show" }];
         var run = _h.Start("!play show");
-        await _h.UntilReply("**Unknown — Unknown**. Pick an episode:\n\n  `1` Pilot");
+        await _h.UntilReply("📺 **Unknown — Unknown**. Reply with an episode:\n\n  `1` Pilot");
         await _h.Answer("1");
         await run;
         Assert.Equal("Show — Pilot", _h.Current.Request.Title);
     }
 
     [Theory]
-    [InlineData("show s01e02", "S01E02 of `show` not found in Jellyfin")]
-    [InlineData("zzz", "nothing found in Jellyfin for `zzz`")]
+    [InlineData("show s01e02", "🔎 S01E02 of `show` isn't in the library.")]
+    [InlineData("zzz", "🔎 Nothing found for `zzz` — check the spelling?")]
     public async Task Nothing_found(string query, string reply)
     {
         await _h.Send($"!play {query}");
@@ -140,7 +140,7 @@ public sealed class MediaPlayTests
         _h.Library.SearchError = new JellyfinException("bad JSON");
         await _h.Send("!play x");
         Assert.Equal(
-            ["could not reach Jellyfin: Jellyfin request failed", "could not reach Jellyfin: Jellyfin /Items → HTTP 500", "Jellyfin search failed: bad JSON"],
+            ["❌ We can't reach the Jellyfin library right now. Try again shortly — if it keeps happening, ask an admin.", "❌ We can't reach the Jellyfin library right now. Try again shortly — if it keeps happening, ask an admin.", "❌ The Jellyfin search didn't work. Try again — if it keeps happening, ask an admin to check the logs."],
             _h.Texts); // Python: HTTPError is a URLError → "could not reach"
     }
 
@@ -158,7 +158,7 @@ public sealed class MediaPlayTests
         await _h.Send("!play eps");
         await _h.Send("!play noeps");
         Assert.Equal(
-            ["failed to fetch seasons: seasons down", "no seasons found for **Empty**", "failed to fetch episodes: episodes down", "no episodes found for **S1** of **NoEps**"],
+            ["❌ We couldn't load the seasons of **Bad** from Jellyfin. Try again in a moment.", "🔎 No seasons of **Empty** in the library.", "❌ We couldn't load the episodes from Jellyfin. Try again in a moment.", "🔎 No episodes of **NoEps** S1 in the library."],
             _h.Texts);
     }
 
@@ -168,7 +168,7 @@ public sealed class MediaPlayTests
         _h.Gateway.States.Clear();
         _h.Library.Search["sample film"] = [MediaHarness.Movie("m1", "Sample Film")];
         await _h.Send("!play sample film");
-        Assert.Equal(["you're not in a voice channel"], _h.Texts);
+        Assert.Equal(["🙅 Join a voice channel first, then try again."], _h.Texts);
     }
 
     [Fact]
@@ -189,10 +189,10 @@ public sealed class MediaPlayTests
 
         Assert.Equal(
             [
-                "checking stream…", "could not start a Jellyfin playback session for **X** — check that the server is reachable and the credentials are valid",
-                "checking stream…", "could not probe the Jellyfin stream for **X** — transcoding may have failed on the server",
-                "checking stream…", "unsupported video codec `vp9` from Jellyfin for **X**",
-                "checking stream…", "unsupported video codec `av1` from Jellyfin for **X**",
+                "📡 Tuning in to **X**…", "❌ Jellyfin wouldn't play **X**. Ask an admin to check the server and the bot's Jellyfin login.",
+                "📡 Tuning in to **X**…", "❌ Jellyfin couldn't prepare **X**. Try again — if it keeps happening, ask an admin to check the Jellyfin logs.",
+                "📡 Tuning in to **X**…", "❌ **X** uses a video format (`vp9`) we can't show.",
+                "📡 Tuning in to **X**…", "❌ **X** uses a video format (`av1`) we can't show.",
             ],
             _h.Texts);
         Assert.Equal(["ps1", "ps2", "ps3"], _h.Library.Stopped);
@@ -214,10 +214,9 @@ public sealed class MediaPlayTests
         _h.Library.Search["x"] = [MediaHarness.Movie("m1", "X")];
         _h.Connector.Next.Enqueue(_ => Task.FromException<IGoLiveLink>(new TimeoutException("slow")));
         await _h.Send("!play x");
-        Assert.Equal("go-live connection failed: slow", _h.Texts[^1]);
+        Assert.Equal("❌ We couldn't open the screenshare. Try again in a moment — if it keeps happening, ask an admin to check the logs.", _h.Texts[^1]);
         Assert.Equal(["ps1"], _h.Library.Stopped);
-        await _h.Send("!media playlist");
-        Assert.Equal("nothing playing and the playlist is empty", _h.Texts[^1]);
+        Assert.Equal("📭 Nothing on air and nothing on the playlist.", await _h.ShowPlaylist("!media playlist"));
     }
 
     [Fact]
@@ -255,7 +254,7 @@ public sealed class MediaPlayTests
         var router = new CommandRouter(new FakeRoles(), h.Sender, new MessageHub());
         media.Register(router, new Slopsoil.Commands.Voice.VoiceModule(voice, media));
         await router.DispatchAsync(new ChatMessage(5, 7, 20, "!play x"), TestContext.Current.CancellationToken);
-        Assert.Equal("could not join the voice channel: no permission", h.Texts[^1]);
+        Assert.Equal("❌ We couldn't join your voice channel. Check the bot can see and join it, then try again.", h.Texts[^1]);
         Assert.Equal(["ps1"], h.Library.Stopped);
     }
 

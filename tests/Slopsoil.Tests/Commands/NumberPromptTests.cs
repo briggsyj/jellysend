@@ -52,7 +52,7 @@ public sealed class NumberPromptTests
         await Send(reply);
         await pick;
         Assert.Null(await _result.Task);
-        Assert.Equal(["invalid selection — pick a number between 1 and 3"], _sender.Texts);
+        Assert.Equal(["🙅 That's not on the list — pick a number between 1 and 3."], _sender.Texts);
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class NumberPromptTests
         _time.Advance(TimeSpan.FromSeconds(1));
         await pick;
         Assert.Null(await _result.Task);
-        Assert.Equal(["timed out — cancelled"], _sender.Texts);
+        Assert.Equal(["⌛ No answer — cancelled."], _sender.Texts);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public sealed class NumberPromptTests
         await Send("!other thing");
         await pick;
         Assert.Null(await _result.Task);
-        Assert.Equal(["cancelled"], _sender.Texts);
+        Assert.Equal(["Cancelled."], _sender.Texts);
         Assert.Equal(["thing"], _others);
     }
 
