@@ -70,7 +70,8 @@ public sealed class RouterTests
         await Send("!media x", author);
         Assert.Equal(runs, _calls.Count == 1);
         Assert.Equal(runs ? [] : [(7UL, CommandRouter.DeniedReply)], _sender.Sent);
-        Assert.Equal("_quack_ no.", CommandRouter.DeniedReply);
+        // The GIF link alone, so Discord unfurls and plays it.
+        Assert.Matches(@"^https://media\d*\.giphy\.com/\S+\.gif$", CommandRouter.DeniedReply);
     }
 
     [Fact]

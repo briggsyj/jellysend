@@ -1,3 +1,4 @@
+using JellySend.Commands.Routing;
 using JellySend.Commands.Media;
 using JellySend.Services.Jellyfin;
 
@@ -79,7 +80,7 @@ public sealed class MediaCommandsTests
         await _h.Until(() => _h.Texts.Count == 2, "two replies");
         Assert.Equal($"-# `!{old}` is now `!playlist {action}`.", _h.Texts[0]);
         Assert.StartsWith(then, _h.Texts[1], StringComparison.Ordinal);
-        Assert.Null(CommandCatalog.Find(content));
+        Assert.Equal("playlist", CommandCatalog.Find(content)?.Name); // its help is !playlist's
     }
 
     [Theory]
@@ -333,10 +334,10 @@ public sealed class MediaResolutionTests
     }
 
     [Fact]
-    public async Task Viewers_get_a_quack()
+    public async Task Viewers_get_the_denied_gif()
     {
         await _h.Send("!res 480p", author: 30);
-        Assert.Equal(["_quack_ no."], _h.Texts);
+        Assert.Equal([CommandRouter.DeniedReply], _h.Texts);
     }
 }
 

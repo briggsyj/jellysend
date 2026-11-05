@@ -170,6 +170,9 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
         return null;
     }
 
+    /// <summary>The highest season or episode number a range or list may name: past it the words stay in the title.</summary>
+    public const int MaxNumber = 999;
+
     private static IReadOnlyList<EpisodeSpan>? Range(ref string rest, Match m, int season, int episode, int endSeason, int endEpisode)
     {
         if (endSeason < season || (endSeason == season && endEpisode < episode))
@@ -177,12 +180,22 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
             return null; // runs backwards: not a range (the words stay in the title)
         }
 
+        if (endSeason > MaxNumber || endEpisode > MaxNumber || season > MaxNumber || episode > MaxNumber)
+        {
+            return null; // not a real episode: keeps a typo from walking billions of numbers
+        }
+
         rest = Cut(rest, m);
         return [new EpisodeSpan(season, episode, endSeason, endEpisode)];
     }
 
-    private static IReadOnlyList<EpisodeSpan> List(ref string rest, Match m, int season, IReadOnlyList<int> episodes)
+    private static IReadOnlyList<EpisodeSpan>? List(ref string rest, Match m, int season, IReadOnlyList<int> episodes)
     {
+        if (season > MaxNumber || episodes.Any(e => e > MaxNumber))
+        {
+            return null;
+        }
+
         rest = Cut(rest, m);
         return [.. episodes.Distinct().Select(e => new EpisodeSpan(season, e, season, e))];
     }

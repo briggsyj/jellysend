@@ -40,6 +40,12 @@ public sealed class MediaModule : IStreamControl
 
     private const string NothingOnAir = "🙅 Nothing's on air right now.";
 
+    /// <summary>A retry or reconnect that itself blew up (spec 020: never leave "trying…" hanging).</summary>
+    internal const string RecoveryFailed = "❌ That didn't work either. Try `!play` again — if it keeps happening, ask an admin to check the logs.";
+
+    /// <summary>The screenshare dropped, nothing resumed it, and the playlist carries on with the next item.</summary>
+    internal const string LostSignalNext = "📴 We've lost the signal — the screenshare dropped. Moving on to the next on the playlist.";
+
     private const string NotConfigured =
         "❌ The Jellyfin library isn't set up. An admin needs to set `JELLYFIN_URL` and `JELLYFIN_API_KEY` (or `JELLYFIN_USERNAME` / "
         + "`JELLYFIN_PASSWORD`) in `.env` and restart the bot.";
@@ -131,6 +137,12 @@ public sealed class MediaModule : IStreamControl
             router.Add(info.Name, info.Role, run, info.Aliases);
         }
 
+        // Spec 022: hidden phrases for some commands, each with an extra themed reply first.
+        foreach (var (phrase, command, reply) in SecretCatalog.All())
+        {
+            router.AddSecret(phrase, command, reply);
+        }
+
         // Spec 021: the old playlist commands still work, with a pointer to their new name.
         foreach (var (old, action) in new[] { ("queue", "add"), ("order", "order"), ("remove", "remove") })
         {
@@ -143,6 +155,8 @@ public sealed class MediaModule : IStreamControl
             router.Add(old, Role.Friend, legacy);
         }
     }
+
+    private static string Shorten(string text, int max) => text.Length <= max ? text : text[..max].TrimEnd() + "…";
 
     private static Task PingAsync(CommandContext c) => c.ReplyAsync("🏓 Pong! Still broadcasting.");
 
@@ -184,7 +198,7 @@ public sealed class MediaModule : IStreamControl
             "" => null,
             "resume" => "-# `!media resume` is gone: `!play` resumes, `!time <time>` jumps\n\n",
             "search" => "-# `!media search` is gone: use `!play <title>`\n\n",
-            _ => $"-# `!media <title>` is now `!play <title>` — e.g. `!play {c.Rest.Trim()}`\n\n",
+            _ => $"-# `!media <title>` is now `!play <title>` — e.g. `!play {Shorten(c.Rest.Trim(), 80)}`\n\n",
         };
         await SendHelpTextAsync(c, hint).ConfigureAwait(false);
     }
@@ -628,10 +642,10 @@ public sealed class MediaModule : IStreamControl
     /// <summary><c>!playlist remove [# or title]</c>: take it off, or ask which one first.</summary>
     private async Task PlaylistRemoveAsync(CommandContext c, bool listed)
     {
-        var queue = QueueOf(c);
         var target = c.Rest;
         if (target.Length == 0)
         {
+            var queue = QueueOf(c);
             if (queue.Count == 0)
             {
                 await c.ReplyAsync("📭 The playlist is empty.").ConfigureAwait(false);
@@ -648,16 +662,17 @@ public sealed class MediaModule : IStreamControl
             target = picked;
         }
 
-        await c.ReplyAsync(queue.Remove(target)).ConfigureAwait(false);
+        // Looked up after the answer: the playlist may have been replaced meanwhile (left and rejoined).
+        await c.ReplyAsync(QueueOf(c).Remove(target)).ConfigureAwait(false);
     }
 
     /// <summary><c>!playlist order [# or title] [new #]</c>: move it, or ask which one and where first.</summary>
     private async Task PlaylistOrderAsync(CommandContext c, bool listed)
     {
-        var queue = QueueOf(c);
         var args = c.Rest;
         if (args.Length == 0)
         {
+            var queue = QueueOf(c);
             if (queue.Count < 2)
             {
                 await c.ReplyAsync(queue.Count == 0
@@ -677,7 +692,7 @@ public sealed class MediaModule : IStreamControl
             args = picked;
         }
 
-        await c.ReplyAsync(queue.Move(args)).ConfigureAwait(false);
+        await c.ReplyAsync(QueueOf(c).Move(args)).ConfigureAwait(false);
     }
 
     private static string UpNextList(IReadOnlyList<MediaItem> queue) =>
@@ -1586,6 +1601,7 @@ public sealed class MediaModule : IStreamControl
                 catch (Exception ex)
                 {
                     _log.LogError(ex, "retrying {Item} through Jellyfin's transcode failed", finished.Item.Id);
+                    await state.Send(RecoveryFailed).ConfigureAwait(false);
                     retried = StartResult.Failed;
                 }
 
@@ -1615,6 +1631,7 @@ public sealed class MediaModule : IStreamControl
                 catch (Exception ex)
                 {
                     _log.LogError(ex, "resuming {Item} failed", finished.Item.Id);
+                    await state.Send(RecoveryFailed).ConfigureAwait(false);
                     resumed = StartResult.Failed;
                 }
                 finally
@@ -1633,7 +1650,9 @@ public sealed class MediaModule : IStreamControl
             if (!recovering && end.Error is not null && end.Reason is PipelineEndReason.Failed or PipelineEndReason.ConnectionLost)
             {
                 // Spec 020: no recovery was tried, so say plainly that it stopped (a failed recovery already said so).
-                await state.Send(end.Reason == PipelineEndReason.ConnectionLost ? StreamEngine.ConnectionLostMessage : end.Error).ConfigureAwait(false);
+                await state.Send(end.Reason != PipelineEndReason.ConnectionLost ? end.Error
+                    : state.Queue.Count > 0 ? LostSignalNext
+                    : StreamEngine.ConnectionLostMessage).ConfigureAwait(false);
             }
 
             state.Now = null;

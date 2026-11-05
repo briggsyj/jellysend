@@ -1,3 +1,4 @@
+using JellySend.Commands.Routing;
 using JellySend.Commands.Media;
 using JellySend.Streaming.Engine;
 
@@ -276,7 +277,7 @@ public sealed class MediaControlTests
         // Budget spent: the next drop ends the item and the playlist advances.
         _h.Connector.Links[^1].Close();
         await _h.Until(() => _h.Current.Request.Title == "Other (2001)" && _h.Current.Started);
-        Assert.Contains(JellySend.Streaming.Engine.StreamEngine.ConnectionLostMessage, _h.Texts);
+        Assert.Contains(MediaModule.LostSignalNext, _h.Texts); // the playlist carries on, so no "!play to start again"
     }
 
     [Fact]
@@ -355,7 +356,7 @@ public sealed class MediaControlTests
         await _h.Send("!help sample film", author: 30);      // not a command: never a search
         await _h.Send("!play film", author: 30);           // viewers can't play
         await _h.Send("!join", author: 30);
-        Assert.Equal([MediaText.HelpText, "🏓 Pong! Still broadcasting.", "🙅 No command called `sample film` — `!help` lists them all.", "_quack_ no.", "_quack_ no."], _h.Texts);
+        Assert.Equal([MediaText.HelpText, "🏓 Pong! Still broadcasting.", "🙅 No command called `sample film` — `!help` lists them all.", CommandRouter.DeniedReply, CommandRouter.DeniedReply], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
 

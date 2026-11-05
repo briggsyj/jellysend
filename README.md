@@ -244,7 +244,7 @@ With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay gro
 | **Viewer** | Members of any guild the bot account is in — `!help` and `!ping` |
 | **None** | Everyone else |
 
-A command run by someone whose role doesn't allow it gets the reply `_quack_ no.`
+A command run by someone whose role doesn't allow it gets a GIF in reply (a bare link, so Discord plays it inline).
 
 ---
 
@@ -258,6 +258,14 @@ Built from source:
 
 ```bash
 git pull && docker compose up -d --build
+```
+
+### Upgrading from Slopsoil
+
+The image, the compose service and the image variable were renamed. Use the new image `ghcr.io/briggsyj/jellysend` and service `jellysend` in your compose file, and rename `SLOPSOIL_IMAGE` to `JELLYSEND_IMAGE` in `.env` if you pin a build. Then remove the old container so two bots don't run on the same account:
+
+```bash
+docker compose pull && docker compose up -d --remove-orphans
 ```
 
 ---

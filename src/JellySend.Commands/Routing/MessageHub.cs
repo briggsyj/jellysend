@@ -21,7 +21,7 @@ public sealed class MessageHub(TimeProvider? time = null)
         }
     }
 
-    /// <summary>Deliver a message to every matching waiter; each waiter completes at most once.</summary>
+    /// <summary>Deliver a message to the newest waiter that wants it (one reply answers one prompt); it completes once.</summary>
     public void Publish(ChatMessage message)
     {
         List<TaskCompletionSource<ChatMessage>> matched = [];
@@ -31,8 +31,10 @@ public sealed class MessageHub(TimeProvider? time = null)
             {
                 if (_waiters[i].Check(message))
                 {
+                    // Only the newest prompt that wants it takes a message: one reply never answers two prompts.
                     matched.Add(_waiters[i].Tcs);
                     _waiters.RemoveAt(i);
+                    break;
                 }
             }
         }

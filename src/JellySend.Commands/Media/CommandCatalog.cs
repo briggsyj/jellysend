@@ -117,12 +117,21 @@ public static class CommandCatalog
         new("ping", [], Role.Viewer, Extras, "`!ping` — check the bot is awake."),
     ];
 
+    /// <summary>The old playlist commands (still working); their help is <c>!playlist</c>'s.</summary>
+    private static readonly string[] Renamed = ["queue", "order", "remove"];
+
     /// <summary>A command by name or alias, case-insensitive; a leading <c>!</c> or <c>media</c> is ignored.</summary>
     public static CommandInfo? Find(string text)
     {
         var words = text.Trim().TrimStart('!').Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var name = words.Length > 1 && words[0].Equals("media", StringComparison.OrdinalIgnoreCase) ? words[1] : words.FirstOrDefault() ?? "";
-        return All.FirstOrDefault(c => c.Names.Contains(name.TrimStart('!'), StringComparer.OrdinalIgnoreCase));
+        name = name.TrimStart('!');
+        if (Renamed.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            name = "playlist"; // spec 021: !queue, !order and !remove became !playlist add / order / remove
+        }
+
+        return All.FirstOrDefault(c => c.Names.Contains(name, StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>Discord's message limit, with room to spare.</summary>
