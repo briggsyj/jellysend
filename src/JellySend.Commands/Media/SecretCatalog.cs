@@ -51,7 +51,7 @@ public static class SecretCatalog
             ("summon the order", "join", _ => "I have come"),
             ("the written tongue", "subtitles", _ => "THE ACCURSED TEXTS"),
             ("the sacred tongue", "audio", _ => "YOUR EARS ARE UNWORTHY"),
-            ("twist the obomination", "language", _ => "RIP, TEAR, CONTORT"),
+            ("twist the abomination", "language", _ => "RIP, TEAR, CONTORT"),
             ("transmogrify", "aspect-ratio", _ => "TWIST AND SHIFT"),
         ];
         return [.. secrets.Select(s => (s.Item1, s.Item2, Scream(s.Item3)))];

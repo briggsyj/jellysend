@@ -33,6 +33,12 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
 
     public MessageHub Hub => hub;
 
+    /// <summary>
+    /// Spec 024: called for every message the router treats as a command, before role checks, with what it resolved
+    /// to (the command name, <c>secret → name</c>, or <c>unknown</c>), so a missed command shows up (or doesn't) in the log.
+    /// </summary>
+    public Action<ChatMessage, string>? OnCommand { get; set; }
+
     /// <summary>Register a command; <paramref name="aliases"/> resolve to the same entry.</summary>
     public Command Add(string name, Role role, CommandHandler handler, params string[] aliases)
     {
@@ -107,6 +113,7 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
         // Spec 022: a secret phrase works with or without the prefix, at the start of a message.
         if (MatchSecret(prefixed ? content[1..] : content) is var (secret, secretRest))
         {
+            OnCommand?.Invoke(message, $"secret → {secret.Target}");
             var hidden = _commands[secret.Target];
             if (!RoleResolver.Satisfies(roles, message.AuthorId, Role.Viewer) || !RoleResolver.Satisfies(roles, message.AuthorId, hidden.Role))
             {
@@ -130,8 +137,11 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
         var (name, rest) = SplitFirst(content[1..]);
         if (!_commands.TryGetValue(name, out var command))
         {
+            OnCommand?.Invoke(message, "unknown");
             return Task.CompletedTask;
         }
+
+        OnCommand?.Invoke(message, command.Name);
 
         // Global check (bot.add_check(has_any_role)), then the role of whatever actually runs: a group's role gates
         // only its own handler, each sub-command has its own (so `!media help` can be open to viewers).

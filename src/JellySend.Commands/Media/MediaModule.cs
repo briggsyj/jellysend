@@ -1403,7 +1403,10 @@ public sealed class MediaModule : IStreamControl
         ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, long generation, TrackSelection? tracks)
     {
         var library = _library!;
-        var send = state.Send;
+
+        // Read at send time, not now: messages follow the chat of the latest command (spec 025), including the
+        // engine's "Now showing" and anything said later about this stream.
+        Task send(string text) => state.Send(text);
         var label = MediaLabels.Format(item);
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
 
@@ -1951,10 +1954,20 @@ public sealed class MediaModule : IStreamControl
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>The guild a command applies to: where the author is in voice, else the message's guild, else where the bot is.</summary>
+    /// <summary>
+    /// The guild a command is about. Spec 025: the guild's stream messages (tuning in, now showing, coming up next, …)
+    /// from now on go to the chat this command was typed in.
+    /// </summary>
     private ulong? ContextGuild(CommandContext c)
     {
         var (guild, _) = VoiceModule.ResolveAuthorVoice(_voice.Gateway, c.Message);
-        return guild ?? c.GuildId ?? _voice.Any()?.GuildId;
+        var resolved = guild ?? c.GuildId ?? _voice.Any()?.GuildId;
+        if (resolved is { } g && _states.TryGetValue(g, out var state))
+        {
+            state.Send = c.ReplyAsync;
+        }
+
+        return resolved;
     }
 
     private GuildState State(ulong guild, Func<string, Task>? send = null)

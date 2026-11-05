@@ -38,6 +38,15 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
     private long _sequence = -1;
     private long _userId;
     private int _healthy;
+
+    /// <summary>Guilds subscribed to on this session (spec 024).</summary>
+    private readonly HashSet<ulong> _subscribed = [];
+
+    /// <summary>Set once Discord rejected a subscription payload: never send another (spec 024).</summary>
+    private volatile bool _subscriptionsRejected;
+
+    /// <summary>A subscription was sent on the current connection (a 4001/4002 close then means Discord refused it).</summary>
+    private volatile bool _subscribedThisConnection;
     private int _disposed;
 
     public GatewayClient(IWebSocketFactory factory, GatewayOptions? options = null)
@@ -278,6 +287,15 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
     private Outcome Classify(int? code)
     {
         Log($"Gateway closed with code {code?.ToString(CultureInfo.InvariantCulture) ?? "none"}.");
+        if (code is 4001 or 4002 && _subscribedThisConnection && !_subscriptionsRejected)
+        {
+            // Unknown opcode / decode error right after subscribing: Discord didn't take op 37. Stop sending it, so
+            // reconnecting can't loop.
+            _subscriptionsRejected = true;
+            Log("Discord rejected the guild subscriptions; continuing without them.");
+        }
+
+        _subscribedThisConnection = false;
         if (code is { } c && FatalCloseCodes.Contains(c))
         {
             throw new GatewayClosedException(c);
@@ -372,6 +390,8 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
                 break;
         }
 
+        var subscribe = SubscriptionTargets(name, data);
+
         VoiceStates.Apply(name, data);
         var copy = data.Clone();
         foreach (var handler in Dispatch?.GetInvocationList() ?? [])
@@ -392,6 +412,70 @@ public sealed class GatewayClient : IGatewayClient, IAsyncDisposable
 
             // discord.py-self sends an initial op 4 (no guild, no channel) right after READY.
             await UpdateVoiceStateAsync(null, null, false, false, false, ct).ConfigureAwait(false);
+        }
+
+        if (subscribe.Count > 0)
+        {
+            await SubscribeAsync(subscribe, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Guilds to subscribe to after <paramref name="name"/> (spec 024): every guild in READY (a new session), or a guild
+    /// arriving with GUILD_CREATE that this session hasn't subscribed to yet.
+    /// </summary>
+    private List<ulong> SubscriptionTargets(string name, JsonElement data)
+    {
+        if (!_options.SubscribeToGuilds || _subscriptionsRejected)
+        {
+            return [];
+        }
+
+        lock (_subscribed)
+        {
+            if (name == "READY")
+            {
+                _subscribed.Clear();
+                return data.TryGetProperty("guilds", out var guilds) && guilds.ValueKind == JsonValueKind.Array
+                    ? [.. guilds.EnumerateArray().Select(g => VoiceStateCache.Snowflake(g, "id")).OfType<ulong>().Distinct().Where(_subscribed.Add)]
+                    : [];
+            }
+
+            return name == "GUILD_CREATE" && VoiceStateCache.Snowflake(data, "id") is { } id && _subscribed.Add(id) ? [id] : [];
+        }
+    }
+
+    /// <summary>Op 37 GUILD_SUBSCRIPTIONS_BULK for <paramref name="guilds"/>, in batches; failures are logged, never thrown.</summary>
+    private async Task SubscribeAsync(List<ulong> guilds, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var batch in guilds.Chunk(Math.Max(1, _options.SubscriptionBatch)))
+            {
+                var subscriptions = new JsonObject();
+                foreach (var guild in batch)
+                {
+                    subscriptions[guild.ToString(CultureInfo.InvariantCulture)] = new JsonObject
+                    {
+                        ["typing"] = true,
+                        ["threads"] = true,
+                        ["activities"] = true,
+                        ["member_updates"] = false,
+                        ["members"] = new JsonArray(),
+                        ["channels"] = new JsonObject(),
+                        ["thread_member_lists"] = new JsonArray(),
+                    };
+                }
+
+                _subscribedThisConnection = true;
+                await SendAsync(GatewayOp.GuildSubscriptionsBulk, new JsonObject { ["subscriptions"] = subscriptions }, ct).ConfigureAwait(false);
+            }
+
+            Log($"Subscribed to {guilds.Count} guild(s) for messages.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Log($"Guild subscription failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

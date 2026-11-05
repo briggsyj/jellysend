@@ -107,7 +107,7 @@ public sealed class SecretCommandTests
     [Theory]
     [InlineData("!the written tongue", "THE ACCURSED TEXTS")]
     [InlineData("!the sacred tongue", "YOUR EARS ARE UNWORTHY")]
-    [InlineData("!twist the obomination", "RIP, TEAR, CONTORT")]
+    [InlineData("!twist the abomination", "RIP, TEAR, CONTORT")]
     public async Task Track_phrases_reply_then_run(string phrase, string reply)
     {
         await _h.Send(phrase);

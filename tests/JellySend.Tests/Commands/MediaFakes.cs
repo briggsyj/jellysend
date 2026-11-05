@@ -275,8 +275,8 @@ internal sealed class MediaHarness
     public static MediaItem Episode(string id, string series, int season, int episode, string name) =>
         new() { Id = id, Name = name, Type = "Episode", SeriesName = series, ParentIndexNumber = season, IndexNumber = episode };
 
-    public Task Send(string content, ulong? guild = 5, ulong author = 20) =>
-        Router.DispatchAsync(new ChatMessage(guild, 7, author, content), TestContext.Current.CancellationToken);
+    public Task Send(string content, ulong? guild = 5, ulong author = 20, ulong channel = 7) =>
+        Router.DispatchAsync(new ChatMessage(guild, channel, author, content), TestContext.Current.CancellationToken);
 
     /// <summary>Send without awaiting (the handler waits for a picker reply).</summary>
     public Task Start(string content) => Task.Run(() => Send(content));
