@@ -49,8 +49,8 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
     }
 
     /// <summary>
-    /// Register a hidden phrase (spec 022), e.g. <c>!halt thee</c>: one or more words, matched case-insensitively at the
-    /// start of a message, that runs the command <paramref name="target"/> with the words after it — under that command's
+    /// Register a hidden phrase (spec 022), e.g. <c>halt thee</c> or <c>!halt thee</c>: one or more words, matched
+    /// case-insensitively at the start of a message, with or without the <c>!</c>, that runs the command <paramref name="target"/> with the words after it — under that command's
     /// role — after first replying <paramref name="reply"/>(those words). Phrases are never listed anywhere.
     /// </summary>
     public void AddSecret(string phrase, string target, Func<string, string> reply)
@@ -102,12 +102,10 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
 
         hub.Publish(message);
         var content = message.Content.TrimStart();
-        if (content.Length < 2 || content[0] != Prefix)
-        {
-            return Task.CompletedTask;
-        }
+        var prefixed = content.Length >= 2 && content[0] == Prefix;
 
-        if (MatchSecret(content[1..]) is var (secret, secretRest))
+        // Spec 022: a secret phrase works with or without the prefix, at the start of a message.
+        if (MatchSecret(prefixed ? content[1..] : content) is var (secret, secretRest))
         {
             var hidden = _commands[secret.Target];
             if (!RoleResolver.Satisfies(roles, message.AuthorId, Role.Viewer) || !RoleResolver.Satisfies(roles, message.AuthorId, hidden.Role))
@@ -122,6 +120,11 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
                 await hidden.Handler(c).ConfigureAwait(false);
             });
             return RunAsync(run, secretContext);
+        }
+
+        if (!prefixed)
+        {
+            return Task.CompletedTask;
         }
 
         var (name, rest) = SplitFirst(content[1..]);

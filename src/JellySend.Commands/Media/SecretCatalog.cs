@@ -43,6 +43,7 @@ public static class SecretCatalog
         (string, string, Func<string, string>)[] secrets =
         [
             ("I call upon", "play", rest => Summon(rest, pick)),
+            ("I summon thee", "play", rest => Summon(rest, pick)),
             ("halt thee", "pause", _ => "As you command!"),
             ("temporal warp", "time", rest => $"TIME, SHIFT AND BEND {rest}".TrimEnd()),
             ("halt and cease", "stop", _ => "THE GATE CLOSES"),

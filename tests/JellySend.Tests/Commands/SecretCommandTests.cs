@@ -116,6 +116,30 @@ public sealed class SecretCommandTests
     }
 
     [Theory]
+    [InlineData("I call upon sample film")]
+    [InlineData("i CALL upon sample film")]
+    [InlineData("  !I call upon sample film")]
+    [InlineData("I summon thee sample film")]
+    [InlineData("!i summon thee sample film")]
+    public async Task Phrases_work_with_or_without_the_prefix(string content)
+    {
+        await _h.Send(content);
+        Assert.Equal("Sample Film (2010)", _h.Current.Request.Title);
+        Assert.Contains(SecretCatalog.Uncurse(_h.Texts[0]).Split('\n')[0], SecretCatalog.Summons.Select(s => string.Format(System.Globalization.CultureInfo.InvariantCulture, s, "SAMPLE FILM")));
+    }
+
+    [Theory]
+    [InlineData("so I call upon thee")]      // not at the start
+    [InlineData("play sample film")]         // ordinary commands still need the prefix
+    [InlineData("halt")]
+    public async Task Plain_chat_that_is_not_a_phrase_does_nothing(string content)
+    {
+        await _h.Send(content);
+        Assert.Empty(_h.Texts);
+        Assert.Empty(_h.Pipelines.Created);
+    }
+
+    [Theory]
     [InlineData("!I call")]                  // half a phrase
     [InlineData("!halt")]
     [InlineData("!halt thee!")]               // the last word must match whole
