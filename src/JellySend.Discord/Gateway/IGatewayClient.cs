@@ -38,4 +38,5 @@ public static class GatewayOp
     public const int StreamDelete = 19;
     public const int StreamWatch = 20;
     public const int StreamSetPaused = 22;
+    public const int GuildSubscriptionsBulk = 37;
 }

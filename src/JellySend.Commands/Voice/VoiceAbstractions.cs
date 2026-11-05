@@ -18,7 +18,10 @@ public interface IVoiceGateway
     /// The guild's voice channels in Discord's order, AFK channel excluded (spec 023: where to broadcast when the person
     /// asking isn't in voice). Empty when none.
     /// </summary>
-    Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct);
+    Task<IReadOnlyList<VoiceChannelRef>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct);
+
+    /// <summary>The servers the account is in (spec 027).</summary>
+    Task<IReadOnlyList<ServerRef>> GetServersAsync(CancellationToken ct);
 
     /// <summary>Join <paramref name="channelId"/> self-deafened and complete the voice handshake.</summary>
     Task<IVoiceLink> ConnectAsync(ulong guildId, ulong channelId, CancellationToken ct);
@@ -53,3 +56,9 @@ public interface IStreamControl
     /// </summary>
     Task StopAsync(ulong guildId, string reason);
 }
+
+/// <summary>A voice channel by id and name (spec 027).</summary>
+public sealed record VoiceChannelRef(ulong Id, string Name);
+
+/// <summary>A server (guild) by id and name (spec 027).</summary>
+public sealed record ServerRef(ulong Id, string Name);

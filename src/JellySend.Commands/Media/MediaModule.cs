@@ -53,6 +53,9 @@ public sealed class MediaModule : IStreamControl
     private readonly IMediaLibrary? _library;
     private readonly StreamEngine _engine;
 
+    /// <summary>Settings that survive restarts (spec 027): each server's default voice channel.</summary>
+    public JellySend.Common.Config.SettingsStore Settings { get; init; } = new(null);
+
     /// <summary>The voice commands (set by <see cref="Register"/>): the empty-channel countdown after a fallback join.</summary>
     private VoiceModule? _voiceModule;
     private readonly VoiceManager _voice;
@@ -113,6 +116,7 @@ public sealed class MediaModule : IStreamControl
     public void Register(CommandRouter router, VoiceModule voice)
     {
         _voiceModule = voice;
+        _voice.DefaultChannel = Settings.DefaultVoiceChannel; // spec 027
         var handlers = new Dictionary<string, CommandHandler>(StringComparer.Ordinal)
         {
             ["play"] = PlayAsync,
@@ -123,6 +127,7 @@ public sealed class MediaModule : IStreamControl
             ["leave"] = voice.LeaveAsync,
             ["join"] = voice.JoinAsync,
             ["playlist"] = PlaylistAsync,
+            ["channel"] = ChannelAsync,
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
             ["language"] = LanguageAsync,
@@ -593,6 +598,217 @@ public sealed class MediaModule : IStreamControl
         }
 
         return added;
+    }
+
+    /// <summary><c>!channel default</c> / <c>!channel set</c> (spec 027).</summary>
+    private async Task ChannelAsync(CommandContext c)
+    {
+        var (word, _) = CommandRouter.SplitFirst(c.Rest);
+        switch (word.ToLowerInvariant())
+        {
+            case "default":
+                await ChannelDefaultAsync(c).ConfigureAwait(false);
+                break;
+            case "set":
+                await ChannelSetAsync(c).ConfigureAwait(false);
+                break;
+            default:
+                await c.ReplyAsync(CommandCatalog.Find("channel")!.HelpText()).ConfigureAwait(false);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// <c>!channel default</c>: pick a server, then its voice channel; saved as where the bot broadcasts in that server
+    /// when the person asking isn't in voice. The last option clears it (the first voice channel again).
+    /// </summary>
+    private async Task ChannelDefaultAsync(CommandContext c)
+    {
+        IReadOnlyList<JellySend.Commands.Voice.ServerRef> servers;
+        try
+        {
+            servers = await _voice.Gateway.GetServersAsync(c.Cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not list the account's servers");
+            await c.ReplyAsync("❌ We couldn't load the server list from Discord. Try again in a moment.").ConfigureAwait(false);
+            return;
+        }
+
+        if (servers.Count == 0)
+        {
+            await c.ReplyAsync("🔎 The bot isn't in any servers.").ConfigureAwait(false);
+            return;
+        }
+
+        var lines = new List<string> { "📌 **Default voice channel** — which server? Reply with a number or name:" };
+        lines.AddRange(servers.Select((s, i) => $"`{i + 1}` {Shorten(s.Name, 60)}"));
+        await c.ReplyAsync(Fit(lines)).ConfigureAwait(false);
+        if (await NumberPrompt.AskAsync(c, servers.Count, text => Named(servers.Select(s => s.Name), text)).ConfigureAwait(false) is not { } serverPick)
+        {
+            return;
+        }
+
+        var server = servers[serverPick - 1];
+        if (await VoiceChannelsOrSayAsync(c, server) is not { } channels)
+        {
+            return;
+        }
+
+        var current = Settings.DefaultVoiceChannel(server.Id);
+        lines = [$"📌 **{Shorten(server.Name, 60)}** — which voice channel should be the default? Reply with a number or name:"];
+        lines.AddRange(channels.Select((ch, i) => $"`{i + 1}` 🔊 {Shorten(ch.Name, 60)}{(ch.Id == current ? "  ← default" : "")}"));
+        lines.Add($"`{channels.Count + 1}` No default — use the first voice channel{(current is null ? "  ← now" : "")}");
+        await c.ReplyAsync(Fit(lines)).ConfigureAwait(false);
+        if (await NumberPrompt.AskAsync(c, channels.Count + 1, text => Named(channels.Select(ch => ch.Name), text)).ConfigureAwait(false) is not { } channelPick)
+        {
+            return;
+        }
+
+        var chosen = channelPick <= channels.Count ? channels[channelPick - 1] : null;
+        var saved = Settings.SetDefaultVoiceChannel(server.Id, chosen?.Id);
+        var text = chosen is null
+            ? $"📌 No default for **{Shorten(server.Name, 60)}** — the first voice channel is used."
+            : $"📌 Default voice channel for **{Shorten(server.Name, 60)}**: **🔊 {Shorten(chosen.Name, 60)}**.";
+        await c.ReplyAsync(saved ? text : text + "\n-# Couldn't save it to disk, so it lasts until the bot restarts — an admin should check the data volume.").ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <c>!channel set</c>: every voice channel the bot can reach (this server's first), by number; the bot moves there —
+    /// carrying on with what's on air at the same spot.
+    /// </summary>
+    private async Task ChannelSetAsync(CommandContext c)
+    {
+        IReadOnlyList<JellySend.Commands.Voice.ServerRef> servers;
+        try
+        {
+            servers = await _voice.Gateway.GetServersAsync(c.Cancellation).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not list the account's servers");
+            await c.ReplyAsync("❌ We couldn't load the server list from Discord. Try again in a moment.").ConfigureAwait(false);
+            return;
+        }
+
+        var here = c.GuildId;
+        var options = new List<(JellySend.Commands.Voice.ServerRef Server, JellySend.Commands.Voice.VoiceChannelRef Channel)>();
+        foreach (var server in servers.OrderBy(s => s.Id == here ? 0 : 1))
+        {
+            try
+            {
+                options.AddRange((await _voice.Gateway.GetVoiceChannelsAsync(server.Id, c.Cancellation).ConfigureAwait(false)).Select(ch => (server, ch)));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
+            {
+                _log.LogWarning(ex, "could not list the voice channels of guild {Guild}", server.Id);
+            }
+        }
+
+        if (options.Count == 0)
+        {
+            await c.ReplyAsync("🔎 There are no voice channels the bot can reach.").ConfigureAwait(false);
+            return;
+        }
+
+        var several = options.Select(o => o.Server.Id).Distinct().Count() > 1;
+        var lines = new List<string> { "🔊 **Which voice channel?** Reply with its number:" };
+        var shown = 0;
+        foreach (var (server, channel) in options)
+        {
+            var current = _voice.Get(server.Id)?.ChannelId == channel.Id ? "  ← here now" : "";
+            var line = $"`{shown + 1}` 🔊 {Shorten(channel.Name, 50)}{(several ? $" · {Shorten(server.Name, 40)}" : "")}{current}";
+            if (lines.Sum(l => l.Length + 1) + line.Length > CommandCatalog.MessageLimit)
+            {
+                break; // Discord's message limit: the first ones (this server's) are listed
+            }
+
+            lines.Add(line);
+            shown++;
+        }
+
+        await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
+        if (await NumberPrompt.AskAsync(c, shown).ConfigureAwait(false) is not { } pick)
+        {
+            return;
+        }
+
+        var (target, voiceChannel) = options[pick - 1];
+        await MoveToAsync(c, target.Id, voiceChannel).ConfigureAwait(false);
+    }
+
+    /// <summary>Move the bot to <paramref name="channel"/>; what's on air in that server carries on there at the same spot.</summary>
+    private async Task MoveToAsync(CommandContext c, ulong guild, JellySend.Commands.Voice.VoiceChannelRef channel)
+    {
+        var state = State(guild, c.ReplyAsync);
+        await c.ReplyAsync($"🔊 Moving to **{Shorten(channel.Name, 60)}**…").ConfigureAwait(false);
+        await state.StartLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (state.Now is { } now && _engine.GetPlayback(guild) is { } playback)
+            {
+                await StartItemHoldingLockAsync(guild, state, channel.Id, now.Item, playback.Position, sync: false, tracks: now.Stream.Selection).ConfigureAwait(false);
+            }
+            else
+            {
+                await _voice.EnsureAsync(guild, channel.Id, c.Cancellation).ConfigureAwait(false);
+                await c.ReplyAsync("📡 Joined — ready to broadcast.").ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            state.StartLock.Release();
+        }
+
+        if (_voiceModule is { } voiceModule)
+        {
+            await voiceModule.WatchIfEmptyAsync(guild).ConfigureAwait(false); // nobody there: the countdown runs
+        }
+    }
+
+    /// <summary>The server's voice channels, or null after saying why there are none.</summary>
+    private async Task<IReadOnlyList<JellySend.Commands.Voice.VoiceChannelRef>?> VoiceChannelsOrSayAsync(CommandContext c, JellySend.Commands.Voice.ServerRef server)
+    {
+        try
+        {
+            var channels = await _voice.Gateway.GetVoiceChannelsAsync(server.Id, c.Cancellation).ConfigureAwait(false);
+            if (channels.Count > 0)
+            {
+                return channels;
+            }
+
+            await c.ReplyAsync($"🔎 **{Shorten(server.Name, 60)}** has no voice channels the bot can use.").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not list the voice channels of guild {Guild}", server.Id);
+            await c.ReplyAsync($"❌ We couldn't load the voice channels of **{Shorten(server.Name, 60)}**. Try again in a moment.").ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    /// <summary>1-based index of the only name containing <paramref name="text"/> (an exact match wins); else null.</summary>
+    private static int? Named(IEnumerable<string> names, string text)
+    {
+        var list = names.ToList();
+        var t = text.Trim().TrimStart('#');
+        var exact = list.FindIndex(n => n.Equals(t, StringComparison.OrdinalIgnoreCase));
+        if (exact >= 0)
+        {
+            return exact + 1;
+        }
+
+        var hits = list.Select((n, i) => (n, i)).Where(x => t.Length > 0 && x.n.Contains(t, StringComparison.OrdinalIgnoreCase)).ToList();
+        return hits.Count == 1 ? hits[0].i + 1 : null;
+    }
+
+    /// <summary>Lines joined, cut at Discord's message limit.</summary>
+    private static string Fit(List<string> lines)
+    {
+        var text = string.Join('\n', lines);
+        return text.Length <= CommandCatalog.MessageLimit ? text : text[..CommandCatalog.MessageLimit] + "…";
     }
 
     /// <summary>
@@ -1271,7 +1487,7 @@ public sealed class MediaModule : IStreamControl
     private async Task<bool> PlayItemAsync(CommandContext c, MediaItem item, double start = 0)
     {
         // Spec 023: the author's voice channel; from a server channel without one, the server's first voice channel.
-        if (await _voice.ResolveTargetAsync(c.Message, c.Cancellation).ConfigureAwait(false) is not var (guild, channel, fallback))
+        if (await _voice.ResolveTargetAsync(c.Message, c.Cancellation).ConfigureAwait(false) is not var (guild, channel, fallback, channelName))
         {
             await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return false;
@@ -1279,7 +1495,7 @@ public sealed class MediaModule : IStreamControl
 
         if (fallback && _voiceModule is { } notice)
         {
-            await c.ReplyAsync(notice.FallbackNotice).ConfigureAwait(false);
+            await c.ReplyAsync(notice.FallbackNotice(channelName)).ConfigureAwait(false);
         }
 
         State(guild, c.ReplyAsync);
@@ -1403,7 +1619,10 @@ public sealed class MediaModule : IStreamControl
         ulong guild, GuildState state, ulong channel, MediaItem item, double start, bool sync, long generation, TrackSelection? tracks)
     {
         var library = _library!;
-        var send = state.Send;
+
+        // Read at send time, not now: messages follow the chat of the latest command (spec 025), including the
+        // engine's "Now showing" and anything said later about this stream.
+        Task send(string text) => state.Send(text);
         var label = MediaLabels.Format(item);
         _log.LogInformation("Jellyfin: streaming {Label} (id: {Id}) from {Start:0}s", label, item.Id, start);
 
@@ -1951,10 +2170,20 @@ public sealed class MediaModule : IStreamControl
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>The guild a command applies to: where the author is in voice, else the message's guild, else where the bot is.</summary>
+    /// <summary>
+    /// The guild a command is about. Spec 025: the guild's stream messages (tuning in, now showing, coming up next, …)
+    /// from now on go to the chat this command was typed in.
+    /// </summary>
     private ulong? ContextGuild(CommandContext c)
     {
         var (guild, _) = VoiceModule.ResolveAuthorVoice(_voice.Gateway, c.Message);
-        return guild ?? c.GuildId ?? _voice.Any()?.GuildId;
+        var resolved = guild ?? c.GuildId ?? _voice.Any()?.GuildId;
+        if (resolved is { } g && _states.TryGetValue(g, out var state))
+        {
+            state.Send = c.ReplyAsync;
+        }
+
+        return resolved;
     }
 
     private GuildState State(ulong guild, Func<string, Task>? send = null)

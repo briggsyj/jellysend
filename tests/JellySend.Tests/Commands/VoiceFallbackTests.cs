@@ -20,7 +20,7 @@ public sealed class VoiceFallbackTests
         await _h.Send("!play sample film");
         Assert.Equal(100UL, _h.Gateway.Links[^1].ChannelId);
         Assert.Equal("Sample Film (2010)", _h.Current.Request.Title);
-        Assert.Equal(_h.VoiceCommands.FallbackNotice, _h.Texts[0]);
+        Assert.Equal(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts[0]);
         Assert.Contains("within 20 minutes", _h.Texts[0], StringComparison.Ordinal);
         Assert.True(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5)); // nobody there yet
 
@@ -28,6 +28,9 @@ public sealed class VoiceFallbackTests
         await _h.VoiceCommands.EmptyCountdowns[5];
         Assert.False(_h.Media.IsStreaming(5));                       // nobody came: signed off
         Assert.Null(_h.Voice.Get(5));
+        Assert.Equal(                                                // said in the voice channel's own chat
+            (100UL, "📴 Nobody's been in the channel for 20 minutes — signing off. `!play` to start again."),
+            _h.Sender.Sent[^1]);
     }
 
     [Fact]
@@ -45,7 +48,7 @@ public sealed class VoiceFallbackTests
     public async Task Join_does_the_same()
     {
         await _h.Send("!join");
-        Assert.Equal([_h.VoiceCommands.FallbackNotice, "📡 Joined — ready to broadcast."], _h.Texts);
+        Assert.Equal([_h.VoiceCommands.FallbackNotice("voice-100"), "📡 Joined — ready to broadcast."], _h.Texts);
         Assert.Equal(100UL, _h.Gateway.Links[^1].ChannelId);
         Assert.True(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));
     }
@@ -59,7 +62,7 @@ public sealed class VoiceFallbackTests
         _h.Sender.Sent.Clear();
         await _h.Send("!play sample film");
         Assert.Equal(101UL, _h.Gateway.Links[^1].ChannelId);
-        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice, _h.Texts);
+        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts);
     }
 
     [Fact]
@@ -68,7 +71,7 @@ public sealed class VoiceFallbackTests
         _h.Gateway.States[(5, 20)] = 50;
         await _h.Send("!play sample film");
         Assert.Equal(50UL, _h.Gateway.Links[^1].ChannelId);
-        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice, _h.Texts);
+        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts);
         Assert.False(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));
     }
 
@@ -93,7 +96,29 @@ public sealed class VoiceFallbackTests
     public void With_no_timeout_the_notice_promises_nothing_and_no_countdown_starts()
     {
         var voice = new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams());
-        Assert.DoesNotContain("sign off", voice.FallbackNotice, StringComparison.Ordinal);
-        Assert.Contains("1 minute.", new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams(), emptyChannelTimeout: TimeSpan.FromMinutes(1)).FallbackNotice, StringComparison.Ordinal);
+        Assert.DoesNotContain("sign off", voice.FallbackNotice("x"), StringComparison.Ordinal);
+        Assert.Contains("1 minute.", new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams(), emptyChannelTimeout: TimeSpan.FromMinutes(1)).FallbackNotice("x"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_notice_that_cannot_be_posted_does_not_stop_the_sign_off()
+    {
+        var gateway = new FakeVoiceGateway();
+        gateway.VoiceChannels[5] = [100];
+        var voice = new VoiceManager(gateway);
+        var streams = new FakeStreams();
+        var time = new JellySend.Tests.Discord.ManualTimeProvider();
+        var module = new VoiceModule(voice, streams, time: time, emptyChannelTimeout: TimeSpan.FromMinutes(1), announcer: new ThrowingSender());
+        await voice.EnsureAsync(5, 100, TestContext.Current.CancellationToken);
+        await module.WatchIfEmptyAsync(5);
+        time.Advance(TimeSpan.FromMinutes(1));
+        await module.EmptyCountdowns[5];
+        Assert.Contains((5UL, "empty-timeout"), streams.Stops);
+        Assert.Null(voice.Get(5));
+    }
+
+    private sealed class ThrowingSender : JellySend.Commands.Routing.IMessageSender
+    {
+        public Task SendAsync(ulong channelId, string content, CancellationToken ct) => throw new InvalidOperationException("403");
     }
 }

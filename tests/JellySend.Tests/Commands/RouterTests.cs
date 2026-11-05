@@ -155,4 +155,18 @@ public sealed class RouterTests
     [InlineData("one\ttwo", "one", "two")]
     public void Split_first(string text, string first, string rest) =>
         Assert.Equal((first, rest), CommandRouter.SplitFirst(text));
+
+    [Fact]
+    public async Task Every_command_is_reported_before_role_checks()
+    {
+        var seen = new List<(ulong Author, string Resolved, string Text)>();
+        _router.OnCommand = (m, resolved) => seen.Add((m.AuthorId, resolved, m.Content));
+        _router.Add("echo", Role.Viewer, c => c.ReplyAsync("echo"));
+        _router.AddSecret("knock knock", "echo", _ => "who's there");
+        await Send("!echo");
+        await Send("!nope");
+        await Send("knock knock");
+        await Send("just chatting");
+        Assert.Equal([(20UL, "echo", "!echo"), (20UL, "unknown", "!nope"), (20UL, "secret → echo", "knock knock")], seen);
+    }
 }

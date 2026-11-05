@@ -36,8 +36,10 @@ public sealed class GatewayClientTests : IAsyncLifetime
         }
     }
 
-    private GatewayClient Create(int rateLimit = 110) => new(_factory, new GatewayOptions
+    private GatewayClient Create(int rateLimit = 110, bool subscribe = false) => new(_factory, new GatewayOptions
     {
+        SubscribeToGuilds = subscribe,
+        SubscriptionBatch = 2,
         Time = _time,
         Jitter = () => 0.5,
         RateLimitCount = rateLimit,
@@ -373,6 +375,91 @@ public sealed class GatewayClientTests : IAsyncLifetime
         var node = new JsonObject { ["inner"] = new JsonObject { ["a"] = 1 } };
         await _client.SendAsync(GatewayOp.StreamCreate, node["inner"], Ct);
         Assert.Equal("""{"a":1}""", (await ws.ExpectAsync(GatewayOp.StreamCreate)).GetProperty("d").GetRawText());
+    }
+
+    private const string ThreeGuilds = """
+        {"session_id":"sess-1","resume_gateway_url":"wss://gateway-us-east1-b.discord.gg","user":{"id":"1000"},
+         "guilds":[{"id":"1"},{"id":"2"},{"id":"3"},{"id":"2"},{"unavailable":true}]}
+        """;
+
+    private async Task<FakeSocket> LoginSubscribedAsync()
+    {
+        await _client.DisposeAsync();
+        _client = Create(subscribe: true);
+        var connect = _client.ConnectAsync(Token, Ct);
+        var ws = await _factory.NextAsync();
+        ws.Hello();
+        await ws.ExpectAsync(GatewayOp.Identify);
+        ws.Dispatch("READY", ThreeGuilds, 1);
+        await connect.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        await ws.ExpectAsync(GatewayOp.VoiceStateUpdate);
+        return ws;
+    }
+
+    private static string[] Guilds(JsonElement payload) =>
+        [.. payload.GetProperty("d").GetProperty("subscriptions").EnumerateObject().Select(p => p.Name)];
+
+    [Fact]
+    public async Task Ready_subscribes_to_every_guild_in_batches_then_new_guilds_once()
+    {
+        var ws = await LoginSubscribedAsync();
+        var first = await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        var second = await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        Assert.Equal(["1", "2"], Guilds(first));
+        Assert.Equal(["3"], Guilds(second));
+        var guild = first.GetProperty("d").GetProperty("subscriptions").GetProperty("1");
+        Assert.True(guild.GetProperty("typing").GetBoolean());
+        Assert.False(guild.GetProperty("member_updates").GetBoolean());
+
+        ws.Dispatch("GUILD_CREATE", """{"id":"4"}""", 2);
+        Assert.Equal(["4"], Guilds(await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk)));
+        ws.Dispatch("GUILD_CREATE", """{"id":"1"}""", 3);                // already subscribed
+        await SyncAsync(ws);
+        Assert.False(ws.HasSent);
+        lock (_log)
+        {
+            Assert.Contains("Subscribed to 3 guild(s) for messages.", _log);
+        }
+    }
+
+    [Theory]
+    [InlineData(4002)]
+    [InlineData(4001)]
+    public async Task A_rejected_subscription_is_never_sent_again(int code)
+    {
+        var ws = await LoginSubscribedAsync();
+        await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        ws.PeerClose(code);
+        var wait = await NextNonHeartbeatTimerAsync();
+        _time.Advance(wait.DueTime);
+        var ws2 = await _factory.NextAsync();
+        ws2.Hello();
+        await ws2.ExpectAsync(GatewayOp.Resume);
+        ws2.Dispatch("GUILD_CREATE", """{"id":"9"}""", 2);
+        await SyncAsync(ws2);
+        Assert.False(ws2.HasSent);
+        lock (_log)
+        {
+            Assert.Contains("Discord rejected the guild subscriptions; continuing without them.", _log);
+        }
+    }
+
+    [Fact]
+    public async Task Other_close_codes_keep_subscriptions_and_a_new_session_resubscribes()
+    {
+        var ws = await LoginSubscribedAsync();
+        await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        await ws.ExpectAsync(GatewayOp.GuildSubscriptionsBulk);
+        ws.PeerClose(4009);                                              // session timed out: a new READY
+        var wait = await NextNonHeartbeatTimerAsync();
+        _time.Advance(wait.DueTime);
+        var ws2 = await _factory.NextAsync();
+        ws2.Hello();
+        await ws2.ExpectAsync(GatewayOp.Identify);
+        ws2.Dispatch("READY", ThreeGuilds, 1);
+        await ws2.ExpectAsync(GatewayOp.VoiceStateUpdate);
+        Assert.Equal(["1", "2"], Guilds(await ws2.ExpectAsync(GatewayOp.GuildSubscriptionsBulk)));
     }
 
     [Fact]

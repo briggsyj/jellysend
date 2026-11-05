@@ -266,7 +266,9 @@ public sealed class MediaPlayTests
 
         public (ulong Guild, ulong Channel)? FindUserVoice(ulong userId) => inner.FindUserVoice(userId);
 
-        public Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) => inner.GetVoiceChannelsAsync(guildId, ct);
+        public Task<IReadOnlyList<JellySend.Commands.Voice.VoiceChannelRef>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) => inner.GetVoiceChannelsAsync(guildId, ct);
+
+        public Task<IReadOnlyList<JellySend.Commands.Voice.ServerRef>> GetServersAsync(CancellationToken ct) => inner.GetServersAsync(ct);
 
         public IReadOnlyCollection<ulong> UsersInChannel(ulong guildId, ulong channelId) => inner.UsersInChannel(guildId, channelId);
 

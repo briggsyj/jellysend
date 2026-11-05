@@ -18,7 +18,11 @@ namespace JellySend.Host;
 /// <summary><see cref="IVoiceGateway"/> over the gateway's voice-state cache and <see cref="VoiceConnection"/>.</summary>
 internal sealed class GatewayVoice(GatewayClient gateway, VoiceOptions options, JellySend.Discord.Rest.DiscordRestClient rest) : IVoiceGateway
 {
-    public Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) => rest.GetVoiceChannelsAsync(guildId, ct);
+    public async Task<IReadOnlyList<VoiceChannelRef>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) =>
+        [.. (await rest.GetVoiceChannelsAsync(guildId, ct).ConfigureAwait(false)).Select(c => new VoiceChannelRef(c.Id, c.Name))];
+
+    public async Task<IReadOnlyList<ServerRef>> GetServersAsync(CancellationToken ct) =>
+        [.. (await rest.GetGuildsAsync(ct).ConfigureAwait(false)).Select(g => new ServerRef(g.Id, g.Name))];
 
     public ulong SelfId => gateway.UserId;
 

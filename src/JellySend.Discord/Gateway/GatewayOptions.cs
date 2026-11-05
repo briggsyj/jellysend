@@ -35,6 +35,16 @@ public sealed class GatewayOptions
     /// <summary>Source of [0, 1) jitter for the first heartbeat and the INVALID_SESSION wait.</summary>
     public Func<double> Jitter { get; init; } = Random.Shared.NextDouble;
 
+    /// <summary>
+    /// Spec 024: after READY (and for each guild that becomes available later), send op 37 GUILD_SUBSCRIPTIONS_BULK
+    /// for every guild, as the Discord client does when a server is opened. Without it, Discord does not deliver every
+    /// guild's messages to a user account (lazy guilds), so commands in those channels go unseen.
+    /// </summary>
+    public bool SubscribeToGuilds { get; init; } = true;
+
+    /// <summary>Guilds per op 37 payload (keeps each one well under the gateway's 4096-byte payload limit).</summary>
+    public int SubscriptionBatch { get; init; } = 15;
+
     /// <summary>Diagnostic messages. Never receives the token or payload bodies.</summary>
     public Action<string>? Log { get; init; }
 }

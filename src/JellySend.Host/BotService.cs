@@ -58,6 +58,12 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
             new MessageHub(),
             (command, ex) => _log.LogError(ex, "command {Command} failed", command));
 
+        // Spec 024: every command that reaches the bot is logged, so a missed one can be told from an ignored one.
+        router.OnCommand = (message, resolved) => _log.LogInformation(
+            "command {Resolved} from {User} in guild {Guild} channel {Channel}: {Text}",
+            resolved, message.AuthorId, message.GuildId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "DM",
+            message.ChannelId, message.Content.Length > 200 ? message.Content[..200] + "…" : message.Content);
+
         // Voice + go-live.
         var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("JellySend.Voice"));
         var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions, rest), loggers.CreateLogger<VoiceManager>());
@@ -96,8 +102,15 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         }
 
         var guildNames = new GuildNames();
-        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>()) { MaxPlaytime = options.MaxPlaytime };
-        var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout);
+        var settingsLog = loggers.CreateLogger<SettingsStore>();
+        var settings = new SettingsStore(options.DataDirectory, m => settingsLog.LogWarning("{Message}", m));
+        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>())
+        {
+            MaxPlaytime = options.MaxPlaytime,
+            Settings = settings,
+        };
+        var voiceModule = new VoiceModule(
+            voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout, announcer: new RestMessageSender(rest));
 
         media.Register(router, voiceModule); // !media … plus the !join/!leave/!stop/!help/!ping shortcuts
 

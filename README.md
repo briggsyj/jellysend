@@ -87,6 +87,8 @@ services:
     image: ghcr.io/briggsyj/jellysend:latest
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./data:/data        # saved settings (each server's default voice channel)
     devices:
       - /dev/dri:/dev/dri   # VA-API hardware encoding (Intel/AMD)
 ```
@@ -143,6 +145,7 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused (default: the pause symbol in `assets/cards/`); same rules. |
 | `MAX_STREAM_HOURS` | No | `12` | Longest a stream plays, counted from a `!play` (through auto-advance and skips). Then it stops, staying in voice and keeping the playlist; `!play` starts again. 0–168, 0 = no limit. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
+| `DATA_DIR` | No | `/data` | Where saved settings (`settings.json`) are kept. Mount it as a volume (`./data:/data`) so they survive updates. |
 
 ### Logs
 
@@ -204,14 +207,16 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!stop` | Stop, stay in voice |
 | `!leave` | Stop and leave the voice channel |
 | `!join` | Join your voice channel |
-
-Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's first voice channel (not the AFK one), and stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 20).
+| `!channel set` | List the voice channels the bot can reach; reply with a number to move there (what's on air carries on) |
+| `!channel default` | Pick a server, then the voice channel the bot uses there when you're not in voice (saved in `DATA_DIR`) |
 | `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
 | `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
 | `!res` / `!resolution` | Output resolution: `!res 360p`, `480p`, `540p`, `720p`, `1080p`, `!res default`. Lower resolutions also lower the bitrate; applies now and to later items. |
 | `!debug` | Stream stats; `!debug on` / `off` toggles the overlay |
+
+Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 20), with a note in that voice channel's chat.
 
 Pickers accept a number or a name, and time out after 30 seconds.
 

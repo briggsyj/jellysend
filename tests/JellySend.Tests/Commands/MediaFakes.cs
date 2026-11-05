@@ -240,7 +240,7 @@ internal sealed class MediaHarness
     /// <summary>The voice commands registered with the media module (spec 023 tests watch its countdown).</summary>
     public VoiceModule VoiceCommands { get; }
 
-    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null, TimeSpan? emptyChannelTimeout = null)
+    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null, TimeSpan? emptyChannelTimeout = null, JellySend.Common.Config.SettingsStore? settings = null)
     {
         Pipelines = new FakePipelineFactory(Connector.Log);
         Voice = new VoiceManager(Gateway);
@@ -248,10 +248,11 @@ internal sealed class MediaHarness
         Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time)
         {
             MaxPlaytime = maxPlaytime ?? TimeSpan.FromHours(12),
+            Settings = settings ?? new JellySend.Common.Config.SettingsStore(null),
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
-        VoiceCommands = new VoiceModule(Voice, Media, time: Time, emptyChannelTimeout: emptyChannelTimeout);
+        VoiceCommands = new VoiceModule(Voice, Media, time: Time, emptyChannelTimeout: emptyChannelTimeout, announcer: Sender);
         Media.Register(Router, VoiceCommands);
         Gateway.States[(5, 20)] = 50;
     }
@@ -275,8 +276,8 @@ internal sealed class MediaHarness
     public static MediaItem Episode(string id, string series, int season, int episode, string name) =>
         new() { Id = id, Name = name, Type = "Episode", SeriesName = series, ParentIndexNumber = season, IndexNumber = episode };
 
-    public Task Send(string content, ulong? guild = 5, ulong author = 20) =>
-        Router.DispatchAsync(new ChatMessage(guild, 7, author, content), TestContext.Current.CancellationToken);
+    public Task Send(string content, ulong? guild = 5, ulong author = 20, ulong channel = 7) =>
+        Router.DispatchAsync(new ChatMessage(guild, channel, author, content), TestContext.Current.CancellationToken);
 
     /// <summary>Send without awaiting (the handler waits for a picker reply).</summary>
     public Task Start(string content) => Task.Run(() => Send(content));

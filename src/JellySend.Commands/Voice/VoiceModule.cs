@@ -7,8 +7,16 @@ namespace JellySend.Commands.Voice;
 
 /// <summary><c>!join</c>, <c>!leave</c>, <c>!stop</c> and auto-leave (<c>cogs/voice.py</c>).</summary>
 public sealed class VoiceModule(
-    VoiceManager voice, IStreamControl streams, ILogger<VoiceModule>? logger = null, TimeProvider? time = null, TimeSpan? emptyChannelTimeout = null)
+    VoiceManager voice, IStreamControl streams, ILogger<VoiceModule>? logger = null, TimeProvider? time = null, TimeSpan? emptyChannelTimeout = null,
+    IMessageSender? announcer = null)
 {
+    /// <summary>
+    /// Spec 026: posted in the voice channel's own text chat when the empty-channel timeout signs the bot off (that
+    /// chat is where anyone coming back to the channel will see it).
+    /// </summary>
+    public string TimeoutNotice =>
+        $"📴 Nobody's been in the channel for {Minutes(EmptyChannelTimeout)} — signing off. `!play` to start again.";
+
     /// <summary>Spec 003: how long the bot stays in a channel nobody else is in (zero = leave at once).</summary>
     public TimeSpan EmptyChannelTimeout { get; } = emptyChannelTimeout ?? TimeSpan.Zero;
 
@@ -45,7 +53,7 @@ public sealed class VoiceModule(
     /// </summary>
     public async Task JoinAsync(CommandContext c)
     {
-        if (await voice.ResolveTargetAsync(c.Message, c.Cancellation) is not var (guild, channel, fallback))
+        if (await voice.ResolveTargetAsync(c.Message, c.Cancellation) is not var (guild, channel, fallback, name))
         {
             await c.ReplyAsync("🙅 Join a voice channel first, then try again.");
             return;
@@ -53,7 +61,7 @@ public sealed class VoiceModule(
 
         if (fallback)
         {
-            await c.ReplyAsync(FallbackNotice);
+            await c.ReplyAsync(FallbackNotice(name));
         }
 
         await voice.EnsureAsync(guild, channel, c.Cancellation);
@@ -64,11 +72,16 @@ public sealed class VoiceModule(
         }
     }
 
-    /// <summary>Said when the bot broadcasts in the server's first voice channel because the author isn't in voice.</summary>
-    public string FallbackNotice => EmptyChannelTimeout > TimeSpan.Zero
-        ? $"📡 You're not in a voice channel, so we're broadcasting in this server's first one — come and join! "
-          + $"We'll sign off if nobody joins within {Minutes(EmptyChannelTimeout)}."
-        : "📡 You're not in a voice channel, so we're broadcasting in this server's first one — come and join!";
+    /// <summary>
+    /// Said when the bot broadcasts in the server's default (or first) voice channel because the author isn't in voice;
+    /// <paramref name="channel"/> is that channel's name.
+    /// </summary>
+    public string FallbackNotice(string? channel)
+    {
+        var where = channel is null ? "this server's voice channel" : $"**🔊 {channel}**";
+        var text = $"📡 You're not in a voice channel, so we're broadcasting in {where} — come and join!";
+        return EmptyChannelTimeout > TimeSpan.Zero ? $"{text} We'll sign off if nobody joins within {Minutes(EmptyChannelTimeout)}." : text;
+    }
 
     private static string Minutes(TimeSpan t) =>
         t.TotalMinutes == 1 ? "1 minute" : $"{t.TotalMinutes.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} minutes";
@@ -216,6 +229,19 @@ public sealed class VoiceModule(
         }
 
         _log.LogInformation("channel {Channel} in guild {Guild} stayed empty for {Minutes} min — stopping and leaving", channel, guildId, EmptyChannelTimeout.TotalMinutes);
+        if (announcer is not null)
+        {
+            try
+            {
+                await announcer.SendAsync(channel, TimeoutNotice, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Text chat off in that voice channel, or no permission to post there: signing off matters more.
+                _log.LogWarning(ex, "could not post the timeout notice in voice channel {Channel}", channel);
+            }
+        }
+
         await streams.StopAsync(guildId, "empty-timeout");
         await voice.LeaveAsync(guildId);
     }

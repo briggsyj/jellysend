@@ -36,9 +36,18 @@ internal sealed class FakeVoiceGateway : IVoiceGateway
 
     public Exception? VoiceChannelsError { get; set; }
 
-    public Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) =>
-        VoiceChannelsError is { } error ? Task.FromException<IReadOnlyList<ulong>>(error)
-        : Task.FromResult<IReadOnlyList<ulong>>(VoiceChannels.TryGetValue(guildId, out var list) ? list : []);
+    public Task<IReadOnlyList<VoiceChannelRef>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) =>
+        VoiceChannelsError is { } error ? Task.FromException<IReadOnlyList<VoiceChannelRef>>(error)
+        : Task.FromResult<IReadOnlyList<VoiceChannelRef>>(
+            VoiceChannels.TryGetValue(guildId, out var list) ? [.. list.Select(id => new VoiceChannelRef(id, $"voice-{id}"))] : []);
+
+    /// <summary>The account's servers (spec 027).</summary>
+    public List<ServerRef> Servers { get; } = [];
+
+    public Exception? ServersError { get; set; }
+
+    public Task<IReadOnlyList<ServerRef>> GetServersAsync(CancellationToken ct) =>
+        ServersError is { } error ? Task.FromException<IReadOnlyList<ServerRef>>(error) : Task.FromResult<IReadOnlyList<ServerRef>>([.. Servers]);
 
     public ulong? GetVoiceChannel(ulong guildId, ulong userId) => States.TryGetValue((guildId, userId), out var c) ? c : null;
 
