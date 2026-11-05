@@ -119,6 +119,8 @@ public sealed class SecretCommandTests
     [InlineData("I call upon sample film")]
     [InlineData("i CALL upon sample film")]
     [InlineData("  !I call upon sample film")]
+    [InlineData("I summon thee sample film")]
+    [InlineData("!i summon thee sample film")]
     public async Task Phrases_work_with_or_without_the_prefix(string content)
     {
         await _h.Send(content);
