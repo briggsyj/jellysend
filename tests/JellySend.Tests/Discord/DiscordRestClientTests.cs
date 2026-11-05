@@ -47,6 +47,36 @@ public sealed class DiscordRestClientTests
     }
 
     [Fact]
+    public async Task Voice_channels_come_in_discords_order_without_text_stage_or_afk_channels()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """{"id": "5", "afk_channel_id": "30"}"""));
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """
+            [
+              {"id": "10", "type": 0, "position": 0},
+              {"id": "40", "type": 2, "position": 2},
+              {"id": "30", "type": 2, "position": 0},
+              {"id": "21", "type": 2, "position": 1},
+              {"id": "20", "type": 2, "position": 1},
+              {"id": "50", "type": 13, "position": 0},
+              {"id": "60", "type": 2}
+            ]
+            """));
+        Assert.Equal([20UL, 21, 40, 60], await _client.GetVoiceChannelsAsync(5, Ct));
+        Assert.Equal(
+            ["https://discord.com/api/v9/guilds/5", "https://discord.com/api/v9/guilds/5/channels"],
+            _requests.Select(r => r.Request.RequestUri!.ToString()));
+        Assert.All(_requests, r => Assert.Equal(HttpMethod.Get, r.Request.Method));
+    }
+
+    [Fact]
+    public async Task Voice_channels_without_an_afk_channel()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """{"id": "5", "afk_channel_id": null}"""));
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """[{"id": "7", "type": 2, "position": 0}]"""));
+        Assert.Equal([7UL], await _client.GetVoiceChannelsAsync(5, Ct));
+    }
+
+    [Fact]
     public void Nonce_is_a_time_snowflake()
     {
         var ms = _time.GetUtcNow().ToUnixTimeMilliseconds() - DiscordRestClient.DiscordEpochMs;

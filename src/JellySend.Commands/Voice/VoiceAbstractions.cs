@@ -14,6 +14,12 @@ public interface IVoiceGateway
     /// <summary>Everyone currently in the channel (voice-state cache), including the bot.</summary>
     IReadOnlyCollection<ulong> UsersInChannel(ulong guildId, ulong channelId);
 
+    /// <summary>
+    /// The guild's voice channels in Discord's order, AFK channel excluded (spec 023: where to broadcast when the person
+    /// asking isn't in voice). Empty when none.
+    /// </summary>
+    Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct);
+
     /// <summary>Join <paramref name="channelId"/> self-deafened and complete the voice handshake.</summary>
     Task<IVoiceLink> ConnectAsync(ulong guildId, ulong channelId, CancellationToken ct);
 }

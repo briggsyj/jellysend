@@ -342,6 +342,8 @@ public sealed class VoiceModuleTests
 
         public (ulong Guild, ulong Channel)? FindUserVoice(ulong userId) => inner.FindUserVoice(userId);
 
+        public Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) => inner.GetVoiceChannelsAsync(guildId, ct);
+
         public IReadOnlyCollection<ulong> UsersInChannel(ulong guildId, ulong channelId) => inner.UsersInChannel(guildId, channelId);
 
         public async Task<IVoiceLink> ConnectAsync(ulong guildId, ulong channelId, CancellationToken ct)

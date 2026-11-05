@@ -39,18 +39,50 @@ public sealed class VoiceModule(
         return gateway.FindUserVoice(message.AuthorId) is { } found ? (found.Guild, found.Channel) : (null, null);
     }
 
-    /// <summary><c>!media join</c> / <c>!join</c>: join (or move to) the author's voice channel.</summary>
+    /// <summary>
+    /// <c>!media join</c> / <c>!join</c>: join (or move to) the author's voice channel; from a server channel when the
+    /// author isn't in voice, the server's first voice channel (spec 023).
+    /// </summary>
     public async Task JoinAsync(CommandContext c)
     {
-        var (guild, channel) = ResolveAuthorVoice(voice.Gateway, c.Message);
-        if (guild is null || channel is null)
+        if (await voice.ResolveTargetAsync(c.Message, c.Cancellation) is not var (guild, channel, fallback))
         {
             await c.ReplyAsync("🙅 Join a voice channel first, then try again.");
             return;
         }
 
-        await voice.EnsureAsync(guild.Value, channel.Value, c.Cancellation);
+        if (fallback)
+        {
+            await c.ReplyAsync(FallbackNotice);
+        }
+
+        await voice.EnsureAsync(guild, channel, c.Cancellation);
         await c.ReplyAsync("📡 Joined — ready to broadcast.");
+        if (fallback)
+        {
+            await WatchIfEmptyAsync(guild);
+        }
+    }
+
+    /// <summary>Said when the bot broadcasts in the server's first voice channel because the author isn't in voice.</summary>
+    public string FallbackNotice => EmptyChannelTimeout > TimeSpan.Zero
+        ? $"📡 You're not in a voice channel, so we're broadcasting in this server's first one — come and join! "
+          + $"We'll sign off if nobody joins within {Minutes(EmptyChannelTimeout)}."
+        : "📡 You're not in a voice channel, so we're broadcasting in this server's first one — come and join!";
+
+    private static string Minutes(TimeSpan t) =>
+        t.TotalMinutes == 1 ? "1 minute" : $"{t.TotalMinutes.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} minutes";
+
+    /// <summary>
+    /// Spec 023: after joining a channel nobody else is in, start the empty-channel countdown (the bot's own join does
+    /// not start it). Not with a timeout of 0, which would stop what was just started.
+    /// </summary>
+    public async Task WatchIfEmptyAsync(ulong guildId)
+    {
+        if (EmptyChannelTimeout > TimeSpan.Zero && BotChannel(guildId) is { } channel && !HasOthers(guildId, channel))
+        {
+            await OnChannelEmptyAsync(guildId, channel).ConfigureAwait(false);
+        }
     }
 
     /// <summary><c>!media leave</c> / <c>!leave</c>: stop the stream, discard the session and leave voice.</summary>

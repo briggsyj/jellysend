@@ -55,14 +55,38 @@ public sealed class DiscordRestClient
             ["tts"] = false,
             ["flags"] = 0,
         };
-        return SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/messages", body, ct);
+        return (Task)SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/messages", body, ct);
     }
 
     /// <summary>Time-based snowflake, as <c>utils._generate_nonce</c>.</summary>
+    /// <summary>
+    /// The guild's voice channels in the order Discord lists them (position, then id), without its AFK channel
+    /// (spec 023: where to broadcast when the person asking isn't in voice).
+    /// </summary>
+    public async Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct)
+    {
+        var id = guildId.ToString(CultureInfo.InvariantCulture);
+        using var guild = JsonDocument.Parse(await SendAsync(HttpMethod.Get, $"guilds/{id}", null, ct).ConfigureAwait(false));
+        ulong? afk = guild.RootElement.TryGetProperty("afk_channel_id", out var a) && a.ValueKind == JsonValueKind.String
+            && ulong.TryParse(a.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var afkId) ? afkId : null;
+        using var channels = JsonDocument.Parse(await SendAsync(HttpMethod.Get, $"guilds/{id}/channels", null, ct).ConfigureAwait(false));
+        return [.. channels.RootElement.EnumerateArray()
+            .Where(c => c.TryGetProperty("type", out var t) && t.TryGetInt32(out var type) && type == VoiceChannelType)
+            .Select(c => (
+                Id: ulong.Parse(c.GetProperty("id").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture),
+                Position: c.TryGetProperty("position", out var p) && p.TryGetInt32(out var pos) ? pos : int.MaxValue))
+            .Where(c => c.Id != afk)
+            .OrderBy(c => c.Position).ThenBy(c => c.Id)
+            .Select(c => c.Id)];
+    }
+
+    /// <summary>Discord's channel type for a voice channel (stage channels, 13, are left out).</summary>
+    public const int VoiceChannelType = 2;
+
     internal string Nonce() =>
         ((_time.GetUtcNow().ToUnixTimeMilliseconds() - DiscordEpochMs) << 22).ToString(CultureInfo.InvariantCulture);
 
-    private async Task SendAsync(HttpMethod method, string route, JsonNode? body, CancellationToken ct)
+    private async Task<string> SendAsync(HttpMethod method, string route, JsonNode? body, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -83,7 +107,7 @@ public sealed class DiscordRestClient
             using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return;
+                return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             }
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt < MaxRetries)

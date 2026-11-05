@@ -52,6 +52,9 @@ public sealed class MediaModule : IStreamControl
 
     private readonly IMediaLibrary? _library;
     private readonly StreamEngine _engine;
+
+    /// <summary>The voice commands (set by <see cref="Register"/>): the empty-channel countdown after a fallback join.</summary>
+    private VoiceModule? _voiceModule;
     private readonly VoiceManager _voice;
     private readonly Func<ulong, string?> _guildName;
     private readonly TimeProvider _time;
@@ -109,6 +112,7 @@ public sealed class MediaModule : IStreamControl
     /// </summary>
     public void Register(CommandRouter router, VoiceModule voice)
     {
+        _voiceModule = voice;
         var handlers = new Dictionary<string, CommandHandler>(StringComparer.Ordinal)
         {
             ["play"] = PlayAsync,
@@ -1266,18 +1270,27 @@ public sealed class MediaModule : IStreamControl
     /// <summary>Play <paramref name="item"/> in the command author's voice channel.</summary>
     private async Task<bool> PlayItemAsync(CommandContext c, MediaItem item, double start = 0)
     {
-        var (guild, channel) = VoiceModule.ResolveAuthorVoice(_voice.Gateway, c.Message);
-        if (guild is null || channel is null)
+        // Spec 023: the author's voice channel; from a server channel without one, the server's first voice channel.
+        if (await _voice.ResolveTargetAsync(c.Message, c.Cancellation).ConfigureAwait(false) is not var (guild, channel, fallback))
         {
             await c.ReplyAsync("🙅 Join a voice channel first, then try again.").ConfigureAwait(false);
             return false;
         }
 
-        State(guild.Value, c.ReplyAsync);
-        var started = await StartItemAsync(guild.Value, channel.Value, item, start).ConfigureAwait(false);
+        if (fallback && _voiceModule is { } notice)
+        {
+            await c.ReplyAsync(notice.FallbackNotice).ConfigureAwait(false);
+        }
+
+        State(guild, c.ReplyAsync);
+        var started = await StartItemAsync(guild, channel, item, start).ConfigureAwait(false);
         if (started)
         {
-            StartPlaytimeLimit(guild.Value);
+            StartPlaytimeLimit(guild);
+            if (fallback && _voiceModule is { } voiceModule)
+            {
+                await voiceModule.WatchIfEmptyAsync(guild).ConfigureAwait(false); // nobody there yet: the countdown runs
+            }
         }
 
         return started;
