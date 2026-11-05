@@ -263,7 +263,9 @@ public sealed class MediaModule : IStreamControl
         return (fallback, true);
     }
 
-    private static string NotFoundText(PlayQuery query) => query is { Season: { } s, Episode: { } e }
+    private static string NotFoundText(PlayQuery query) => query.Spans is { } spans
+        ? $"{string.Join(", ", spans)} of `{query.Title}` not found in Jellyfin"
+        : query is { Season: { } s, Episode: { } e }
         ? $"S{s:00}E{e:00} of `{query.Title}` not found in Jellyfin"
         : $"nothing found in Jellyfin for `{query.Text}`";
 
@@ -814,15 +816,22 @@ public sealed class MediaModule : IStreamControl
         var (show, season, episode) = (query.Title, query.Season, query.Episode);
         _log.LogInformation("Jellyfin search for {Show} by {Author} (season={Season} episode={Episode})", show, c.AuthorId, season, episode);
 
+        // Spec 018: a range or list of episodes resolves through the show's seasons; the first is returned, the rest
+        // go to `more` (played next / queued, like several picks from the episode list).
+        var multi = query.Spans is not null && more is not null;
         IReadOnlyList<MediaItem> results;
         try
         {
-            results = season is { } s && episode is { } e
+            results = season is { } s && episode is { } e && !multi
                 ? await library.FindEpisodeAsync(show, s, e, c.Cancellation).ConfigureAwait(false)
                 : await library.SearchAsync(show, c.Cancellation).ConfigureAwait(false);
-            if (season is not null && episode is null && results.Any(r => r.Type == "Series"))
+            if (season is not null && (episode is null || multi) && results.Any(r => r.Type == "Series"))
             {
                 results = [.. results.Where(r => r.Type == "Series")]; // `<show> s3`: the shows, not same-named films
+            }
+            else if (multi)
+            {
+                results = []; // episodes asked for, but no show matched
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
@@ -864,7 +873,144 @@ public sealed class MediaModule : IStreamControl
             item = results[choice - 1];
         }
 
+        if (multi)
+        {
+            return await ResolveSpansAsync(c, item, query.Spans!, more!).ConfigureAwait(false);
+        }
+
         return item.Type == "Series" ? await PickSeasonThenEpisodeAsync(c, item, episode is null ? season : null, more).ConfigureAwait(false) : item;
+    }
+
+    /// <summary>
+    /// The episodes of <paramref name="series"/> that <paramref name="spans"/> name, in order (spec 018): returns the
+    /// first and adds the rest to <paramref name="more"/>. Episodes or seasons that do not exist are reported and
+    /// skipped; null (after a reply) when none exist.
+    /// </summary>
+    private async Task<MediaItem?> ResolveSpansAsync(CommandContext c, MediaItem series, IReadOnlyList<EpisodeSpan> spans, List<MediaItem> more)
+    {
+        var name = series.Name ?? "Unknown";
+        IReadOnlyList<MediaItem> seasons;
+        var episodesBySeason = new Dictionary<int, IReadOnlyList<MediaItem>>();
+        try
+        {
+            seasons = await _library!.GetSeasonsAsync(series.Id, c.Cancellation).ConfigureAwait(false);
+            foreach (var number in spans.SelectMany(sp => Enumerable.Range(sp.Season, sp.EndSeason - sp.Season + 1)).Distinct())
+            {
+                if (seasons.FirstOrDefault(s => s.IndexNumber == number) is { } seasonItem)
+                {
+                    episodesBySeason[number] = await _library.GetEpisodesAsync(series.Id, seasonItem.Id, c.Cancellation).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !c.Cancellation.IsCancellationRequested)
+        {
+            _log.LogError(ex, "failed to fetch episodes");
+            await c.ReplyAsync($"failed to fetch episodes: {ex.Message}").ConfigureAwait(false);
+            return null;
+        }
+
+        var found = new List<MediaItem>();
+        var missing = new List<(int Season, int? Episode)>();
+        MediaItem? Episode(int season, int number) =>
+            episodesBySeason.TryGetValue(season, out var eps) ? eps.FirstOrDefault(e => e.IndexNumber == number) : null;
+
+        foreach (var span in spans)
+        {
+            if (span.Season == span.EndSeason)
+            {
+                if (!episodesBySeason.ContainsKey(span.Season))
+                {
+                    missing.Add((span.Season, null));
+                    continue;
+                }
+
+                for (var n = span.Episode; n <= span.EndEpisode; n++)
+                {
+                    if (Episode(span.Season, n) is { } ep)
+                    {
+                        found.Add(ep);
+                    }
+                    else
+                    {
+                        missing.Add((span.Season, n));
+                    }
+                }
+
+                continue;
+            }
+
+            // Across seasons: everything from the start episode to the end episode, in season order.
+            foreach (var number in Enumerable.Range(span.Season, span.EndSeason - span.Season + 1))
+            {
+                if (!episodesBySeason.TryGetValue(number, out var eps))
+                {
+                    if (number == span.Season || number == span.EndSeason)
+                    {
+                        missing.Add((number, null));
+                    }
+
+                    continue;
+                }
+
+                found.AddRange(eps
+                    .Where(e => e.IndexNumber is { } i && (number != span.Season || i >= span.Episode) && (number != span.EndSeason || i <= span.EndEpisode))
+                    .OrderBy(e => e.IndexNumber));
+            }
+
+            foreach (var (s, e) in ((int, int)[])[(span.Season, span.Episode), (span.EndSeason, span.EndEpisode)])
+            {
+                if (episodesBySeason.ContainsKey(s) && Episode(s, e) is null)
+                {
+                    missing.Add((s, e));
+                }
+            }
+        }
+
+        found = [.. found.DistinctBy(e => e.Id)];
+        if (found.Count == 0)
+        {
+            await c.ReplyAsync($"{string.Join(", ", spans)} of **{name}** not found in Jellyfin").ConfigureAwait(false);
+            return null;
+        }
+
+        if (missing.Count > 0)
+        {
+            await c.ReplyAsync($"{MissingText(missing)} of **{name}** not found — carrying on with the rest").ConfigureAwait(false);
+        }
+
+        more.AddRange(found.Skip(1));
+        return found[0];
+    }
+
+    /// <summary>Missing episodes, consecutive ones joined: <c>S01E11–E12, S02E05, season 4</c>.</summary>
+    internal static string MissingText(IReadOnlyList<(int Season, int? Episode)> missing)
+    {
+        var parts = new List<string>();
+        foreach (var group in missing.Distinct().GroupBy(m => m.Season))
+        {
+            if (group.Any(m => m.Episode is null))
+            {
+                parts.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"season {group.Key}"));
+                continue;
+            }
+
+            var numbers = group.Select(m => m.Episode!.Value).Order().ToList();
+            for (var i = 0; i < numbers.Count;)
+            {
+                var j = i;
+                while (j + 1 < numbers.Count && numbers[j + 1] == numbers[j] + 1)
+                {
+                    j++;
+                }
+
+                parts.Add(j == i
+                    ? EpisodeSpan.Code(group.Key, numbers[i])
+                    : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{EpisodeSpan.Code(group.Key, numbers[i])}–E{numbers[j]:00}"));
+                i = j + 1;
+            }
+        }
+
+        return string.Join(", ", parts);
     }
 
     /// <summary>Pick a season, then an episode; <paramref name="season"/> given (<c>&lt;show&gt; s3</c>) skips the season pick.</summary>

@@ -95,3 +95,54 @@ public sealed class PlayQueryTests
     public void Absurd_numbers_do_not_overflow() =>
         Assert.Equal(int.MaxValue, PlayQuery.Parse("show s99999999999e1").Season);
 }
+
+/// <summary>Spec 018: ranges and lists of episodes in the command.</summary>
+public sealed class PlayQueryRangeTests
+{
+    private static string Spans(string text) => PlayQuery.Parse(text).Spans is { } spans ? string.Join(" ", spans) : "-";
+
+    [Theory]
+    [InlineData("show s1e1-3", "show", "S01E01–E03")]
+    [InlineData("show S01E01-E03", "show", "S01E01–E03")]
+    [InlineData("show s1e1-s1e3", "show", "S01E01–E03")]
+    [InlineData("show s1e1 - 3", "show", "S01E01–E03")]
+    [InlineData("show s1e8-s2e2", "show", "S01E08–S02E02")]
+    [InlineData("show 1x1-3", "show", "S01E01–E03")]
+    [InlineData("show 1x8-2x2", "show", "S01E08–S02E02")]
+    [InlineData("show season 1 episode 1-3", "show", "S01E01–E03")]
+    [InlineData("show season 1 episodes 1 to 3", "show", "S01E01–E03")]
+    [InlineData("show episodes 1-3 of season 2", "show", "S02E01–E03")]
+    [InlineData("show s1e1,3,5", "show", "S01E01 S01E03 S01E05")]
+    [InlineData("show s1e1, e3", "show", "S01E01 S01E03")]
+    [InlineData("show season 2 episodes 1, 3 and 5", "show", "S02E01 S02E03 S02E05")]
+    [InlineData("s1e1-3 show", "show", "S01E01–E03")]
+    public void Ranges_and_lists(string text, string title, string spans)
+    {
+        var q = PlayQuery.Parse(text);
+        Assert.Equal((title, spans), (q.Title, Spans(text)));
+        Assert.Equal(q.Spans![0].Season, q.Season);
+        Assert.Equal(q.Spans![0].Episode, q.Episode);
+    }
+
+    [Theory]
+    [InlineData("show s1e3-1")]        // runs backwards
+    [InlineData("show s2e1-s1e5")]
+    [InlineData("show s1e1")]          // single: no spans
+    [InlineData("show season 1 episode 4")]
+    public void Not_ranges(string text) => Assert.Equal("-", Spans(text));
+
+    [Fact]
+    public void Singles_still_parse_and_plural_words_are_accepted()
+    {
+        Assert.Equal((2, 3), PlayQuery.Parse("show season 2 episodes 3") is var q ? (q.Season!.Value, q.Episode!.Value) : default);
+        Assert.Equal((2, 3), PlayQuery.Parse("show episode 3 of season 2") is var r ? (r.Season!.Value, r.Episode!.Value) : default);
+    }
+
+    [Fact]
+    public void Describe_and_spans_text()
+    {
+        Assert.Equal("show S01E08–S02E02", PlayQuery.Parse("show s1e8-s2e2").Describe());
+        Assert.Equal("S01E05", new EpisodeSpan(1, 5, 1, 5).ToString());
+        Assert.True(new EpisodeSpan(1, 5, 1, 5).IsSingle);
+    }
+}

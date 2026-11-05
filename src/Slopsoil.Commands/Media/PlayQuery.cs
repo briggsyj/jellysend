@@ -17,6 +17,13 @@ namespace Slopsoil.Commands.Media;
 /// <param name="Text">The whole argument as typed (quotes removed), for the full-text fallback search.</param>
 public sealed partial record PlayQuery(string Title, int? Season, int? Episode, double? Start, bool Quoted, string Text)
 {
+    /// <summary>
+    /// Several episodes asked for at once (spec 018): <c>s1e1-3</c>, <c>s1e8-s2e2</c>, <c>1x1-3</c>, <c>s1e1,3,5</c>,
+    /// <c>season 1 episodes 1-3</c> / <c>1 to 3</c> / <c>1, 3 and 5</c>. Null for a single episode (or none);
+    /// <see cref="Season"/> / <see cref="Episode"/> are then the first one.
+    /// </summary>
+    public IReadOnlyList<EpisodeSpan>? Spans { get; init; }
+
     /// <summary>Something besides the title was recognised (so a whole-text fallback search can differ).</summary>
     public bool HasFormats => Season is not null || Start is not null;
 
@@ -31,7 +38,14 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
 
         int? season = null;
         int? episode = null;
-        foreach (var pattern in (Regex[])[SxxEyy(), NxM(), SeasonEpisode(), EpisodeSeason()])
+        IReadOnlyList<EpisodeSpan>? spans = null;
+        if (ParseSpans(ref rest) is { } multi)
+        {
+            spans = multi;
+            (season, episode) = (multi[0].Season, multi[0].Episode);
+        }
+
+        foreach (var pattern in season is not null ? [] : (Regex[])[SxxEyy(), NxM(), SeasonEpisode(), EpisodeSeason()])
         {
             var m = pattern.Match(rest);
             if (m.Success)
@@ -74,7 +88,7 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
         }
 
         var title = string.Join(' ', ((string[])[quoted ?? "", .. words]).Where(s => s.Length > 0));
-        return new PlayQuery(title, season, episode, start, quoted is not null, plain);
+        return new PlayQuery(title, season, episode, start, quoted is not null, plain) { Spans = spans };
     }
 
     /// <summary>
@@ -92,6 +106,11 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
     public string Describe()
     {
         var sb = new StringBuilder(Title);
+        if (Spans is { } spans)
+        {
+            return $"{Title} {string.Join(", ", spans.Select(sp => sp.ToString()))}".Trim();
+        }
+
         if (Season is { } s)
         {
             sb.Append(Episode is { } e
@@ -101,6 +120,95 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
 
         return sb.ToString().Trim();
     }
+
+    /// <summary>A range or list of episodes (spec 018), cut out of <paramref name="rest"/>; null when there is none.</summary>
+    private static IReadOnlyList<EpisodeSpan>? ParseSpans(ref string rest)
+    {
+        // s1e1-3 · s01e01-e03 · s1e1-s1e3 · s1e8-s2e2
+        if (CodeRange().Match(rest) is { Success: true } code)
+        {
+            var s = Int(code.Groups[1].Value);
+            var endSeason = code.Groups[3].Success ? Int(code.Groups[3].Value) : s;
+            return Range(ref rest, code, s, Int(code.Groups[2].Value), endSeason, Int(code.Groups[4].Value));
+        }
+
+        // 1x1-3 · 1x8-2x2
+        if (NxMRange().Match(rest) is { Success: true } nxm)
+        {
+            var s = Int(nxm.Groups[1].Value);
+            var endSeason = nxm.Groups[3].Success ? Int(nxm.Groups[3].Value) : s;
+            return Range(ref rest, nxm, s, Int(nxm.Groups[2].Value), endSeason, Int(nxm.Groups[4].Value));
+        }
+
+        // season 1 episode(s) 1-3 / 1 to 3
+        if (WordsRange().Match(rest) is { Success: true } words)
+        {
+            var s = Int(words.Groups[1].Value);
+            return Range(ref rest, words, s, Int(words.Groups[2].Value), s, Int(words.Groups[3].Value));
+        }
+
+        // episode(s) 1-3 season 1
+        if (WordsRangeReversed().Match(rest) is { Success: true } reversed)
+        {
+            var s = Int(reversed.Groups[3].Value);
+            return Range(ref rest, reversed, s, Int(reversed.Groups[1].Value), s, Int(reversed.Groups[2].Value));
+        }
+
+        // s1e1,3,5 · s1e1,e3
+        if (CodeList().Match(rest) is { Success: true } codeList)
+        {
+            var s = Int(codeList.Groups[1].Value);
+            return List(ref rest, codeList, s, [Int(codeList.Groups[2].Value), .. Numbers(codeList.Groups[3].Value)]);
+        }
+
+        // season 1 episodes 1, 3 and 5
+        if (WordsList().Match(rest) is { Success: true } wordsList)
+        {
+            return List(ref rest, wordsList, Int(wordsList.Groups[1].Value), Numbers(wordsList.Groups[2].Value));
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<EpisodeSpan>? Range(ref string rest, Match m, int season, int episode, int endSeason, int endEpisode)
+    {
+        if (endSeason < season || (endSeason == season && endEpisode < episode))
+        {
+            return null; // runs backwards: not a range (the words stay in the title)
+        }
+
+        rest = Cut(rest, m);
+        return [new EpisodeSpan(season, episode, endSeason, endEpisode)];
+    }
+
+    private static IReadOnlyList<EpisodeSpan> List(ref string rest, Match m, int season, IReadOnlyList<int> episodes)
+    {
+        rest = Cut(rest, m);
+        return [.. episodes.Distinct().Select(e => new EpisodeSpan(season, e, season, e))];
+    }
+
+    private static List<int> Numbers(string text) => [.. Digits().Matches(text).Select(d => Int(d.Value))];
+
+    [GeneratedRegex(@"\bs([0-9]+)e([0-9]+)\s*-\s*(?:s([0-9]+)e|e)?([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CodeRange();
+
+    [GeneratedRegex(@"\b([0-9]+)x([0-9]+)\s*-\s*(?:([0-9]+)x)?([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex NxMRange();
+
+    [GeneratedRegex(@"\bseason\s+([0-9]+)\s+episodes?\s+([0-9]+)\s*(?:-|to)\s*([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WordsRange();
+
+    [GeneratedRegex(@"\bepisodes?\s+([0-9]+)\s*(?:-|to)\s*([0-9]+)\s+(?:of\s+)?season\s+([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WordsRangeReversed();
+
+    [GeneratedRegex(@"\bs([0-9]+)e([0-9]+)((?:\s*,\s*e?[0-9]+)+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CodeList();
+
+    [GeneratedRegex(@"\bseason\s+([0-9]+)\s+episodes?\s+([0-9]+(?:\s*(?:,|and|&)\s*[0-9]+)+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WordsList();
+
+    [GeneratedRegex("[0-9]+")]
+    private static partial Regex Digits();
 
     /// <summary>First quoted segment ("…", '…' at word edges, or “…”) and the text around it.</summary>
     private static (string? Quoted, string Other) SplitQuotes(string text)
@@ -128,10 +236,10 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
     [GeneratedRegex(@"\b([0-9]+)x([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex NxM();
 
-    [GeneratedRegex(@"\bseason\s+([0-9]+)\s+episode\s+([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\bseason\s+([0-9]+)\s+episodes?\s+([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SeasonEpisode();
 
-    [GeneratedRegex(@"\bepisode\s+([0-9]+)\s+season\s+([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\bepisodes?\s+([0-9]+)\s+(?:of\s+)?season\s+([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EpisodeSeason();
 
     [GeneratedRegex(@"\bs([0-9]+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -145,4 +253,19 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Spaces();
+}
+
+/// <summary>Episodes from (<see cref="Season"/>, <see cref="Episode"/>) to (<see cref="EndSeason"/>, <see cref="EndEpisode"/>), inclusive.</summary>
+public sealed record EpisodeSpan(int Season, int Episode, int EndSeason, int EndEpisode)
+{
+    public bool IsSingle => Season == EndSeason && Episode == EndEpisode;
+
+    public override string ToString() => IsSingle
+        ? Code(Season, Episode)
+        : Season == EndSeason
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Code(Season, Episode)}–E{EndEpisode:00}")
+            : $"{Code(Season, Episode)}–{Code(EndSeason, EndEpisode)}";
+
+    internal static string Code(int season, int episode) =>
+        string.Create(System.Globalization.CultureInfo.InvariantCulture, $"S{season:00}E{episode:00}");
 }
