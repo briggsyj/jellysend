@@ -17,8 +17,8 @@ public sealed class SecretCommandTests
     {
         var lines = reply.Split('\n');
         Assert.Equal(2, lines.Length);
-        Assert.Contains(lines[1], SecretCatalog.Screams);
-        return lines[0];
+        Assert.Contains(SecretCatalog.Uncurse(lines[1]), SecretCatalog.Screams.Select(SecretCatalog.Uncurse));
+        return SecretCatalog.Uncurse(lines[0]);
     }
 
     [Fact]
@@ -41,8 +41,28 @@ public sealed class SecretCommandTests
     public void Every_secret_reply_ends_with_the_picked_scream()
     {
         var secrets = SecretCatalog.All(n => n - 1); // always the last of each list
-        Assert.All(secrets, s => Assert.EndsWith("\n" + SecretCatalog.Screams[^1], s.Reply("x"), StringComparison.Ordinal));
+        Assert.All(secrets, s => Assert.EndsWith("\n" + SecretCatalog.Uncurse(SecretCatalog.Screams[^1]), SecretCatalog.Uncurse(s.Reply("x")), StringComparison.Ordinal));
         Assert.Equal(10, SecretCatalog.Screams.Count);
+    }
+
+    [Fact]
+    public void Curses_are_medium_fresh_and_leave_spaces_and_the_words_alone()
+    {
+        const string text = "THE GATE CLOSES";
+        var first = SecretCatalog.Curse(text, new Random(1));
+        var second = SecretCatalog.Curse(text, new Random(2));
+        Assert.NotEqual(first, second);                                    // fresh marks each time
+        Assert.Equal(text, SecretCatalog.Uncurse(first));                   // the same words underneath
+        Assert.Equal(text.Count(c => c == ' '), first.Count(c => c == ' ')); // nothing stacked on spaces
+        Assert.InRange(first.Length, text.Length + 1, text.Length * (1 + 3 * SecretCatalog.Intensity));
+        Assert.Equal("", SecretCatalog.Curse(""));
+    }
+
+    [Fact]
+    public async Task A_cursed_reply_stays_within_discords_limit()
+    {
+        await _h.Send("!I call upon " + new string('x', 3000));
+        Assert.All(_h.Texts, t => Assert.True(t.Length <= 2000, $"{t.Length} characters"));
     }
 
     [Fact]
@@ -104,8 +124,8 @@ public sealed class SecretCommandTests
     public async Task Partial_or_listed_forms_are_not_secrets(string content)
     {
         await _h.Send(content);
-        Assert.DoesNotContain(_h.Texts, t => t.StartsWith("As you command!", StringComparison.Ordinal));
-        Assert.DoesNotContain(_h.Texts, t => SecretCatalog.Summons.Any(s => t.StartsWith(s[..10], StringComparison.Ordinal)));
+        Assert.DoesNotContain(_h.Texts, t => SecretCatalog.Uncurse(t).StartsWith("As you command!", StringComparison.Ordinal));
+        Assert.DoesNotContain(_h.Texts, t => SecretCatalog.Summons.Any(s => SecretCatalog.Uncurse(t).StartsWith(s[..10], StringComparison.Ordinal)));
     }
 
     [Fact]

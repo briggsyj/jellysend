@@ -156,7 +156,8 @@ public sealed class MediaModule : IStreamControl
         }
     }
 
-    private static string Shorten(string text, int max) => text.Length <= max ? text : text[..max].TrimEnd() + "…";
+    /// <summary>User text echoed in a reply, cut to <paramref name="max"/> characters so the reply stays within Discord's limit.</summary>
+    internal static string Shorten(string text, int max = 100) => text.Length <= max ? text : text[..max].TrimEnd() + "…";
 
     private static Task PingAsync(CommandContext c) => c.ReplyAsync("🏓 Pong! Still broadcasting.");
 
@@ -287,10 +288,10 @@ public sealed class MediaModule : IStreamControl
     }
 
     private static string NotFoundText(PlayQuery query) => query.Spans is { } spans
-        ? $"🔎 {string.Join(", ", spans)} of `{query.Title}` isn't in the library."
+        ? $"🔎 {string.Join(", ", spans)} of `{Shorten(query.Title)}` isn't in the library."
         : query is { Season: { } s, Episode: { } e }
-        ? $"🔎 S{s:00}E{e:00} of `{query.Title}` isn't in the library."
-        : $"🔎 Nothing found for `{query.Text}` — check the spelling?";
+        ? $"🔎 S{s:00}E{e:00} of `{Shorten(query.Title)}` isn't in the library."
+        : $"🔎 Nothing found for `{Shorten(query.Text)}` — check the spelling?";
 
     /// <summary>Lets the first, formats-applied search of a fall-back pair skip its "nothing found" reply.</summary>
     private sealed class QuietMiss
@@ -321,7 +322,7 @@ public sealed class MediaModule : IStreamControl
 
         await c.ReplyAsync(CommandCatalog.Find(arg) is { } info
             ? info.HelpText()
-            : $"🙅 No command called `{arg.TrimStart('!')}` — `!help` lists them all.").ConfigureAwait(false);
+            : $"🙅 No command called `{Shorten(arg.TrimStart('!'))}` — `!help` lists them all.").ConfigureAwait(false);
     }
 
     private async Task SendHelpTextAsync(CommandContext c, string? prefix)
@@ -420,7 +421,7 @@ public sealed class MediaModule : IStreamControl
         var seconds = text.Length > 0 ? MediaText.ParseTimestamp(text) : null;
         if (text.Length > 0 && seconds is null)
         {
-            await c.ReplyAsync($"🙅 `{text}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`.").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 `{Shorten(text)}` isn't a time — try `1:23:45`, `1.23.45`, `1:23` (h:mm), `45m` or `90s`.").ConfigureAwait(false);
             return;
         }
 
@@ -727,7 +728,7 @@ public sealed class MediaModule : IStreamControl
         {
             var lines = new List<string>
             {
-                (choice.Length > 0 ? $"🙅 `{choice}` isn't a picture shape. " : "") + "📐 **Aspect ratio** — reply with a number or name:",
+                (choice.Length > 0 ? $"🙅 `{Shorten(choice)}` isn't a picture shape. " : "") + "📐 **Aspect ratio** — reply with a number or name:",
             };
             for (var i = 0; i < MediaText.AspectOptions.Count; i++)
             {
@@ -802,7 +803,7 @@ public sealed class MediaModule : IStreamControl
         {
             var lines = new List<string>
             {
-                (arg.Length > 0 ? $"🙅 `{arg}` isn't a resolution. " : "") + "📺 **Resolution** — reply with a number or name:",
+                (arg.Length > 0 ? $"🙅 `{Shorten(arg)}` isn't a resolution. " : "") + "📺 **Resolution** — reply with a number or name:",
             };
             for (var i = 0; i < MediaText.ResolutionOptions.Count; i++)
             {
@@ -1020,7 +1021,7 @@ public sealed class MediaModule : IStreamControl
         }
         else
         {
-            var lines = new List<string> { $"🔎 Found {results.Count} matches for `{query.Describe()}` — reply with a number:\n" };
+            var lines = new List<string> { $"🔎 Found {results.Count} matches for `{Shorten(query.Describe())}` — reply with a number:\n" };
             lines.AddRange(results.Select((it, i) => $"  `{i + 1}` [{it.Type ?? ""}] {MediaLabels.Format(it)}"));
             await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
             if (await NumberPrompt.AskAsync(c, results.Count).ConfigureAwait(false) is not { } choice)
@@ -2064,7 +2065,7 @@ public sealed class MediaModule : IStreamControl
         else
         {
             var title = audio ? "Audio track" : "Subtitles";
-            var lines = new List<string> { (arg.Length > 0 ? $"🙅 No {(audio ? "audio track" : "subtitles")} match `{arg}`. " : "") + $"{(audio ? "🎧" : "💬")} **{title}** — reply with a number or language:" };
+            var lines = new List<string> { (arg.Length > 0 ? $"🙅 No {(audio ? "audio track" : "subtitles")} match `{Shorten(arg)}`. " : "") + $"{(audio ? "🎧" : "💬")} **{title}** — reply with a number or language:" };
             for (var i = 0; i < options.Count; i++)
             {
                 var label = options[i] is { } t ? TrackLabel(t) : "Off";
@@ -2141,7 +2142,7 @@ public sealed class MediaModule : IStreamControl
         if (audioPick is null)
         {
             var choices = string.Join(", ", audioTracks.Select(t => TrackLabel(t)));
-            await c.ReplyAsync($"🙅 No audio track matches `{words[0]}` — this one has: {(choices.Length > 0 ? choices : "no audio")}.").ConfigureAwait(false);
+            await c.ReplyAsync($"🙅 No audio track matches `{Shorten(words[0])}` — this one has: {(choices.Length > 0 ? choices : "no audio")}.").ConfigureAwait(false);
             return;
         }
 
@@ -2152,7 +2153,7 @@ public sealed class MediaModule : IStreamControl
             if (TrackMatch.Find(subtitleOptions, words[1], audio: false) is not { } s)
             {
                 var choices = string.Join(", ", subtitleOptions.Skip(1).Select(t => TrackLabel(t!)));
-                await c.ReplyAsync($"🙅 No subtitles match `{words[1]}` — this one has: {(choices.Length > 0 ? choices : "none")} (or `off`).").ConfigureAwait(false);
+                await c.ReplyAsync($"🙅 No subtitles match `{Shorten(words[1])}` — this one has: {(choices.Length > 0 ? choices : "none")} (or `off`).").ConfigureAwait(false);
                 return;
             }
 

@@ -180,9 +180,9 @@ public sealed class Playlist<T>(Func<T, string> label)
             .ToList();
         return matches.Count switch
         {
-            0 => (-1, $"🔎 Nothing on the playlist matches `{target}`."),
+            0 => (-1, $"🔎 Nothing on the playlist matches `{MediaModule.Shorten(target)}`."),
             1 => (matches[0], null),
-            _ => (-1, $"🙅 `{target}` matches several items — use its number from `!playlist`."),
+            _ => (-1, $"🙅 `{MediaModule.Shorten(target)}` matches several items — use its number from `!playlist`."),
         };
     }
 
