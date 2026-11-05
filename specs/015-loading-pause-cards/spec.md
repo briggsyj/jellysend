@@ -7,7 +7,7 @@
 ## Decisions
 
 - The cards live in the repo under `assets/cards/` (`loading.*`, `paused.*`, credited in its README) and are copied into
-  the image as `/app/cards/`; the user picked a Creative Commons test card (IRIB, FuBK version) instead of the BBC /
+  the image as `/app/cards/`; the user supplied a Creative Commons FuBK-style test card; the pause card is a generated pause symbol (CC0) instead of the BBC /
   stock images first suggested. `STREAM_LOADING_IMAGE` / `STREAM_PAUSED_IMAGE` override with a local path or `none`.
   Nothing is downloaded at startup.
 - Each image is encoded once per encoder setup and frame rate into a 2 s looping H.264 clip with a keyframe every
@@ -24,5 +24,6 @@
 - [x] T001 `StillClip` (encode, parameter sets, loop), `StillCursor`, `StillImages` cache
 - [x] T002 `VideoPlayer`: loading card during pre-roll, pause card while held, keyframe switch-back
 - [x] T003 Options + bundled cards (`assets/cards`, Dockerfile), README / `.env.example` / configuration contract
-- [ ] T005 Add `assets/cards/loading.jpg` (IRIB FuBK test card) and a `paused.*` card with their licences
+- [x] T005 `assets/cards/loading.png` (FuBK-style test card supplied by the maintainer) and `paused.png` (generated
+  pause symbol, CC0), credited in `assets/cards/README.md`; a test checks both exist and encode
 - [x] T004 Tests: player timing with fake clips, encoder arguments and caching, real FFmpeg encode

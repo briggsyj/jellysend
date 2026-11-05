@@ -103,6 +103,27 @@ public sealed class StillImagesTests : IDisposable
         Assert.All(clip.Frames.Where(StillClip.IsKeyframe), f => Assert.True(StillClip.HasSps(f)));
     }
 
+    [Theory]
+    [InlineData("loading.png")]
+    [InlineData("paused.png")]
+    public void Bundled_cards_exist_and_encode(string file)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "assets", "cards")))
+        {
+            dir = dir.Parent;
+        }
+
+        Assert.NotNull(dir);
+        var path = Path.Combine(dir.FullName, "assets", "cards", file);
+        Assert.True(File.Exists(path), $"{path} is missing");
+        var encoder = SoftwareEncoder();
+        Assert.SkipUnless(encoder is not null, "ffmpeg with libopenh264 or libx264 not installed");
+        var clip = StillClip.Encode(SystemProcessRunner.Instance, path, encoder!, 24000.0 / 1001.0, _dir);
+        Assert.NotNull(clip);
+        Assert.InRange(clip.Frames.Count, 46, 50);
+    }
+
     private static EncoderConfig? SoftwareEncoder()
     {
         try

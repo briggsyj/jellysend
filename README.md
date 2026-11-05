@@ -145,8 +145,8 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_BUFFER_SECONDS` | No | `8` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
 | `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
-| `STREAM_LOADING_IMAGE` | No | bundled card | Image shown on the stream while it loads (start and after a jump). Default: the card in [`assets/cards/`](assets/cards/), built into the image. A file path in the container overrides it; `none` turns it off. |
-| `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused; same rules. |
+| `STREAM_LOADING_IMAGE` | No | bundled card | Image shown on the stream while it loads (start and after a jump). Default: the test card in [`assets/cards/`](assets/cards/), built into the image. A file path in the container overrides it; `none` turns it off. |
+| `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused (default: the pause symbol in `assets/cards/`); same rules. |
 | `MAX_STREAM_HOURS` | No | `12` | Longest a stream plays, counted from a `!play` (through auto-advance and skips). Then it stops, staying in voice and keeping the playlist; `!play` starts again. 0–168, 0 = no limit. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
 
