@@ -40,7 +40,7 @@ It searches your library, plays the original file and encodes it once with hardw
 
 ## Features
 
-- **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play the office s2e3 10m`
+- **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play example show s2e3 10m`
 - **Transcode once** - the bot plays the original file and encodes it itself; Jellyfin transcodes only to burn in subtitles
 - **Subtitles and audio tracks** - pick by number or language (`!subs english`, `!audio japanese`); the choice is remembered by language
 - **Source frame rate** - streams follow the film's own frame rate (23.976 stays 23.976) up to `STREAM_FPS`
@@ -184,7 +184,7 @@ Every command works as a short form (`!play`) and under `!media` (`!media play`)
 
 | Command | Description |
 |---|---|
-| `!play <title>` | Search and play, e.g. `!play inception` |
+| `!play <title>` | Search and play, e.g. `!play big buck bunny` |
 | `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
 | `!play <show>` | Pick season → episode |
 | `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |

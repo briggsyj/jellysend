@@ -2,13 +2,12 @@
 
 **Feature Branch**: `015-loading-pause-cards` (implemented on `claude/busy-meitner-7979sz`)
 **Status**: Implemented
-**Input**: "When the stream is loading, display BBC test card f … When the stream is paused, display this image on stream"
+**Input**: "When the stream is loading, display a test card … When the stream is paused, display a pause image on stream"
 
 ## Decisions
 
 - The cards live in the repo under `assets/cards/` (`loading.*`, `paused.*`, credited in its README) and are copied into
-  the image as `/app/cards/`; the user supplied a Creative Commons FuBK-style test card; the pause card is a generated pause symbol (CC0) instead of the BBC /
-  stock images first suggested. `STREAM_LOADING_IMAGE` / `STREAM_PAUSED_IMAGE` override with a local path or `none`.
+  the image as `/app/cards/`; the user supplied a Creative Commons FuBK-style test card; the pause card is a generated pause symbol (CC0). `STREAM_LOADING_IMAGE` / `STREAM_PAUSED_IMAGE` override with a local path or `none`.
   Nothing is downloaded at startup.
 - Each image is encoded once per encoder setup and frame rate into a 2 s looping H.264 clip with a keyframe every
   second (SPS/PPS on every keyframe), with the stream's own encoder, box and bitrate; 4:4:4 / RGB images are converted

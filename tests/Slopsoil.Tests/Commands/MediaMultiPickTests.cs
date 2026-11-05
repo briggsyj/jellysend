@@ -7,19 +7,19 @@ namespace Slopsoil.Tests.Commands;
 /// <summary>Spec 014: several episodes from one picker reply (<c>2,5,8</c>, <c>3-6</c>).</summary>
 public sealed class MediaMultiPickTests
 {
-    private const string Prompt = "**The Office — Season 1**. Pick an episode, or several in order (`2,5,8`, `3-6`):";
+    private const string Prompt = "**Example Show — Season 1**. Pick an episode, or several in order (`2,5,8`, `3-6`):";
 
     private readonly MediaHarness _h = new();
 
     public MediaMultiPickTests()
     {
-        _h.Library.Search["office"] = [new MediaItem { Id = "s1", Name = "The Office", Type = "Series" }];
+        _h.Library.Search["example"] = [new MediaItem { Id = "s1", Name = "Example Show", Type = "Series" }];
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1", Name = "Season 1", IndexNumber = 1 }];
-        _h.Library.Episodes["se1"] = [.. Enumerable.Range(1, 6).Select(n => MediaHarness.Episode($"e{n}", "The Office", 1, n, $"Ep{n}"))];
+        _h.Library.Episodes["se1"] = [.. Enumerable.Range(1, 6).Select(n => MediaHarness.Episode($"e{n}", "Example Show", 1, n, $"Ep{n}"))];
         _h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
     }
 
-    private static string Label(int n) => $"The Office — S01E{n:00} — Ep{n}";
+    private static string Label(int n) => $"Example Show — S01E{n:00} — Ep{n}";
 
     private string[] Queue() => [.. _h.Texts[^1].Split('\n').Skip(1).Select(l => l.Trim())];
 
@@ -28,7 +28,7 @@ public sealed class MediaMultiPickTests
     {
         await _h.Send("!queue film");                 // idle: plays now
         await _h.Send("!queue film");                 // queued #1
-        var run = _h.Start("!play office");
+        var run = _h.Start("!play example");
         await _h.Until(() => _h.Texts.Any(t => t.StartsWith(Prompt, StringComparison.Ordinal)), "the episode picker");
         await _h.Answer("5, 2,4");
         await run;
@@ -42,7 +42,7 @@ public sealed class MediaMultiPickTests
     public async Task Queue_appends_every_pick_in_order_including_ranges()
     {
         await _h.Send("!play film");
-        var run = _h.Start("!queue office");
+        var run = _h.Start("!queue example");
         await _h.Until(() => _h.Texts.Any(t => t.StartsWith(Prompt, StringComparison.Ordinal)), "the episode picker");
         await _h.Answer("2-4,1");
         await run;
@@ -52,7 +52,7 @@ public sealed class MediaMultiPickTests
     [Fact]
     public async Task Idle_queue_plays_the_first_pick_and_queues_the_rest()
     {
-        var run = _h.Start("!queue office");
+        var run = _h.Start("!queue example");
         await _h.Until(() => _h.Texts.Any(t => t.StartsWith(Prompt, StringComparison.Ordinal)), "the episode picker");
         await _h.Answer("3,6");
         await run;
@@ -69,7 +69,7 @@ public sealed class MediaMultiPickTests
             await _h.Send("!queue film");
         }
 
-        var run = _h.Start("!queue office");
+        var run = _h.Start("!queue example");
         await _h.Until(() => _h.Texts.Any(t => t.StartsWith(Prompt, StringComparison.Ordinal)), "the episode picker");
         await _h.Answer("1-4");
         await run;
@@ -81,7 +81,7 @@ public sealed class MediaMultiPickTests
     [Fact]
     public async Task A_bad_list_cancels_with_a_hint()
     {
-        var run = _h.Start("!play office");
+        var run = _h.Start("!play example");
         await _h.Until(() => _h.Texts.Any(t => t.StartsWith(Prompt, StringComparison.Ordinal)), "the episode picker");
         await _h.Answer("2,9");
         await run;

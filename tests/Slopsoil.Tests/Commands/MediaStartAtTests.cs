@@ -9,26 +9,26 @@ public sealed class MediaStartAtTests
 
     public MediaStartAtTests()
     {
-        _h.Library.Search["inception"] = [MediaHarness.Movie("i", "Inception", 2010, (2L * 3600 + 28 * 60) * 10_000_000)];
-        _h.Library.Search["blade runner 2049"] = [MediaHarness.Movie("b", "Blade Runner 2049", 2017)];
-        _h.Library.Search["2:22"] = [MediaHarness.Movie("t", "2:22", 2017)];
+        _h.Library.Search["sample film"] = [MediaHarness.Movie("i", "Sample Film", 2010, (2L * 3600 + 28 * 60) * 10_000_000)];
+        _h.Library.Search["space voyage 2049"] = [MediaHarness.Movie("b", "Space Voyage 2049", 2017)];
+        _h.Library.Search["3:33"] = [MediaHarness.Movie("t", "3:33", 2017)];
     }
 
     [Theory]
-    [InlineData("!play inception 1:12:30", 4350.0, "⏩ starting at 1:12:30")]
-    [InlineData("!play inception 1.12", 4320.0, "⏩ starting at 1:12:00")]
-    [InlineData("!play inception 45m", 2700.0, "⏩ starting at 0:45:00")]
+    [InlineData("!play sample film 1:12:30", 4350.0, "⏩ starting at 1:12:30")]
+    [InlineData("!play sample film 1.12", 4320.0, "⏩ starting at 1:12:00")]
+    [InlineData("!play sample film 45m", 2700.0, "⏩ starting at 0:45:00")]
     public async Task Starts_directly_at_the_time(string command, double offset, string reply)
     {
         await _h.Send(command);
         Assert.Equal(offset, _h.Current.Request.StartOffset);
-        Assert.Equal([reply, "checking stream…", "📺 **Inception (2010)** (go-live)"], _h.Texts);
+        Assert.Equal([reply, "checking stream…", "📺 **Sample Film (2010)** (go-live)"], _h.Texts);
     }
 
     [Fact]
     public async Task Zero_time_plays_from_the_beginning_without_a_start_reply()
     {
-        await _h.Send("!play inception 0:00");
+        await _h.Send("!play sample film 0:00");
         Assert.Equal(0.0, _h.Current.Request.StartOffset);
         Assert.Equal("checking stream…", _h.Texts[0]);
     }
@@ -36,15 +36,15 @@ public sealed class MediaStartAtTests
     [Fact]
     public async Task Picker_and_episode_code_and_seasons_keep_the_time()
     {
-        _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien", 1979), MediaHarness.Movie("a2", "Aliens", 1986)];
-        var run = _h.Start("!play alien 0:45");
+        _h.Library.Search["creature"] = [MediaHarness.Movie("a1", "Creature", 1979), MediaHarness.Movie("a2", "Creatures", 1986)];
+        var run = _h.Start("!play creature 0:45");
         await _h.Answer("2");
         await run;
-        Assert.Equal(("Aliens (1986)", 2700.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
+        Assert.Equal(("Creatures (1986)", 2700.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
 
-        _h.Library.Search["the office 2x3"] = [MediaHarness.Episode("e", "The Office", 2, 3, "Office Olympics")];
-        await _h.Send("!play the office s02e03 0:11");
-        Assert.Equal(("The Office — S02E03 — Office Olympics", 660.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
+        _h.Library.Search["example show 2x3"] = [MediaHarness.Episode("e", "Example Show", 2, 3, "Field Day")];
+        await _h.Send("!play example show s02e03 0:11");
+        Assert.Equal(("Example Show — S02E03 — Field Day", 660.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
 
         _h.Library.Search["show"] = [new MediaItem { Id = "s", Name = "Show", Type = "Series" }];
         _h.Library.Seasons["s"] = [new MediaItem { Id = "se", Name = "Season 1" }];
@@ -56,8 +56,8 @@ public sealed class MediaStartAtTests
     }
 
     [Theory]
-    [InlineData("!play blade runner 2049", "Blade Runner 2049 (2017)")]
-    [InlineData("!play 2:22", "2:22 (2017)")]
+    [InlineData("!play space voyage 2049", "Space Voyage 2049 (2017)")]
+    [InlineData("!play 3:33", "3:33 (2017)")]
     public async Task Titles_ending_in_numbers_play_from_the_beginning(string command, string title)
     {
         await _h.Send(command);
@@ -84,8 +84,8 @@ public sealed class MediaStartAtTests
     [Fact]
     public async Task Past_the_end_is_rejected_and_nothing_starts()
     {
-        await _h.Send("!play inception 9:00:00");
-        await _h.Send("!play inception 2:28");
+        await _h.Send("!play sample film 9:00:00");
+        await _h.Send("!play sample film 2:28");
         Assert.Equal(["9:00:00 is past the end (2:28:00)", "2:28:00 is past the end (2:28:00)"], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
@@ -93,8 +93,8 @@ public sealed class MediaStartAtTests
     [Fact]
     public async Task Picker_cancel_sends_no_start_message()
     {
-        _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien"), MediaHarness.Movie("a2", "Aliens")];
-        var run = _h.Start("!play alien 0:45");
+        _h.Library.Search["creature"] = [MediaHarness.Movie("a1", "Creature"), MediaHarness.Movie("a2", "Creatures")];
+        var run = _h.Start("!play creature 0:45");
         await _h.Answer("!ping");
         await run;
         Assert.DoesNotContain(_h.Texts, t => t.StartsWith("⏩", StringComparison.Ordinal));
@@ -104,9 +104,9 @@ public sealed class MediaStartAtTests
     [Fact]
     public async Task Queue_does_not_take_a_start_time()
     {
-        _h.Library.Search["inception 1:12"] = [MediaHarness.Movie("q", "Inception 1:12 Cut", 2011)];
-        await _h.Send("!media queue inception 1:12");
-        Assert.Equal(("Inception 1:12 Cut (2011)", 0.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
+        _h.Library.Search["sample film 1:12"] = [MediaHarness.Movie("q", "Sample Film 1:12 Cut", 2011)];
+        await _h.Send("!media queue sample film 1:12");
+        Assert.Equal(("Sample Film 1:12 Cut (2011)", 0.0), (_h.Current.Request.Title, _h.Current.Request.StartOffset));
     }
 
     [Fact]

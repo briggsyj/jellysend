@@ -183,7 +183,7 @@ public sealed class MediaModule : IStreamControl
     /// <summary>
     /// Play what <paramref name="query"/> names (spec 008): search its title (an episode or a season when given), then
     /// start at its time. When the recognised formats find nothing, the whole text is searched as a title instead
-    /// (<c>!play 9 to 5</c>, a title that looks like a time), unless the title was quoted.
+    /// (<c>!play 8 to 4</c>, a title that looks like a time), unless the title was quoted.
     /// </summary>
     private async Task PlayQueryAsync(CommandContext c, PlayQuery query)
     {

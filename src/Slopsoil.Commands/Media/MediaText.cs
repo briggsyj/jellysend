@@ -80,7 +80,7 @@ public static partial class MediaText
         **🎬 slopsoil**
 
         **Play**
-        `!play <title>` — e.g. `!play inception`
+        `!play <title>` — e.g. `!play big buck bunny`
         `!play <show> s03e05` — an episode (also `3x5`, `season 3 episode 5`)
         `!play <show>` — pick season → episode · `!play <show> s03` — pick from season 3
         `!play <title> 1:23:45` — start at a time · `!play "<title>"` — quotes: all title

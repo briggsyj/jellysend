@@ -238,23 +238,23 @@ public sealed class JellyfinClientTests
     {
         _http.Responder = _ => FakeHttpHandler.Json("""
             {"Items": [
-              {"Id": "1", "Name": "Inception", "Type": "Movie", "ProductionYear": 2010, "RunTimeTicks": 88800000000, "Extra": {"x": 1}},
-              {"Id": "2", "Name": "Pilot", "Type": "Episode", "SeriesName": "Firefly", "SeriesId": "s", "SeasonId": "s1",
+              {"Id": "1", "Name": "Sample Film", "Type": "Movie", "ProductionYear": 2010, "RunTimeTicks": 88800000000, "Extra": {"x": 1}},
+              {"Id": "2", "Name": "Pilot", "Type": "Episode", "SeriesName": "Space Show", "SeriesId": "s", "SeasonId": "s1",
                "SeasonName": "Season 1", "ParentIndexNumber": 1, "IndexNumber": 1},
-              {"Id": "3", "Name": "Firefly", "Type": "Series"}
+              {"Id": "3", "Name": "Space Show", "Type": "Series"}
             ], "TotalRecordCount": 3}
             """);
 
-        var results = await _client.SearchAsync("rick and morty", ct: Ct);
+        var results = await _client.SearchAsync("cartoon show", ct: Ct);
 
         Assert.Equal(3, results.Count);
-        Assert.Equal(new MediaItem { Id = "1", Name = "Inception", Type = "Movie", ProductionYear = 2010, RunTimeTicks = 88_800_000_000 }, results[0]);
+        Assert.Equal(new MediaItem { Id = "1", Name = "Sample Film", Type = "Movie", ProductionYear = 2010, RunTimeTicks = 88_800_000_000 }, results[0]);
         Assert.Equal(8880.0, results[0].RuntimeSeconds);
         Assert.False(results[0].IsSeries);
         Assert.Equal(
             new MediaItem
             {
-                Id = "2", Name = "Pilot", Type = "Episode", SeriesName = "Firefly", SeriesId = "s", SeasonId = "s1",
+                Id = "2", Name = "Pilot", Type = "Episode", SeriesName = "Space Show", SeriesId = "s", SeasonId = "s1",
                 SeasonName = "Season 1", ParentIndexNumber = 1, IndexNumber = 1,
             },
             results[1]);
@@ -264,11 +264,11 @@ public sealed class JellyfinClientTests
         var request = Assert.Single(_http.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal("/Items", request.Path);
-        Assert.Contains("searchTerm=rick+and+morty&", request.Url, StringComparison.Ordinal);
+        Assert.Contains("searchTerm=cartoon+show&", request.Url, StringComparison.Ordinal);
         Assert.Equal(
             new Dictionary<string, string>
             {
-                ["searchTerm"] = "rick and morty",
+                ["searchTerm"] = "cartoon show",
                 ["Recursive"] = "true",
                 ["Limit"] = "25",
                 ["IncludeItemTypes"] = "Movie,Series,Episode",
@@ -378,18 +378,18 @@ public sealed class JellyfinClientTests
         _http.Responder = r => r.Path switch
         {
             "/Items" => Items(
-                new { Id = "movie-1", Name = "Rick and Morty: The Movie", Type = "Movie" },
-                new { Id = "series-1", Name = "Rick and Morty", Type = "Series" },
-                new { Id = "series-2", Name = "Rick and Morty (Anime)", Type = "Series" }),
+                new { Id = "movie-1", Name = "Cartoon Show: The Movie", Type = "Movie" },
+                new { Id = "series-1", Name = "Cartoon Show", Type = "Series" },
+                new { Id = "series-2", Name = "Cartoon Show (Anime)", Type = "Series" }),
             "/Shows/series-1/Seasons" => Items(new { Id = "s1", IndexNumber = 1 }, new { Id = "s2", IndexNumber = 2 }),
             "/Shows/series-1/Episodes" => Items(
-                new { Id = "e1", Name = "A Rickle in Time", IndexNumber = 1, ParentIndexNumber = 2 },
-                new { Id = "e2", Name = "Mortynight Run", IndexNumber = 2, ParentIndexNumber = 2 }),
+                new { Id = "e1", Name = "Time Trouble", IndexNumber = 1, ParentIndexNumber = 2 },
+                new { Id = "e2", Name = "Night Run", IndexNumber = 2, ParentIndexNumber = 2 }),
             "/Shows/series-2/Seasons" => Items(new { Id = "a1", IndexNumber = 1 }),
             _ => throw new InvalidOperationException(r.Url),
         };
 
-        var results = await _client.FindEpisodeAsync("rick and morty", season: 2, episode: 1, Ct);
+        var results = await _client.FindEpisodeAsync("cartoon show", season: 2, episode: 1, Ct);
 
         Assert.Equal("e1", Assert.Single(results).Id);
         Assert.Equal("s2", _http.Requests.Single(r => r.Path == "/Shows/series-1/Episodes").Query["SeasonId"]);
