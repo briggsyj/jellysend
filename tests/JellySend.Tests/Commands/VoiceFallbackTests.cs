@@ -28,6 +28,9 @@ public sealed class VoiceFallbackTests
         await _h.VoiceCommands.EmptyCountdowns[5];
         Assert.False(_h.Media.IsStreaming(5));                       // nobody came: signed off
         Assert.Null(_h.Voice.Get(5));
+        Assert.Equal(                                                // said in the voice channel's own chat
+            (100UL, "📴 Nobody's been in the channel for 20 minutes — signing off. `!play` to start again."),
+            _h.Sender.Sent[^1]);
     }
 
     [Fact]
@@ -95,5 +98,27 @@ public sealed class VoiceFallbackTests
         var voice = new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams());
         Assert.DoesNotContain("sign off", voice.FallbackNotice, StringComparison.Ordinal);
         Assert.Contains("1 minute.", new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams(), emptyChannelTimeout: TimeSpan.FromMinutes(1)).FallbackNotice, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_notice_that_cannot_be_posted_does_not_stop_the_sign_off()
+    {
+        var gateway = new FakeVoiceGateway();
+        gateway.VoiceChannels[5] = [100];
+        var voice = new VoiceManager(gateway);
+        var streams = new FakeStreams();
+        var time = new JellySend.Tests.Discord.ManualTimeProvider();
+        var module = new VoiceModule(voice, streams, time: time, emptyChannelTimeout: TimeSpan.FromMinutes(1), announcer: new ThrowingSender());
+        await voice.EnsureAsync(5, 100, TestContext.Current.CancellationToken);
+        await module.WatchIfEmptyAsync(5);
+        time.Advance(TimeSpan.FromMinutes(1));
+        await module.EmptyCountdowns[5];
+        Assert.Contains((5UL, "empty-timeout"), streams.Stops);
+        Assert.Null(voice.Get(5));
+    }
+
+    private sealed class ThrowingSender : JellySend.Commands.Routing.IMessageSender
+    {
+        public Task SendAsync(ulong channelId, string content, CancellationToken ct) => throw new InvalidOperationException("403");
     }
 }

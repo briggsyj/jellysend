@@ -251,7 +251,7 @@ internal sealed class MediaHarness
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
-        VoiceCommands = new VoiceModule(Voice, Media, time: Time, emptyChannelTimeout: emptyChannelTimeout);
+        VoiceCommands = new VoiceModule(Voice, Media, time: Time, emptyChannelTimeout: emptyChannelTimeout, announcer: Sender);
         Media.Register(Router, VoiceCommands);
         Gateway.States[(5, 20)] = 50;
     }

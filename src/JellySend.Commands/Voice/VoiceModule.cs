@@ -7,8 +7,16 @@ namespace JellySend.Commands.Voice;
 
 /// <summary><c>!join</c>, <c>!leave</c>, <c>!stop</c> and auto-leave (<c>cogs/voice.py</c>).</summary>
 public sealed class VoiceModule(
-    VoiceManager voice, IStreamControl streams, ILogger<VoiceModule>? logger = null, TimeProvider? time = null, TimeSpan? emptyChannelTimeout = null)
+    VoiceManager voice, IStreamControl streams, ILogger<VoiceModule>? logger = null, TimeProvider? time = null, TimeSpan? emptyChannelTimeout = null,
+    IMessageSender? announcer = null)
 {
+    /// <summary>
+    /// Spec 026: posted in the voice channel's own text chat when the empty-channel timeout signs the bot off (that
+    /// chat is where anyone coming back to the channel will see it).
+    /// </summary>
+    public string TimeoutNotice =>
+        $"📴 Nobody's been in the channel for {Minutes(EmptyChannelTimeout)} — signing off. `!play` to start again.";
+
     /// <summary>Spec 003: how long the bot stays in a channel nobody else is in (zero = leave at once).</summary>
     public TimeSpan EmptyChannelTimeout { get; } = emptyChannelTimeout ?? TimeSpan.Zero;
 
@@ -216,6 +224,19 @@ public sealed class VoiceModule(
         }
 
         _log.LogInformation("channel {Channel} in guild {Guild} stayed empty for {Minutes} min — stopping and leaving", channel, guildId, EmptyChannelTimeout.TotalMinutes);
+        if (announcer is not null)
+        {
+            try
+            {
+                await announcer.SendAsync(channel, TimeoutNotice, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Text chat off in that voice channel, or no permission to post there: signing off matters more.
+                _log.LogWarning(ex, "could not post the timeout notice in voice channel {Channel}", channel);
+            }
+        }
+
         await streams.StopAsync(guildId, "empty-timeout");
         await voice.LeaveAsync(guildId);
     }
