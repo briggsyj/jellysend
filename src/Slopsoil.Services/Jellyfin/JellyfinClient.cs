@@ -541,6 +541,99 @@ public sealed class JellyfinClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Jellyfin's live transcode stats for <paramref name="itemId"/> on the bot's device (spec 017), from
+    /// <c>GET /Sessions</c>' <c>TranscodingInfo</c>: e.g. <c>hevc→h264 1920x1080 8.1 Mbit/s 72 fps (vaapi)</c>. Null when
+    /// Jellyfin reports none (no transcode, or it does not publish stats for this client) or the request fails.
+    /// </summary>
+    public async Task<string?> GetTranscodeStatsAsync(string itemId, CancellationToken ct = default)
+    {
+        try
+        {
+            await EnsureAuthAsync(ct).ConfigureAwait(false);
+            var q = Query(("deviceId", AuthHeader.DefaultDeviceId));
+            var sessions = await SendAsync(HttpMethod.Get, $"/Sessions?{q}", null, AuthHeader.Build(_token), RequestTimeout, ct).ConfigureAwait(false);
+            return FormatTranscodeStats(sessions, itemId);
+        }
+        catch (JellyfinException ex)
+        {
+            _log.LogDebug("Jellyfin: transcode stats for {ItemId} unavailable: {Error}", itemId, Describe(ex));
+            return null;
+        }
+    }
+
+    /// <summary>The <c>TranscodingInfo</c> of the session playing <paramref name="itemId"/> (else the only one with any), as one line.</summary>
+    internal static string? FormatTranscodeStats(JsonElement sessions, string itemId)
+    {
+        if (sessions.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var withInfo = sessions.EnumerateArray()
+            .Where(s => s.ValueKind == JsonValueKind.Object && s.TryGetProperty("TranscodingInfo", out var t) && t.ValueKind == JsonValueKind.Object)
+            .ToList();
+        var session = withInfo.Find(s => s.TryGetProperty("NowPlayingItem", out var n) && NonEmptyString(n, "Id") is { } id
+            && string.Equals(id.Replace("-", "", StringComparison.Ordinal), itemId.Replace("-", "", StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase));
+        if (session.ValueKind != JsonValueKind.Object)
+        {
+            if (withInfo.Count != 1)
+            {
+                return null;
+            }
+
+            session = withInfo[0];
+        }
+
+        var t = session.GetProperty("TranscodingInfo");
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string? Num(string name, string format, double scale = 1) =>
+            t.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d) && d > 0
+                ? (d / scale).ToString(format, inv) : null;
+        bool Flag(string name) => t.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+        var parts = new List<string>();
+        var video = Flag("IsVideoDirect") ? "video copied" : NonEmptyString(t, "VideoCodec") is { } vc ? $"→{vc}" : null;
+        if (video is not null)
+        {
+            parts.Add(video);
+        }
+
+        if (Num("Width", "0") is { } w && Num("Height", "0") is { } h)
+        {
+            parts.Add($"{w}x{h}");
+        }
+
+        if (Num("Bitrate", "0.0", 1_000_000) is { } mbit)
+        {
+            parts.Add($"{mbit} Mbit/s");
+        }
+
+        if (Num("Framerate", "0") is { } fps)
+        {
+            parts.Add($"{fps} fps");
+        }
+
+        if (Num("CompletionPercentage", "0") is { } done)
+        {
+            parts.Add($"{done}% done");
+        }
+
+        parts.Add(NonEmptyString(t, "HardwareAccelerationType") is { } hw && !hw.Equals("none", StringComparison.OrdinalIgnoreCase)
+            ? $"hw {hw.ToLowerInvariant()}"
+            : "software");
+        if (Flag("IsAudioDirect"))
+        {
+            parts.Add("audio copied");
+        }
+        else if (NonEmptyString(t, "AudioCodec") is { } ac)
+        {
+            parts.Add($"audio →{ac}");
+        }
+
+        return string.Join(" ", parts);
+    }
+
     /// <inheritdoc/>
     public void Dispose()
     {

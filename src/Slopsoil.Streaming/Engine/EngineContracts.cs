@@ -66,6 +66,9 @@ public sealed record StreamRequest
     /// </summary>
     public string? JellyfinTranscodeReason { get; init; }
 
+    /// <summary>Fetches Jellyfin's live transcode stats line (spec 017); polled every 10 s while the stream runs.</summary>
+    public Func<CancellationToken, Task<string?>>? JellyfinStats { get; init; }
+
     /// <summary>Item runtime in seconds when known, for diagnostics.</summary>
     public double? RuntimeSeconds { get; init; }
 

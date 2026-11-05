@@ -19,27 +19,56 @@ public static class DiagnosticsFormat
         + $"| {Math.Round(s.PacketsPerSec * s.Window.TotalSeconds):F0} pkts | drops {s.SendDrops}, errors {s.SendErrors} "
         + $"| drift {Drift(s.DriftMs)}, silence {s.SilenceSteps}, skip {s.SkipSteps} "
         + $"| buffer video {s.VideoBufferSeconds:F1} s, audio {s.AudioBufferSeconds:F1} s "
-        + $"| {s.Encoder} {s.Resolution} {s.Bitrate} src={s.SourceCodec ?? "?"} pos {Clock(s.Position)}/{Runtime(s.Runtime)} "
-        + $"| source {Source(s)}"));
+        + $"| jellyfin {Jellyfin(s)} | ffmpeg {Ffmpeg(s)} | pos {Clock(s.Position)}/{Runtime(s.Runtime)}"));
 
-    /// <summary>The overlay: the four groups of spec US6 scenario 1 plus the read-ahead (spec 004), one per line.</summary>
+    /// <summary>
+    /// The overlay: playout (VIDEO, A/V, BUFFER), then each step of the chain (spec 017): JELLYFIN (original file or
+    /// its transcode, with its stats), FFMPEG (the bot's decode → encode for Discord, with its speed), the position, and
+    /// NETWORK (sending to Discord).
+    /// </summary>
     public static string Overlay(StreamDiagnosticsSnapshot s) => string.Create(
         Inv,
-        $"VIDEO   {s.FpsSent:F1}/{s.FpsTarget:0.##} fps (src {SourceFps(s)})  late {s.LateFrames} (max {s.MaxLatenessMs:F0} ms)  "
+        $"VIDEO    {s.FpsSent:F1}/{s.FpsTarget:0.##} fps (src {SourceFps(s)})  late {s.LateFrames} (max {s.MaxLatenessMs:F0} ms)  "
         + $"read-stall {s.ReadStallMs:F0} ms  {s.PacketsPerSec:F0} pkt/s\n"
-        + $"A/V     drift {Drift(s.DriftMs)}  silence {s.SilenceSteps}  skip {s.SkipSteps}\n"
-        + $"BUFFER  video {s.VideoBufferSeconds:F1} s  audio {s.AudioBufferSeconds:F1} s\n"
-        + $"STREAM  {s.Encoder} {s.Resolution.Replace(':', 'x')} {s.Bitrate}  src {s.SourceCodec ?? "?"}  "
-        + $"{Clock(s.Position)} / {Runtime(s.Runtime)}\n"
-        + $"SOURCE  {Source(s)}\n"
-        + $"NETWORK drops {s.SendDrops}  errors {s.SendErrors}");
+        + $"A/V      drift {Drift(s.DriftMs)}  silence {s.SilenceSteps}  skip {s.SkipSteps}\n"
+        + $"BUFFER   video {s.VideoBufferSeconds:F1} s  audio {s.AudioBufferSeconds:F1} s\n"
+        + $"JELLYFIN {Jellyfin(s)}\n"
+        + $"FFMPEG   {Ffmpeg(s)}\n"
+        + $"STREAM   {Clock(s.Position)} / {Runtime(s.Runtime)}  ({Encodes(s)})\n"
+        + $"NETWORK  drops {s.SendDrops}  errors {s.SendErrors}");
 
-    /// <summary>Where the picture comes from and how often it is encoded: Discord always gets the bot's encode.</summary>
-    private static string Source(StreamDiagnosticsSnapshot s) => s.Source switch
+    /// <summary>Step 1: Jellyfin hands over the original file, or transcodes it first (why, and its live stats).</summary>
+    private static string Jellyfin(StreamDiagnosticsSnapshot s) => s.Source switch
     {
         null => "?",
-        StreamDiagnostics.OriginalFile => "original file → encoded once (bot)",
-        var other => $"{other} → encoded twice (Jellyfin + bot)",
+        StreamDiagnostics.OriginalFile => "original file — not transcoded",
+        var other => $"{other}: {s.JellyfinStats ?? "stats not reported"}",
+    };
+
+    /// <summary>Step 2: the bot's FFmpeg decodes the input and encodes for Discord; speed ≈ 1.00x once the read-ahead is full.</summary>
+    private static string Ffmpeg(StreamDiagnosticsSnapshot s)
+    {
+        var text = string.Create(Inv, $"{s.SourceCodec ?? "?"} → {s.Encoder} {s.Resolution.Replace(':', 'x')} {s.Bitrate}");
+        text += s.EncodeSpeed is { } speed ? string.Create(Inv, $"  speed {speed:0.00}x") : "  speed ?";
+        if (s.EncodeFps is { } fps)
+        {
+            text += string.Create(Inv, $"  {fps:0} fps");
+        }
+
+        if (s.EncodeDupFrames is > 0 || s.EncodeDropFrames is > 0)
+        {
+            text += string.Create(Inv, $"  dup {s.EncodeDupFrames ?? 0} drop {s.EncodeDropFrames ?? 0}");
+        }
+
+        return text;
+    }
+
+    /// <summary>How many times the picture is encoded before Discord gets it.</summary>
+    private static string Encodes(StreamDiagnosticsSnapshot s) => s.Source switch
+    {
+        null => "encodes ?",
+        StreamDiagnostics.OriginalFile => "encoded once: bot",
+        _ => "encoded twice: Jellyfin + bot",
     };
 
     private static string SourceFps(StreamDiagnosticsSnapshot s) => s.SourceFps is { } f ? Video.FrameRate.Format(f) : "?";

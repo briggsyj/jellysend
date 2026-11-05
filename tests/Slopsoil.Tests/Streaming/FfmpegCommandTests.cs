@@ -32,7 +32,7 @@ public sealed class FfmpegCommandTests
         var cmd = FfmpegCommand.Build(Options("https://h/live.m3u8", Hw) with { Live = true, ProbeSize = 123 });
 
         Assert.Equal("ffmpeg", cmd[0]);
-        Assert.Equal(["-y", "-loglevel", "warning", "-max_error_rate", "1"], cmd.Skip(1).Take(5));
+        Assert.Equal(["-y", "-loglevel", "warning", "-progress", "pipe:2", "-stats_period", "2", "-max_error_rate", "1"], cmd.Skip(1).Take(9));
         Assert.DoesNotContain("-re", cmd);
         Assert.Equal("1", Opt(cmd, "-reconnect"));
         Assert.Equal("1", Opt(cmd, "-reconnect_streamed"));

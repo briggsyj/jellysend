@@ -1193,6 +1193,7 @@ public sealed class MediaModule : IStreamControl
             DebugOverlay = _debug.TryGetValue(guild, out var debug) && debug,
             SourceCodec = codec,
             JellyfinTranscodeReason = stream.IsDirect ? null : stream.TranscodeReason ?? "Jellyfin chose it",
+            JellyfinStats = stream.IsDirect ? null : ct => library.GetTranscodeStatsAsync(item.Id, ct),
             RuntimeSeconds = stream.RuntimeSeconds ?? item.RuntimeSeconds,
             SourceFps = sourceFps,
         };

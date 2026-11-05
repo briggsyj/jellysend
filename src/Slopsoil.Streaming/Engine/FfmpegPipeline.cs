@@ -61,12 +61,14 @@ internal sealed class FfmpegPipeline : IPipeline
     private StreamPcmSource? _pcm;
     private int _started;
     private string? _holdPath;
+    private readonly Func<CancellationToken, Task<string?>>? _jellyfinStats;
 
     public FfmpegPipeline(
         StreamRequest request, IGoLiveLink link, EncoderSelection encoders, SlopsoilOptions options, TimeSpan fifoTimeout, string tempDirectory, ILoggerFactory loggers,
         StillImages? stills = null)
     {
         _options = options;
+        _jellyfinStats = request.JellyfinStats;
         _fifoTimeout = fifoTimeout;
         _loggers = loggers;
         _log = loggers.CreateLogger<FfmpegPipeline>();
@@ -139,6 +141,36 @@ internal sealed class FfmpegPipeline : IPipeline
         }
 
         _ = Task.Run(RunAsync);
+        if (_jellyfinStats is { } stats)
+        {
+            _ = Task.Run(() => PollJellyfinStatsAsync(stats));
+        }
+    }
+
+    /// <summary>How often Jellyfin's transcode stats are fetched (spec 017).</summary>
+    internal static readonly TimeSpan JellyfinStatsInterval = TimeSpan.FromSeconds(10);
+
+    private async Task PollJellyfinStatsAsync(Func<CancellationToken, Task<string?>> stats)
+    {
+        try
+        {
+            while (!_stop.IsCancellationRequested && !_end.Task.IsCompleted)
+            {
+                try
+                {
+                    _diagnostics.SetJellyfinStats(await stats(_stop.Token).ConfigureAwait(false));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogDebug("Jellyfin transcode stats failed: {Error}", ex.Message);
+                }
+
+                await Task.Delay(JellyfinStatsInterval, _stop.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     public async Task StopAsync()

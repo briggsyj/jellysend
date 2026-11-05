@@ -53,6 +53,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private readonly TaskCompletionSource<VideoPlayerEnd> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _rtpFrames;
     private readonly StillCursor _still = new();
+    private readonly FfmpegProgress _progress;
     private bool _needKeyframe;
     private byte[]? _lastSps;
     private byte[]? _lastPps;
@@ -112,6 +113,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         BufferCapacity = Math.Max(1, _prerollFrames);
         Diagnostics = diagnostics ?? new StreamDiagnostics(options.Fps, options.Resolution, options.Bitrate, _time);
         Diagnostics.Clock ??= this;
+        _progress = new FfmpegProgress(Diagnostics);
         AudioFifoPath = Path.Combine(options.TempDirectory, string.Create(CultureInfo.InvariantCulture, $"slopsoil_{options.VideoSsrc}_audio.fifo"));
         OverlayPath = Path.Combine(options.TempDirectory, string.Create(CultureInfo.InvariantCulture, $"slopsoil_{options.VideoSsrc}_debug.txt"));
     }
@@ -1091,6 +1093,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
 
     private void StartStderrDrain(IMediaProcess process)
     {
+        _progress.Reset();
         var started = _time.GetTimestamp();
         var thread = new Thread(() =>
         {
@@ -1099,9 +1102,9 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
                 while (process.StandardError.ReadLine() is { } line)
                 {
                     var message = Redactor.RedactText(line.TrimEnd());
-                    if (message.Length == 0)
+                    if (message.Length == 0 || _progress.Feed(message))
                     {
-                        continue;
+                        continue; // blank, or a -progress key=value line (stats, not a warning)
                     }
 
                     if (_time.GetElapsedTime(started) < StartupNoiseWindow && StartupNoise.Any(n => message.Contains(n, StringComparison.Ordinal)))

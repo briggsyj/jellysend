@@ -80,6 +80,20 @@ public sealed record StreamDiagnosticsSnapshot
     /// <summary>Source frame rate, when known (spec 007).</summary>
     public double? SourceFps { get; init; }
 
+    /// <summary>The bot's FFmpeg: frames encoded per second (its -progress <c>fps</c>), when known (spec 017).</summary>
+    public double? EncodeFps { get; init; }
+
+    /// <summary>The bot's FFmpeg speed relative to real time (≈1.0 once the read-ahead is full), when known.</summary>
+    public double? EncodeSpeed { get; init; }
+
+    /// <summary>Frames FFmpeg duplicated / dropped to keep the constant output rate, when known.</summary>
+    public long? EncodeDupFrames { get; init; }
+
+    public long? EncodeDropFrames { get; init; }
+
+    /// <summary>Jellyfin's live transcode stats (spec 017), when it reports them.</summary>
+    public string? JellyfinStats { get; init; }
+
     /// <summary>Where the input comes from (spec 017): <see cref="StreamDiagnostics.OriginalFile"/> or "Jellyfin transcode (why)"; null = unknown.</summary>
     public string? Source { get; init; }
 
@@ -119,6 +133,8 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
     private string? _sourceCodec;
     private double? _sourceFps;
     private string? _source;
+    private (double? Fps, double? Speed, long? Dup, long? Drop) _ffmpeg;
+    private string? _jellyfinStats;
     private double? _runtime;
 
     public StreamDiagnostics(double fpsTarget, string resolution, string bitrate, TimeProvider? time = null)
@@ -160,6 +176,24 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
             _runtime = runtimeSeconds;
             _sourceFps = sourceFps;
             _source = source;
+        }
+    }
+
+    /// <summary>The latest FFmpeg <c>-progress</c> block (spec 017).</summary>
+    public void FfmpegProgress(double? fps, double? speed, long? dup, long? drop)
+    {
+        lock (_lock)
+        {
+            _ffmpeg = (fps, speed, dup, drop);
+        }
+    }
+
+    /// <summary>Jellyfin's latest transcode stats line (spec 017); null = none reported.</summary>
+    public void SetJellyfinStats(string? stats)
+    {
+        lock (_lock)
+        {
+            _jellyfinStats = stats;
         }
     }
 
@@ -254,6 +288,11 @@ public sealed class StreamDiagnostics : ITransportStats, IVideoStats, IAudioStat
                 SourceCodec = _sourceCodec,
                 SourceFps = _sourceFps,
                 Source = _source,
+                EncodeFps = _ffmpeg.Fps,
+                EncodeSpeed = _ffmpeg.Speed,
+                EncodeDupFrames = _ffmpeg.Dup,
+                EncodeDropFrames = _ffmpeg.Drop,
+                JellyfinStats = _jellyfinStats,
                 Position = position,
                 Runtime = _runtime,
                 Window = window,

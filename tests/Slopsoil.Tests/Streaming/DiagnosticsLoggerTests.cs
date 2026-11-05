@@ -26,6 +26,9 @@ public sealed class DiagnosticsLoggerTests
         Bitrate = "12000k",
         SourceCodec = "hevc",
         Source = "Jellyfin transcode (burning in subtitles)",
+        JellyfinStats = "→h264 1920x1080 8.1 Mbit/s 72 fps hw vaapi audio →aac",
+        EncodeSpeed = 1.0,
+        EncodeFps = 30,
         Position = 3723.9,
         Runtime = 5400,
         Window = TimeSpan.FromSeconds(10),
@@ -38,17 +41,21 @@ public sealed class DiagnosticsLoggerTests
     {
         Assert.Equal(
             "video stats: 29.9 fps (target 30, src ?) | late 2/299 frames (max 12 ms, total 20 ms) | ffmpeg read-block 5 ms / 10.0s "
-            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s | libx264 1920:1080 12000k src=hevc pos 1:02:03/1:30:00 "
-            + "| source Jellyfin transcode (burning in subtitles) → encoded twice (Jellyfin + bot)",
+            + "| 4123 pkts | drops 1, errors 3 | drift +5 ms, silence 1, skip 2 | buffer video 5.0 s, audio 5.0 s "
+            + "| jellyfin Jellyfin transcode (burning in subtitles): →h264 1920x1080 8.1 Mbit/s 72 fps hw vaapi audio →aac "
+            + "| ffmpeg hevc → libx264 1920x1080 12000k  speed 1.00x  30 fps | pos 1:02:03/1:30:00",
             DiagnosticsFormat.LogLine(Sample));
     }
 
     [Fact]
     public void Log_line_without_audio_or_source_info()
     {
-        var line = DiagnosticsFormat.LogLine(Sample with { DriftMs = null, SourceCodec = null, Source = null, Runtime = null, Position = -1 });
+        var line = DiagnosticsFormat.LogLine(Sample with
+        {
+            DriftMs = null, SourceCodec = null, Source = null, Runtime = null, Position = -1, EncodeSpeed = null, EncodeFps = null,
+        });
         Assert.Contains("drift n/a", line);
-        Assert.EndsWith("src=? pos 0:00:00/? | source ?", line);
+        Assert.EndsWith("| jellyfin ? | ffmpeg ? → libx264 1920x1080 12000k  speed ? | pos 0:00:00/?", line);
     }
 
     [Fact]
@@ -63,16 +70,22 @@ public sealed class DiagnosticsLoggerTests
     public void Overlay_has_the_four_groups_and_the_buffer()
     {
         var lines = DiagnosticsFormat.Overlay(Sample with { DriftMs = -7.2, VideoBufferSeconds = 2.5 }).Split('\n');
-        Assert.Equal(6, lines.Length);
-        Assert.Equal("VIDEO   29.9/30 fps (src ?)  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
-        Assert.Equal("A/V     drift -7 ms  silence 1  skip 2", lines[1]);
-        Assert.Equal("BUFFER  video 2.5 s  audio 5.0 s", lines[2]);
-        Assert.Equal("STREAM  libx264 1920x1080 12000k  src hevc  1:02:03 / 1:30:00", lines[3]);
-        Assert.Equal("SOURCE  Jellyfin transcode (burning in subtitles) → encoded twice (Jellyfin + bot)", lines[4]);
-        Assert.Equal("NETWORK drops 1  errors 3", lines[5]);
+        Assert.Equal(7, lines.Length);
+        Assert.Equal("VIDEO    29.9/30 fps (src ?)  late 2 (max 12 ms)  read-stall 5 ms  412 pkt/s", lines[0]);
+        Assert.Equal("A/V      drift -7 ms  silence 1  skip 2", lines[1]);
+        Assert.Equal("BUFFER   video 2.5 s  audio 5.0 s", lines[2]);
+        Assert.Equal("JELLYFIN Jellyfin transcode (burning in subtitles): →h264 1920x1080 8.1 Mbit/s 72 fps hw vaapi audio →aac", lines[3]);
+        Assert.Equal("FFMPEG   hevc → libx264 1920x1080 12000k  speed 1.00x  30 fps", lines[4]);
+        Assert.Equal("STREAM   1:02:03 / 1:30:00  (encoded twice: Jellyfin + bot)", lines[5]);
+        Assert.Equal("NETWORK  drops 1  errors 3", lines[6]);
         Assert.Contains("drift 0 ms", DiagnosticsFormat.Overlay(Sample with { DriftMs = 0.2 }));
-        Assert.Contains("SOURCE  original file → encoded once (bot)", DiagnosticsFormat.Overlay(Sample with { Source = StreamDiagnostics.OriginalFile }));
-        Assert.Contains("SOURCE  ?", DiagnosticsFormat.Overlay(Sample with { Source = null }));
+        var direct = DiagnosticsFormat.Overlay(Sample with { Source = StreamDiagnostics.OriginalFile });
+        Assert.Contains("JELLYFIN original file — not transcoded", direct);
+        Assert.Contains("(encoded once: bot)", direct);
+        Assert.Contains("JELLYFIN Jellyfin transcode (x): stats not reported", DiagnosticsFormat.Overlay(Sample with { Source = "Jellyfin transcode (x)", JellyfinStats = null }));
+        Assert.Contains("JELLYFIN ?", DiagnosticsFormat.Overlay(Sample with { Source = null }));
+        Assert.Contains("(encodes ?)", DiagnosticsFormat.Overlay(Sample with { Source = null }));
+        Assert.Contains("speed 0.80x  19 fps  dup 3 drop 1", DiagnosticsFormat.Overlay(Sample with { EncodeSpeed = 0.8, EncodeFps = 19, EncodeDupFrames = 3, EncodeDropFrames = 1 }));
     }
 
     [Fact]
