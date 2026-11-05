@@ -204,6 +204,8 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!stop` | Stop, stay in voice |
 | `!leave` | Stop and leave the voice channel |
 | `!join` | Join your voice channel |
+
+Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's first voice channel (not the AFK one), and stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 20).
 | `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |

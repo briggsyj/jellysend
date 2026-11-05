@@ -31,6 +31,15 @@ internal sealed class FakeVoiceGateway : IVoiceGateway
 
     public ulong SelfId => 1;
 
+    /// <summary>Voice channels per guild in Discord's order (spec 023).</summary>
+    public Dictionary<ulong, List<ulong>> VoiceChannels { get; } = [];
+
+    public Exception? VoiceChannelsError { get; set; }
+
+    public Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct) =>
+        VoiceChannelsError is { } error ? Task.FromException<IReadOnlyList<ulong>>(error)
+        : Task.FromResult<IReadOnlyList<ulong>>(VoiceChannels.TryGetValue(guildId, out var list) ? list : []);
+
     public ulong? GetVoiceChannel(ulong guildId, ulong userId) => States.TryGetValue((guildId, userId), out var c) ? c : null;
 
     public (ulong Guild, ulong Channel)? FindUserVoice(ulong userId) =>

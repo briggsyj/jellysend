@@ -60,7 +60,7 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
 
         // Voice + go-live.
         var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("JellySend.Voice"));
-        var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
+        var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions, rest), loggers.CreateLogger<VoiceManager>());
         var stillLog = loggers.CreateLogger<StillImages>();
         var pipelines = new FfmpegPipelineFactory(options, loggers)
         {

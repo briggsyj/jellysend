@@ -237,7 +237,10 @@ internal sealed class MediaHarness
         await Send(content);
     }
 
-    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null)
+    /// <summary>The voice commands registered with the media module (spec 023 tests watch its countdown).</summary>
+    public VoiceModule VoiceCommands { get; }
+
+    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null, TimeSpan? emptyChannelTimeout = null)
     {
         Pipelines = new FakePipelineFactory(Connector.Log);
         Voice = new VoiceManager(Gateway);
@@ -248,7 +251,8 @@ internal sealed class MediaHarness
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
-        Media.Register(Router, new VoiceModule(Voice, Media));
+        VoiceCommands = new VoiceModule(Voice, Media, time: Time, emptyChannelTimeout: emptyChannelTimeout);
+        Media.Register(Router, VoiceCommands);
         Gateway.States[(5, 20)] = 50;
     }
 

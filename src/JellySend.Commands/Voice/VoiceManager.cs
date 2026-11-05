@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using JellySend.Commands.Routing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -34,6 +35,41 @@ public sealed class VoiceManager(IVoiceGateway gateway, ILogger<VoiceManager>? l
 
     /// <summary>True while a join/move for the guild is in progress (a move leaves before it rejoins).</summary>
     public bool IsBusy(ulong guildId) => _locks.TryGetValue(guildId, out var gate) && gate.CurrentCount == 0;
+
+    /// <summary>
+    /// Where a command from <paramref name="message"/> should broadcast (spec 023): the author's voice channel; else, in a
+    /// server channel, the bot's current channel there, or else the server's first voice channel (<c>Fallback</c>).
+    /// Null when there is nowhere (a DM from someone not in voice, or a server without voice channels).
+    /// </summary>
+    public async Task<(ulong Guild, ulong Channel, bool Fallback)?> ResolveTargetAsync(ChatMessage message, CancellationToken ct)
+    {
+        var (guild, channel) = VoiceModule.ResolveAuthorVoice(gateway, message);
+        if (guild is { } g && channel is { } ch)
+        {
+            return (g, ch, false);
+        }
+
+        if (message.GuildId is not { } server)
+        {
+            return null;
+        }
+
+        if (Get(server) is { } link)
+        {
+            return (server, link.ChannelId, false);
+        }
+
+        try
+        {
+            var channels = await gateway.GetVoiceChannelsAsync(server, ct).ConfigureAwait(false);
+            return channels.Count > 0 ? (server, channels[0], true) : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not list the voice channels of guild {Guild}", server);
+            return null;
+        }
+    }
 
     /// <summary>Return a link that is actually connected to <paramref name="channelId"/>.</summary>
     public async Task<IVoiceLink> EnsureAsync(ulong guildId, ulong channelId, CancellationToken ct)
