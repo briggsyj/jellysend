@@ -249,6 +249,7 @@ internal sealed class MediaHarness
         {
             MaxPlaytime = maxPlaytime ?? TimeSpan.FromHours(12),
             Settings = settings ?? new JellySend.Common.Config.SettingsStore(null),
+            Announcer = Sender,
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
