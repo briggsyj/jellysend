@@ -44,8 +44,8 @@ public sealed record StreamRequest
 
     public bool HasAudio { get; init; } = true;
 
-    /// <summary>Absolute input stream index of the audio to play (direct stream of the original file); null = first.</summary>
-    public int? AudioStreamIndex { get; init; }
+    /// <summary>Which of the input's own audio tracks to play (0 = first, FFmpeg <c>0:a:N</c>; spec 013); null = the first.</summary>
+    public int? AudioTrack { get; init; }
 
     public bool? Live { get; init; } = true;
 

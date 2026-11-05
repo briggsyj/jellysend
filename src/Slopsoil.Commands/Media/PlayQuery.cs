@@ -79,7 +79,7 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
 
     /// <summary>
     /// A start time word: a valid <see cref="MediaText.ParseTimestamp"/> time with a <c>:</c>/<c>.</c> separator or an
-    /// <c>h</c>/<c>m</c>/<c>s</c> unit — a bare number is a title word (<c>blade runner 2049</c>).
+    /// <c>h</c>/<c>m</c>/<c>s</c> unit — a bare number is a title word (<c>space voyage 2049</c>).
     /// </summary>
     public static double? IsTimeWord(string word)
     {
@@ -88,7 +88,7 @@ public sealed partial record PlayQuery(string Title, int? Season, int? Episode, 
         return marked && !word.All(char.IsAsciiDigit) && word.Any(char.IsAsciiDigit) ? MediaText.ParseTimestamp(word) : null;
     }
 
-    /// <summary>A human form of what was asked: <c>The Office S02E03</c>, <c>The Office season 2</c>.</summary>
+    /// <summary>A human form of what was asked: <c>Example Show S02E03</c>, <c>Example Show season 2</c>.</summary>
     public string Describe()
     {
         var sb = new StringBuilder(Title);

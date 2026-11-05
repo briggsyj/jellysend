@@ -8,19 +8,19 @@ public sealed class MediaCommandsTests
 {
     private readonly MediaHarness _h = new();
 
-    private static readonly MediaItem Office = new() { Id = "s1", Name = "The Office", Type = "Series" };
+    private static readonly MediaItem Example = new() { Id = "s1", Name = "Example Show", Type = "Series" };
 
     public MediaCommandsTests()
     {
         _h.Library.Search["film"] = [MediaHarness.Movie("f", "Film", 2000)];
-        _h.Library.Search["office"] = [Office];
+        _h.Library.Search["example"] = [Example];
         _h.Library.Seasons["s1"] =
         [
             new MediaItem { Id = "se1", Name = "Season 1", IndexNumber = 1 },
             new MediaItem { Id = "se2", Name = "Season 2", IndexNumber = 2 },
         ];
-        _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "The Office", 2, 1, "The Dundies"), MediaHarness.Episode("e2", "The Office", 2, 2, "Sexual Harassment")];
-        _h.Library.Search["office 2x1"] = [MediaHarness.Episode("e1", "The Office", 2, 1, "The Dundies")];
+        _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "Example Show", 2, 1, "Awards Night"), MediaHarness.Episode("e2", "Example Show", 2, 2, "Second Chances")];
+        _h.Library.Search["example 2x1"] = [MediaHarness.Episode("e1", "Example Show", 2, 1, "Awards Night")];
     }
 
     // ── registration and help ────────────────────────────────────────────
@@ -115,66 +115,66 @@ public sealed class MediaCommandsTests
     // ── !play formats ────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("!play office 2x1")]
-    [InlineData("!play office S02E01")]
-    [InlineData("!play s2e1 office")]
-    [InlineData("!play office season 2 episode 1")]
-    [InlineData("!play office episode 1 season 2")]
+    [InlineData("!play example 2x1")]
+    [InlineData("!play example S02E01")]
+    [InlineData("!play s2e1 example")]
+    [InlineData("!play example season 2 episode 1")]
+    [InlineData("!play example episode 1 season 2")]
     public async Task Episode_formats_find_the_episode(string content)
     {
         await _h.Send(content);
-        Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);
+        Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
     }
 
     [Fact]
     public async Task Episode_with_a_start_time()
     {
-        await _h.Send("!play office s02e01 10m");
+        await _h.Send("!play example s02e01 10m");
         Assert.Equal(600, _h.Current.Request.StartOffset);
         Assert.Contains("⏩ starting at 0:10:00", _h.Texts);
     }
 
     [Theory]
-    [InlineData("!play office s2")]
-    [InlineData("!play office Season 02")]
+    [InlineData("!play example s2")]
+    [InlineData("!play example Season 02")]
     public async Task Season_only_skips_the_season_picker(string content)
     {
         var run = _h.Start(content);
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("2");
         await run;
-        Assert.Equal("The Office — S02E02 — Sexual Harassment", _h.Current.Request.Title);
+        Assert.Equal("Example Show — S02E02 — Second Chances", _h.Current.Request.Title);
     }
 
     [Fact]
     public async Task Missing_season_says_so_and_offers_the_seasons()
     {
-        var run = _h.Start("!play office s9");
-        await _h.UntilReply("**The Office** has no season 9. **The Office** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
+        var run = _h.Start("!play example s9");
+        await _h.UntilReply("**Example Show** has no season 9. **Example Show** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("1");
         await run;
-        Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);
+        Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
     }
 
     [Fact]
     public async Task Season_only_prefers_shows_over_same_named_films()
     {
-        _h.Library.Search["office"] = [MediaHarness.Movie("m", "Office", 2015), Office];
-        var run = _h.Start("!play office s2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        _h.Library.Search["example"] = [MediaHarness.Movie("m", "Example", 2015), Example];
+        var run = _h.Start("!play example s2");
+        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` E02 — Second Chances");
         await _h.Answer("1");
         await run;
-        Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);
+        Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
     }
 
     [Fact]
     public async Task Formats_that_find_nothing_fall_back_to_the_whole_text()
     {
-        _h.Library.Search["the 4:30 movie"] = [MediaHarness.Movie("m", "The 4:30 Movie", 2024)];
-        await _h.Send("!play the 4:30 movie");
-        Assert.Equal("The 4:30 Movie (2024)", _h.Current.Request.Title);
+        _h.Library.Search["the 4:30 sample"] = [MediaHarness.Movie("m", "The 4:30 Sample", 2024)];
+        await _h.Send("!play the 4:30 sample");
+        Assert.Equal("The 4:30 Sample (2024)", _h.Current.Request.Title);
         Assert.Equal(0, _h.Current.Request.StartOffset); // the time was part of the title
         Assert.DoesNotContain(_h.Texts, t => t.StartsWith("nothing found", StringComparison.Ordinal));
     }
@@ -215,9 +215,9 @@ public sealed class MediaCommandsTests
     {
         await _h.Send("!play film");
         _h.Library.Search["film 1:00"] = [MediaHarness.Movie("w", "Film One", 2001)];
-        await _h.Send("!queue office 2x1");
+        await _h.Send("!queue example 2x1");
         await _h.Send("!queue film 1:00");
-        Assert.Equal(["➕ queued **The Office — S02E01 — The Dundies** at #1", "➕ queued **Film One (2001)** at #2"], _h.Texts.TakeLast(2));
+        Assert.Equal(["➕ queued **Example Show — S02E01 — Awards Night** at #1", "➕ queued **Film One (2001)** at #2"], _h.Texts.TakeLast(2));
     }
 
     // ── casual names for pickers ─────────────────────────────────────────
@@ -244,7 +244,7 @@ public sealed class MediaCommandsTests
     [InlineData("cinemascope", 3)]
     [InlineData("6", null)]
     [InlineData("0", null)]
-    [InlineData("rahman", null)]
+    [InlineData("sample", null)]
     [InlineData(" ", null)]
     public void Find_aspect(string text, int? index) => Assert.Equal(index, MediaText.FindAspect(text));
 }

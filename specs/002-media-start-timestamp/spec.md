@@ -15,7 +15,7 @@
 - Q: Which edition gets the feature? → A: The .NET edition only (it supersedes the Python bot, which is not
   changed).
 - Q: Should `!media queue <title> <time>` remember a start time? → A: No. Queued items always start from the
-  beginning; `!media queue inception 1:12` searches for "inception 1:12" as today.
+  beginning; `!media queue sample film 1:12` searches for "sample film 1:12" as today.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -23,7 +23,7 @@
 
 A friend of the bot wants to finish a film the group stopped watching last night. Instead of starting it with
 `!media <title>` and then sending `!media resume 1:12:30` once it is on screen, they type
-`!media inception 1:12:30` and the screenshare starts directly at 1 h 12 m 30 s.
+`!media sample film 1:12:30` and the screenshare starts directly at 1 h 12 m 30 s.
 
 **Why this priority**: It is the whole feature — one command instead of two, no wasted start-up of the
 opening minutes, and viewers never see the beginning flash by.
@@ -34,20 +34,20 @@ from 10 minutes in, with sound in sync.
 **Acceptance Scenarios**:
 
 1. **Given** the user is in a voice channel and the search matches one movie, **When** they send
-   `!media inception 1:12:30`, **Then** the bot replies that it is starting at `1:12:30` and the stream's
+   `!media sample film 1:12:30`, **Then** the bot replies that it is starting at `1:12:30` and the stream's
    first frame is at that position.
-2. **Given** the same, **When** they send `!media inception 1.12` (dot separators, seconds omitted),
+2. **Given** the same, **When** they send `!media sample film 1.12` (dot separators, seconds omitted),
    **Then** playback starts at 1 h 12 m 0 s.
-3. **Given** the search matches several items, **When** the user sends `!media alien 0:45` and picks one
+3. **Given** the search matches several items, **When** the user sends `!media creature 0:45` and picks one
    from the numbered list, **Then** the picked item starts at 0 h 45 m.
-4. **Given** nothing is playing, **When** the user sends `!media inception` (no time), **Then** behaviour is
+4. **Given** nothing is playing, **When** the user sends `!media sample film` (no time), **Then** behaviour is
    exactly as today: playback starts from the beginning.
 
 ---
 
 ### User Story 2 - Start an episode part-way through (Priority: P2)
 
-The user names a specific episode and a time: `!media the office s02e03 0:11`, or names a show, walks the
+The user names a specific episode and a time: `!media example show s02e03 0:11`, or names a show, walks the
 season and episode pickers, and the chosen episode starts at the given time.
 
 **Why this priority**: Episodes are the other half of the library; same value, slightly more paths.
@@ -57,17 +57,17 @@ followed by season and episode picks starts the picked episode at 5 minutes.
 
 **Acceptance Scenarios**:
 
-1. **Given** the episode exists, **When** the user sends `!media the office s02e03 0:11`, **Then** S02E03
+1. **Given** the episode exists, **When** the user sends `!media example show s02e03 0:11`, **Then** S02E03
    starts at 0 h 11 m.
-2. **Given** a show with several seasons, **When** the user sends `!media the office 0:11` and picks a
+2. **Given** a show with several seasons, **When** the user sends `!media example show 0:11` and picks a
    season and an episode, **Then** the picked episode starts at 0 h 11 m.
 
 ---
 
 ### User Story 3 - Titles that end in numbers keep working (Priority: P1)
 
-Users who play titles that end in, or consist of, numbers (*1917*, *Apollo 13*, *Blade Runner 2049*,
-*Ocean's 11*, *2:22*) get exactly what they get today.
+Users who play titles that end in, or consist of, numbers (*1066*, *Mission 13*, *Space Voyage 2049*,
+*Ocean's 11*, *3:33*) get exactly what they get today.
 
 **Why this priority**: Existing commands must not break (constitution Principle I); a wrong guess here
 would play the wrong title or the right title at a nonsense position.
@@ -76,11 +76,11 @@ would play the wrong title or the right title at a nonsense position.
 
 **Acceptance Scenarios**:
 
-1. **Given** a library with *Blade Runner 2049*, **When** the user sends `!media blade runner 2049`,
-   **Then** it searches for "blade runner 2049" and starts from the beginning (a bare number is never a
+1. **Given** a library with *Space Voyage 2049*, **When** the user sends `!media space voyage 2049`,
+   **Then** it searches for "space voyage 2049" and starts from the beginning (a bare number is never a
    start time).
-2. **Given** a library with the film *2:22*, **When** the user sends `!media 2:22`, **Then** it searches
-   for "2:22" (a time with no title in front of it is the title).
+2. **Given** a library with the film *3:33*, **When** the user sends `!media 3:33`, **Then** it searches
+   for "3:33" (a time with no title in front of it is the title).
 3. **Given** a library where a title genuinely ends in a time-like word and searching without it finds
    nothing, **When** the user sends that full title, **Then** the bot searches for the full text and
    starts from the beginning.
@@ -89,9 +89,9 @@ would play the wrong title or the right title at a nonsense position.
 
 ### Edge Cases
 
-- **Time at or past the end**: `!media inception 9:00:00` for a 2 h 28 m film → the bot replies
+- **Time at or past the end**: `!media sample film 9:00:00` for a 2 h 28 m film → the bot replies
   `9:00:00 is past the end (2:28:00)` (the same message as `!media resume`) and does not start it.
-- **Invalid time-looking text**: `!media inception 1:75` — not a valid time (minutes ≥ 60) so the whole
+- **Invalid time-looking text**: `!media sample film 1:75` — not a valid time (minutes ≥ 60) so the whole
   text is treated as the title, as today.
 - **Picker cancelled or timed out**: no playback, no time message, same replies as today.
 - **Time `0:00`**: allowed; plays from the beginning.
@@ -156,6 +156,6 @@ would play the wrong title or the right title at a nonsense position.
 - Users with Friend access (who can use `!media` today) can use this; no new permission.
 - "Immediately" means the stream starts at the time — not that it starts at 0 and then seeks.
 - Reusing `!media resume`'s time rules (and its past-the-end message) keeps one mental model for users.
-- The trade-off in FR-003 (bare numbers are titles) is accepted: `!media inception 72` will search for
-  "inception 72"; users write `1:12` or `72m` instead.
+- The trade-off in FR-003 (bare numbers are titles) is accepted: `!media sample film 72` will search for
+  "sample film 72"; users write `1:12` or `72m` instead.
 - Applies to Jellyfin library items only; there is no live/TV source in the Jellyfin-first edition.

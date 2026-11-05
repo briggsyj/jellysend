@@ -43,13 +43,13 @@ server and Discord server, request a movie and an episode, and watch both with s
 
 **Acceptance Scenarios**:
 
-1. **Given** the bot is configured and a friend is in a voice channel, **When** they type `!media inception`
+1. **Given** the bot is configured and a friend is in a voice channel, **When** they type `!media sample film`
    and the search has one result, **Then** within 15 seconds the bot is in their channel and a screenshare
    of the film with audio is visible to every viewer.
 2. **Given** a search returns several results, **When** the friend replies with a listed number,
    **Then** that item plays; a non-number, an out-of-range number or 10 s of silence cancels with a message.
-3. **Given** `!media breaking bad` (a series), **When** the friend picks a season then an episode,
-   **Then** that episode plays; `!media breaking bad s03e05` plays it directly.
+3. **Given** `!media drama show` (a series), **When** the friend picks a season then an episode,
+   **Then** that episode plays; `!media drama show s03e05` plays it directly.
 4. **Given** the voice channel uses Discord's end-to-end encryption for voice/video, **When** an item plays,
    **Then** viewers see and hear it normally.
 5. **Given** the item has no audio track, **When** it plays, **Then** video plays with silence (no failure).
@@ -82,7 +82,7 @@ commands and they stress the streaming pipeline's restart and A/V-sync behaviour
 4. **Given** an item is playing, **When** `!media stop` (or `!leave`), **Then** the screenshare ends, the
    playlist is cleared and the bot leaves the voice channel.
 5. **Given** the last human leaves the voice channel, **Then** the bot stops and leaves on its own.
-6. **Given** a title that starts with a command word (`!media stop making sense`), **Then** it is searched,
+6. **Given** a title that starts with a command word (`!media stop the sample`), **Then** it is searched,
    not treated as the command.
 
 ---

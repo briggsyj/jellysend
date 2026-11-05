@@ -13,12 +13,12 @@ public sealed class MediaPlayTests
     [Fact]
     public async Task Single_match_plays_in_the_authors_channel()
     {
-        _h.Library.Search["inception"] = [MediaHarness.Movie("m1", "Inception")];
-        await _h.Send("!play inception");
+        _h.Library.Search["sample film"] = [MediaHarness.Movie("m1", "Sample Film")];
+        await _h.Send("!play sample film");
 
-        Assert.Equal(["checking stream…", "📺 **Inception (2010)** (go-live)"], _h.Texts);
+        Assert.Equal(["checking stream…", "📺 **Sample Film (2010)** (go-live)"], _h.Texts);
         var p = _h.Current;
-        Assert.Equal("Inception (2010)", p.Request.Title);
+        Assert.Equal("Sample Film (2010)", p.Request.Title);
         Assert.Equal("http://jf/videos/m1/variant.m3u8?api_key=SECRET", p.Request.Url);
         Assert.True(p.Request.HasAudio);
         Assert.Equal(10_000_000, p.Request.ProbeSize);
@@ -48,8 +48,8 @@ public sealed class MediaPlayTests
     public async Task Unconfigured_library_says_so_but_help_still_works()
     {
         var h = new MediaHarness(configured: false);
-        await h.Send("!play inception");
-        await h.Send("!media queue inception");
+        await h.Send("!play sample film");
+        await h.Send("!media queue sample film");
         await h.Send("!media");
         Assert.StartsWith("Jellyfin is not configured.", h.Texts[0], StringComparison.Ordinal);
         Assert.StartsWith("Jellyfin is not configured.", h.Texts[1], StringComparison.Ordinal);
@@ -59,19 +59,19 @@ public sealed class MediaPlayTests
     [Fact]
     public async Task Picker_lists_results_and_plays_the_choice()
     {
-        _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien", 1979), MediaHarness.Movie("a2", "Aliens", 1986)];
-        var run = _h.Start("!play alien");
-        await _h.UntilReply("Found 2 result(s) for `alien`. Pick a number:\n\n  `1` [Movie] Alien (1979)\n  `2` [Movie] Aliens (1986)");
+        _h.Library.Search["creature"] = [MediaHarness.Movie("a1", "Creature", 1979), MediaHarness.Movie("a2", "Creatures", 1986)];
+        var run = _h.Start("!play creature");
+        await _h.UntilReply("Found 2 result(s) for `creature`. Pick a number:\n\n  `1` [Movie] Creature (1979)\n  `2` [Movie] Creatures (1986)");
         await _h.Answer("2");
         await run;
-        Assert.Equal("Aliens (1986)", _h.Current.Request.Title);
+        Assert.Equal("Creatures (1986)", _h.Current.Request.Title);
     }
 
     [Fact]
     public async Task Picker_timeout_cancels()
     {
-        _h.Library.Search["alien"] = [MediaHarness.Movie("a1", "Alien"), MediaHarness.Movie("a2", "Aliens")];
-        var run = _h.Start("!play alien");
+        _h.Library.Search["creature"] = [MediaHarness.Movie("a1", "Creature"), MediaHarness.Movie("a2", "Creatures")];
+        var run = _h.Start("!play creature");
         await _h.Until(() => _h.Texts.Count == 1);
         // The picker may not be waiting yet: keep advancing the fake clock until it gives up.
         while (!run.IsCompleted)
@@ -88,16 +88,16 @@ public sealed class MediaPlayTests
     [Fact]
     public async Task Series_walks_season_then_episode()
     {
-        _h.Library.Search["office"] = [new MediaItem { Id = "s1", Name = "The Office", Type = "Series" }];
+        _h.Library.Search["example"] = [new MediaItem { Id = "s1", Name = "Example Show", Type = "Series" }];
         _h.Library.Seasons["s1"] = [new MediaItem { Id = "se1", Name = "Season 1" }, new MediaItem { Id = "se2", Name = "Season 2" }];
-        _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "The Office", 2, 1, "The Dundies"), new MediaItem { Id = "e2", Name = "Special", Type = "Episode", SeriesName = "The Office" }];
-        var run = _h.Start("!play office");
-        await _h.UntilReply("**The Office** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
+        _h.Library.Episodes["se2"] = [MediaHarness.Episode("e1", "Example Show", 2, 1, "Awards Night"), new MediaItem { Id = "e2", Name = "Special", Type = "Episode", SeriesName = "Example Show" }];
+        var run = _h.Start("!play example");
+        await _h.UntilReply("**Example Show** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` Special");
+        await _h.UntilReply("**Example Show — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — Awards Night\n  `2` Special");
         await _h.Answer("1");
         await run;
-        Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);
+        Assert.Equal("Example Show — S02E01 — Awards Night", _h.Current.Request.Title);
     }
 
     [Fact]
@@ -125,9 +125,9 @@ public sealed class MediaPlayTests
     [Fact]
     public async Task Episode_code_finds_the_episode_directly()
     {
-        _h.Library.Search["the office 2x3"] = [MediaHarness.Episode("e", "The Office", 2, 3, "Office Olympics")];
-        await _h.Send("!play The Office S02E03");
-        Assert.Equal("The Office — S02E03 — Office Olympics", _h.Current.Request.Title);
+        _h.Library.Search["example show 2x3"] = [MediaHarness.Episode("e", "Example Show", 2, 3, "Field Day")];
+        await _h.Send("!play Example Show S02E03");
+        Assert.Equal("Example Show — S02E03 — Field Day", _h.Current.Request.Title);
     }
 
     [Fact]
@@ -166,8 +166,8 @@ public sealed class MediaPlayTests
     public async Task Not_in_voice()
     {
         _h.Gateway.States.Clear();
-        _h.Library.Search["inception"] = [MediaHarness.Movie("m1", "Inception")];
-        await _h.Send("!play inception");
+        _h.Library.Search["sample film"] = [MediaHarness.Movie("m1", "Sample Film")];
+        await _h.Send("!play sample film");
         Assert.Equal(["you're not in a voice channel"], _h.Texts);
     }
 
@@ -235,7 +235,7 @@ public sealed class MediaPlayTests
     public async Task Old_title_and_search_forms_point_to_play()
     {
         await _h.Send("!media stop-making-sense");
-        await _h.Send("!media search inception");
+        await _h.Send("!media search sample film");
         Assert.StartsWith("-# `!media <title>` is now `!play <title>` — e.g. `!play stop-making-sense`\n\n**🎬 slopsoil**", _h.Texts[0], StringComparison.Ordinal);
         Assert.StartsWith("-# `!media search` is gone: use `!play <title>`\n\n**🎬 slopsoil**", _h.Texts[1], StringComparison.Ordinal);
         Assert.Empty(_h.Pipelines.Created);

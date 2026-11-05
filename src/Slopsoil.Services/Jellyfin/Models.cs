@@ -109,7 +109,14 @@ public sealed record DirectStreamFormat(string? VideoCodec, int? VideoBitDepth, 
 /// <param name="IsAudio">Audio track; otherwise a subtitle track.</param>
 /// <param name="Language">ISO language code if tagged (e.g. <c>eng</c>).</param>
 /// <param name="Label">Human-readable name (Jellyfin's DisplayTitle, else language + codec).</param>
-public sealed record MediaTrack(int Index, bool IsAudio, string? Language, string Label, bool IsDefault, bool IsForced);
+/// <param name="IsExternal">A separate file next to the media (not inside it): a direct stream of the original cannot play it.</param>
+/// <param name="EmbeddedOrdinal">
+/// Position among the file's own tracks of this kind (0 = first embedded audio track), what FFmpeg's <c>0:a:N</c> takes.
+/// Jellyfin's <see cref="Index"/> also counts external files (listed first by recent Jellyfin versions), so it is
+/// not the file's stream index. Null for external tracks.
+/// </param>
+public sealed record MediaTrack(
+    int Index, bool IsAudio, string? Language, string Label, bool IsDefault, bool IsForced, bool IsExternal = false, int? EmbeddedOrdinal = null);
 
 /// <summary>Which tracks to play: <see cref="AudioIndex"/> null = the source's default audio; <see cref="SubtitleIndex"/> null = no subtitles.</summary>
 public sealed record TrackSelection(int? AudioIndex, int? SubtitleIndex)

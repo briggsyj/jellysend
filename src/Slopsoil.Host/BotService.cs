@@ -61,7 +61,15 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         // Voice + go-live.
         var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("Slopsoil.Voice"));
         var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
-        var pipelines = new FfmpegPipelineFactory(options, loggers);
+        var stillLog = loggers.CreateLogger<StillImages>();
+        var pipelines = new FfmpegPipelineFactory(options, loggers)
+        {
+            // Spec 015: loading / pause cards — the ones bundled in the image (assets/cards), or local files.
+            Stills = new StillImages(
+                StillImageFiles.Resolve(options.LoadingImage, "loading", stillLog),
+                StillImageFiles.Resolve(options.PausedImage, "paused", stillLog),
+                logger: stillLog),
+        };
         var engine = new StreamEngine(new GoLiveConnector(gateway, voice, voiceOptions), pipelines, loggers.CreateLogger<StreamEngine>());
 
         // Jellyfin.
@@ -88,7 +96,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         }
 
         var guildNames = new GuildNames();
-        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>());
+        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>()) { MaxPlaytime = options.MaxPlaytime };
         var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout);
 
         media.Register(router, voiceModule); // !media … plus the !join/!leave/!stop/!help/!ping shortcuts
@@ -212,5 +220,46 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
     private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
     {
         public Task SendAsync(ulong channelId, string content, CancellationToken ct) => rest.SendMessageAsync(channelId, content, ct);
+    }
+}
+
+/// <summary>
+/// Picks the card image for <c>STREAM_LOADING_IMAGE</c> / <c>STREAM_PAUSED_IMAGE</c> (spec 015): a local file path, <c>none</c>
+/// to turn the card off, or (unset) the card bundled in the image under <c>cards/</c>. Nothing is downloaded.
+/// </summary>
+internal static class StillImageFiles
+{
+    private static readonly string[] Extensions = [".jpg", ".jpeg", ".png", ".webp"];
+
+    public static string? Resolve(string? value, string name, ILogger log)
+    {
+        if (value is not null && value.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            log.LogInformation("{Name} card turned off", name);
+            return null;
+        }
+
+        if (value is not null)
+        {
+            if (File.Exists(value))
+            {
+                log.LogInformation("{Name} card: {Path}", name, value);
+                return value;
+            }
+
+            log.LogWarning("{Name} card {Path} not found — using the bundled card if there is one", name, value);
+        }
+
+        var bundled = Extensions.Select(e => Path.Combine(AppContext.BaseDirectory, "cards", name + e)).FirstOrDefault(File.Exists);
+        if (bundled is not null)
+        {
+            log.LogInformation("{Name} card: bundled {Path}", name, bundled);
+        }
+        else
+        {
+            log.LogInformation("no {Name} card (none bundled in cards/ and STREAM_{Upper}_IMAGE unset)", name, name.ToUpperInvariant());
+        }
+
+        return bundled;
     }
 }

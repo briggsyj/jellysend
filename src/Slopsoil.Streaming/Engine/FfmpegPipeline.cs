@@ -31,10 +31,13 @@ public sealed class FfmpegPipelineFactory : IPipelineFactory
 
     public bool EncoderAvailable => _encoders.Value is not null;
 
+    /// <summary>Loading / pause cards (spec 015); null = none.</summary>
+    public StillImages? Stills { get; init; }
+
     public IPipeline Create(StreamRequest request, IGoLiveLink link)
     {
         var encoders = _encoders.Value ?? throw new InvalidOperationException("no H.264 encoder available");
-        return new FfmpegPipeline(request, link, encoders, _options, FifoTimeout, TempDirectory, _loggers);
+        return new FfmpegPipeline(request, link, encoders, _options, FifoTimeout, TempDirectory, _loggers, Stills);
     }
 }
 
@@ -60,7 +63,8 @@ internal sealed class FfmpegPipeline : IPipeline
     private string? _holdPath;
 
     public FfmpegPipeline(
-        StreamRequest request, IGoLiveLink link, EncoderSelection encoders, SlopsoilOptions options, TimeSpan fifoTimeout, string tempDirectory, ILoggerFactory loggers)
+        StreamRequest request, IGoLiveLink link, EncoderSelection encoders, SlopsoilOptions options, TimeSpan fifoTimeout, string tempDirectory, ILoggerFactory loggers,
+        StillImages? stills = null)
     {
         _options = options;
         _fifoTimeout = fifoTimeout;
@@ -89,7 +93,7 @@ internal sealed class FfmpegPipeline : IPipeline
             Fps = fps,
             Live = request.Live,
             HasAudio = request.HasAudio,
-            AudioStreamIndex = request.AudioStreamIndex,
+            AudioTrack = request.AudioTrack,
             ProbeSize = request.ProbeSize,
             StartOffset = request.StartOffset,
             Aspect = request.Aspect,
@@ -100,6 +104,8 @@ internal sealed class FfmpegPipeline : IPipeline
             Bitrate = bitrate,
             TempDirectory = tempDirectory,
             OnSegmentStarting = () => link.Dave?.RegisterVideoSsrc(link.VideoSsrc),
+            LoadingStill = stills?.Loading(encoders.Primary, fps),
+            PausedStill = stills?.Paused(encoders.Primary, fps),
         };
         _player = new VideoPlayer(playerOptions, _sender, diagnostics: _diagnostics, logger: loggers.CreateLogger<VideoPlayer>());
         Playback = new PlayerPlayback(_player, _diagnostics);

@@ -26,7 +26,7 @@
 - **FR-005**: The choice is remembered per guild by language and applied to later items (non-forced subtitle track
   preferred); no match → default audio / subtitles off. Cleared on leave.
 - **FR-006**: Nothing playing → `nothing is playing`; no tracks → `this item has no subtitles` / `this item has no
-  audio tracks to choose from`; words that aren't a number/`off` are a title search (`!media audio of the past`).
+  audio tracks to choose from`; words that aren't a number/`off` are a title search (`!media audio sample reel`).
 
 ## Success Criteria
 

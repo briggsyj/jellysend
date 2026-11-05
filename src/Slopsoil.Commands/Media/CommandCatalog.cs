@@ -29,7 +29,7 @@ public static class CommandCatalog
     public static readonly IReadOnlyList<CommandInfo> All =
     [
         new("play", [], Role.Friend, """
-            `!play <title>` — search and play, e.g. `!play inception`
+            `!play <title>` — search and play, e.g. `!play big buck bunny`
             `!play <show> s03e05` — an episode (also `3x5`, `season 3 episode 5`)
             `!play <show> s03` — pick an episode of season 3 (also `season 3`)
             `!play <title> 1:23:45` — start at a time (also `45m`, `90s`)

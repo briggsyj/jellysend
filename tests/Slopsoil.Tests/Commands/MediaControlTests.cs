@@ -87,9 +87,9 @@ public sealed class MediaControlTests
     [Fact]
     public async Task Play_with_only_a_time_jumps_while_playing_and_searches_otherwise()
     {
-        _h.Library.Search["2:22"] = [MediaHarness.Movie("t", "2:22", 2017)];
-        await _h.Send("!play 2:22");
-        Assert.Equal("2:22 (2017)", _h.Current.Request.Title); // nothing playing: a title
+        _h.Library.Search["3:33"] = [MediaHarness.Movie("t", "3:33", 2017)];
+        await _h.Send("!play 3:33");
+        Assert.Equal("3:33 (2017)", _h.Current.Request.Title); // nothing playing: a title
         _h.Sender.Sent.Clear();
         await _h.Send("!play 0:10");
         Assert.Equal(["⏩ jumping to 0:10:00"], _h.Texts);
@@ -148,12 +148,12 @@ public sealed class MediaControlTests
     [Fact]
     public async Task Aspect_takes_names_numbers_and_shows_the_picker_for_unknown_words()
     {
-        _h.Library.Search["ar rahman"] = [MediaHarness.Movie("r", "AR Rahman Live", 2015)];
+        _h.Library.Search["ar sample"] = [MediaHarness.Movie("r", "AR Sample Live", 2015)];
         await _h.Send("!media ar 9");
         await _h.Send("!ar widescreen");
         Assert.Equal(["pick a number between 1 and 5 — see `!ar`", "📐 aspect ratio set to **16:9**"], _h.Texts);
-        var run = _h.Start("!ar rahman");
-        await _h.UntilReply("`rahman` isn't a picture shape. **Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape\n`2` 16:9 — widescreen  ← current\n"
+        var run = _h.Start("!ar sample");
+        await _h.UntilReply("`sample` isn't a picture shape. **Aspect ratio** — reply with a number or name:\n`1` Original (default) — keep the media's own shape\n`2` 16:9 — widescreen  ← current\n"
             + "`3` 4:3 — classic TV\n`4` 2.39:1 — cinema scope (21:9)\n`5` 1.85:1 — theatrical widescreen");
         await _h.Answer("scope");
         await run;
@@ -204,11 +204,11 @@ public sealed class MediaControlTests
     [Fact]
     public async Task Play_takes_titles_that_start_with_command_words()
     {
-        _h.Library.Search["pause the world"] = [MediaHarness.Movie("p", "Pause The World", 2003)];
-        _h.Library.Search["play time"] = [MediaHarness.Movie("t", "Play Time", 1967)];
-        await _h.Send("!play pause the world");
-        await _h.Send("!media play play time");
-        Assert.Equal("Play Time (1967)", _h.Current.Request.Title);
+        _h.Library.Search["pause the sample"] = [MediaHarness.Movie("p", "Pause The Sample", 2003)];
+        _h.Library.Search["play sample"] = [MediaHarness.Movie("t", "Play Sample", 1967)];
+        await _h.Send("!play pause the sample");
+        await _h.Send("!media play play sample");
+        Assert.Equal("Play Sample (1967)", _h.Current.Request.Title);
         Assert.Equal(2, _h.Pipelines.Created.Count);
     }
 
@@ -216,7 +216,7 @@ public sealed class MediaControlTests
     public async Task No_argument_commands_ignore_extra_words()
     {
         await PlayFilm();
-        await _h.Send("!pause the world");
+        await _h.Send("!pause the sample");
         Assert.Equal("⏸ paused at 0:00:00", _h.Texts[^1]);
         Assert.Single(_h.Pipelines.Created);
     }
@@ -346,7 +346,7 @@ public sealed class MediaControlTests
     public async Task Voice_commands_ignore_extra_words()
     {
         await PlayFilm();
-        await _h.Send("!media leave no trace");
+        await _h.Send("!media leave the sample");
         Assert.Equal(Slopsoil.Commands.Voice.VoiceModule.LeftReply, _h.Texts[^1]);
         Assert.False(_h.Media.IsStreaming(5));
     }
@@ -356,10 +356,10 @@ public sealed class MediaControlTests
     {
         await _h.Send("!media help", author: 30);
         await _h.Send("!ping", author: 30);
-        await _h.Send("!help inception", author: 30);      // not a command: never a search
+        await _h.Send("!help sample film", author: 30);      // not a command: never a search
         await _h.Send("!play film", author: 30);           // viewers can't play
         await _h.Send("!join", author: 30);
-        Assert.Equal([MediaText.HelpText, "pong!", "no command `inception` — `!help` lists them all", "_quack_ no.", "_quack_ no."], _h.Texts);
+        Assert.Equal([MediaText.HelpText, "pong!", "no command `sample film` — `!help` lists them all", "_quack_ no.", "_quack_ no."], _h.Texts);
         Assert.Empty(_h.Pipelines.Created);
     }
 

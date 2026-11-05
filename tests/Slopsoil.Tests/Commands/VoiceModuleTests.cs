@@ -145,6 +145,27 @@ public sealed class VoiceModuleTests
     }
 
     [Fact]
+    public async Task Any_viewer_keeps_the_stream_going_after_the_person_who_started_it_leaves()
+    {
+        var (module, time) = WithTimeout(20);
+        _gateway.States[(5, 20)] = 50;   // 20 started it
+        _gateway.States[(5, 30)] = 50;   // 30 is watching
+        await Send("!join");
+        _streams.Streaming.Add(5);
+
+        _gateway.States.Remove((5, 20));
+        await module.OnVoiceStateChangedAsync(5, 20, 50, null);       // the starter leaves: the bot + 30 remain
+        Assert.False(module.EmptyCountdowns.ContainsKey(5));
+        time.Advance(TimeSpan.FromHours(1));
+        await Task.Delay(20, TestContext.Current.CancellationToken);
+        Assert.Empty(_streams.Stops);
+
+        _gateway.States.Remove((5, 30));
+        await module.OnVoiceStateChangedAsync(5, 30, 50, null);       // now only the bot: the countdown starts
+        Assert.True(module.EmptyCountdowns.ContainsKey(5));
+    }
+
+    [Fact]
     public async Task Rejoining_cancels_and_leaving_again_restarts_the_countdown()
     {
         var (module, time) = WithTimeout(20);

@@ -52,6 +52,10 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<VideoPlayerEnd> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _rtpFrames;
+    private readonly StillCursor _still = new();
+    private bool _needKeyframe;
+    private byte[]? _lastSps;
+    private byte[]? _lastPps;
     private readonly long _createdAt;
     private readonly PacketPacer? _pacer;
     private readonly int _prerollFrames;
@@ -629,7 +633,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
             Fps = Fps,
             Live = _options.Live,
             HasAudio = _options.HasAudio,
-            AudioStreamIndex = _options.AudioStreamIndex,
+            AudioTrack = _options.AudioTrack,
             ProbeSize = _options.ProbeSize,
             Offset = SegmentOffset,
             Aspect = aspect,
@@ -823,7 +827,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
     /// <summary>Player thread: wait for the pre-roll (FR-003), then send every buffered unit on the playout clock.</summary>
     private void PlayLoop(FrameBuffer<IReadOnlyList<byte[]>> frames, CancellationToken token)
     {
-        if (_prerollFrames > 0 && !frames.WaitFor(_prerollFrames, token))
+        if (_prerollFrames > 0 && !WaitForPreroll(frames, token))
         {
             return;
         }
@@ -836,6 +840,117 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Wait for the pre-roll; with a loading card (spec 015) send it at the frame rate meanwhile, so viewers see the
+    /// card instead of a black screen. False → stop.
+    /// </summary>
+    private bool WaitForPreroll(FrameBuffer<IReadOnlyList<byte[]>> frames, CancellationToken token)
+    {
+        if (_options.LoadingStill is not { } loading)
+        {
+            return frames.WaitFor(_prerollFrames, token);
+        }
+
+        var target = Math.Min(_prerollFrames, frames.Capacity);
+        var interval = TimeSpan.FromSeconds(1.0 / Fps);
+        _still.Reset();
+        while (frames.Count < target && !frames.IsCompleted)
+        {
+            if (_stopRequested || token.IsCancellationRequested || Interrupted)
+            {
+                return false;
+            }
+
+            if (loading() is { } clip)
+            {
+                SendStill(clip);
+                _needKeyframe = true; // the film starts at a keyframe; make sure it carries SPS/PPS
+            }
+
+            if (Sleep(interval, token))
+            {
+                return false;
+            }
+        }
+
+        return !token.IsCancellationRequested;
+    }
+
+    /// <summary>A card frame: same RTP clock as the film, outside the segment's frame count (position / A/V clock).</summary>
+    private void SendStill(StillClip clip) => _sink.SendVideoFrame(_still.Next(clip), NextTimestampIncrement(), _pacer);
+
+    /// <summary>
+    /// Hold for a pause; with a pause card (spec 015) send it at the frame rate meanwhile. True when the gate opened,
+    /// false on stop / seek.
+    /// </summary>
+    private bool HoldForPause(CancellationToken token)
+    {
+        if (_options.PausedStill is not { } paused)
+        {
+            return Pause.WaitOpen(Timeout.InfiniteTimeSpan, token);
+        }
+
+        var interval = TimeSpan.FromSeconds(1.0 / Fps);
+        _still.Reset();
+        while (true)
+        {
+            if (paused() is { } clip)
+            {
+                SendStill(clip);
+                _needKeyframe = true; // the viewers' decoder now holds the card: resume only at a film keyframe
+            }
+
+            if (Pause.WaitOpen(interval, token))
+            {
+                return true;
+            }
+
+            if (token.IsCancellationRequested || _stopRequested || Interrupted)
+            {
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// What to send for film frame <paramref name="frame"/>: after a pause card, the card continues until the film's
+    /// next keyframe (given the film's SPS/PPS if it lacks them), so the picture never decodes against the card.
+    /// </summary>
+    private IReadOnlyList<byte[]> NextOnScreen(IReadOnlyList<byte[]> frame)
+    {
+        foreach (var nal in frame)
+        {
+            switch (StillClip.NalType(nal))
+            {
+                case StillClip.NalSps:
+                    _lastSps = nal;
+                    break;
+                case StillClip.NalPps:
+                    _lastPps = nal;
+                    break;
+            }
+        }
+
+        if (!_needKeyframe)
+        {
+            return frame;
+        }
+
+        if (StillClip.IsKeyframe(frame))
+        {
+            _needKeyframe = false;
+            return StillClip.HasSps(frame) || _lastSps is null || _lastPps is null ? frame : [_lastSps, _lastPps, .. frame];
+        }
+
+        if (_options.PausedStill?.Invoke() is { } clip)
+        {
+            return _still.Next(clip);
+        }
+
+        _needKeyframe = false;
+        return frame;
     }
 
     /// <summary>
@@ -853,7 +968,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
             if (!Pause.IsOpen)
             {
                 _heldByPause = true;
-                var opened = Pause.WaitOpen(Timeout.InfiniteTimeSpan, token);
+                var opened = HoldForPause(token);
                 _heldByPause = false;
                 if (!opened)
                 {
@@ -900,7 +1015,7 @@ public sealed class VideoPlayer : IMediaClock, IDisposable
         }
 
         _frameStart = _time.GetTimestamp();
-        _sink.SendVideoFrame(frame, NextTimestampIncrement(), _pacer);
+        _sink.SendVideoFrame(NextOnScreen(frame), NextTimestampIncrement(), _pacer);
         if (_firstFrame.TrySetResult())
         {
             _log.LogInformation("first video frame sent {Elapsed:0.00}s after start", _time.GetElapsedTime(_createdAt).TotalSeconds);

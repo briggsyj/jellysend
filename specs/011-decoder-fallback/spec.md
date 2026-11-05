@@ -9,7 +9,7 @@
 - `ffmpeg -decoders` (Fedora `ffmpeg-free`) has no `hevc` and no `eac3` decoder, and decodes H.264 only through
   `libopenh264` (8-bit, progressive). Spec 006 hands the original file to this FFmpeg, so HEVC (and E-AC-3 audio)
   originals fail at once: "go-live stream failed to start".
-- An H.264 + AC-3 file (Thunderball) decodes and encodes fine with the bot's exact FFmpeg command, so its failure is
+- An H.264 + AC-3 file decodes and encodes fine with the bot's exact FFmpeg command, so its failure is
   elsewhere; the bot's own log lines were hidden because the log viewer stops at libdave's multi-kilobyte hex lines.
 
 ## Requirements

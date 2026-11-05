@@ -16,8 +16,10 @@ variables are ignored without error so an existing `.env` works unchanged.
 | `STREAM_VIDEO_BITRATE` | no | preset | e.g. `2000k` |
 | `STREAM_PACKET_PACE` | no | `0.0` | 0.0–0.95 |
 | `STREAM_AV_SYNC_MS` | no | `0` | ±5000; .NET: constant offset of the audio schedule on the shared playout clock (positive = audio earlier) |
-| `STREAM_BUFFER_SECONDS` | no | `5` | .NET only (spec 004): read-ahead of FFmpeg's video and audio before/while playing (pre-roll at start and after each seek); 0–30, fractional allowed, 0 = no read-ahead; invalid → warning + 5 |
+| `STREAM_BUFFER_SECONDS` | no | `8` | .NET only (spec 004; default 8 since spec 014): read-ahead of FFmpeg's video and audio before/while playing (pre-roll at start and after each seek); 0–30, fractional allowed, 0 = no read-ahead; invalid → warning + default |
 | `JELLYFIN_DIRECT_STREAM` | no | `true` | .NET only (spec 006): play the original file and transcode once in the bot; Jellyfin transcodes only for subtitles / non-file sources, and (spec 011) for originals the bot's FFmpeg cannot decode (checked against `ffmpeg -decoders` at startup) |
+| `STREAM_LOADING_IMAGE` / `STREAM_PAUSED_IMAGE` | no | bundled | spec 015: card shown while a stream loads / while paused: unset = `/app/cards/loading.*` / `paused.*` from `assets/cards`; a file path overrides; `none` = off. Nothing is downloaded |
+| `MAX_STREAM_HOURS` | no | `12` | spec 016: a stream stops this long after a user's start (auto-advance, skips and restarts keep counting); voice and playlist stay; 0–168, 0 = no limit |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | no | `20` | .NET only (spec 003): stop + leave after the voice channel stayed empty this long; 0–1440, 0 = immediately |
 | `TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE` | — | — | accepted and ignored in this edition |
 

@@ -32,8 +32,8 @@ public sealed class RouterTests
         _router.DispatchAsync(new ChatMessage(5, 7, author, content), TestContext.Current.CancellationToken);
 
     [Theory]
-    [InlineData("!media The Matrix", "media|The Matrix")]
-    [InlineData("  !media   Firefly  s01e02 ", "media|Firefly  s01e02")]
+    [InlineData("!media The Sample", "media|The Sample")]
+    [InlineData("  !media   Space Show  s01e02 ", "media|Space Show  s01e02")]
     [InlineData("!m pause", "pause|")]
     [InlineData("!media pause now please", "pause|now please")]
     [InlineData("!media ar 2", "aspect|2")]

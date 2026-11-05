@@ -40,7 +40,7 @@ It searches your library, plays the original file and encodes it once with hardw
 
 ## Features
 
-- **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play the office s2e3 10m`
+- **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play example show s2e3 10m`
 - **Transcode once** - the bot plays the original file and encodes it itself; Jellyfin transcodes only to burn in subtitles
 - **Subtitles and audio tracks** - pick by number or language (`!subs english`, `!audio japanese`); the choice is remembered by language
 - **Source frame rate** - streams follow the film's own frame rate (23.976 stays 23.976) up to `STREAM_FPS`
@@ -142,9 +142,12 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_RESOLUTION` | No | preset | Bounding box `W:H` (or `WxH`). |
 | `STREAM_FPS` | No | preset | Frame-rate **ceiling**, 1–60. Each stream follows the source rate at or below it; faster sources are divided evenly (60 → 30, 50 → 25). |
 | `STREAM_VIDEO_BITRATE` | No | preset | Constant bitrate, e.g. `7000k`. |
-| `STREAM_BUFFER_SECONDS` | No | `5` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
+| `STREAM_BUFFER_SECONDS` | No | `8` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
 | `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
+| `STREAM_LOADING_IMAGE` | No | bundled card | Image shown on the stream while it loads (start and after a jump). Default: the test card in [`assets/cards/`](assets/cards/), built into the image. A file path in the container overrides it; `none` turns it off. |
+| `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused (default: the pause symbol in `assets/cards/`); same rules. |
+| `MAX_STREAM_HOURS` | No | `12` | Longest a stream plays, counted from a `!play` (through auto-advance and skips). Then it stops, staying in voice and keeping the playlist; `!play` starts again. 0–168, 0 = no limit. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
 
 ### Logs
@@ -181,10 +184,11 @@ Every command works as a short form (`!play`) and under `!media` (`!media play`)
 
 | Command | Description |
 |---|---|
-| `!play <title>` | Search and play, e.g. `!play inception` |
+| `!play <title>` | Search and play, e.g. `!play big buck bunny` |
 | `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
 | `!play <show>` | Pick season → episode |
 | `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |
+| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!queue` they all go to the end of the playlist (max 10). |
 | `!play <title> 1:23:45` | Start at a time (also `45m`, `90s`, `1h30m`) |
 | `!play "<title>"` | Quotes: read it all as the title |
 

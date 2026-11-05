@@ -36,6 +36,12 @@ public sealed partial record SlopsoilOptions
 
     public string? JellyfinPassword { get; init; }
 
+    /// <summary>Loading card image (spec 015): a file path, or <c>none</c>; null = the card bundled in the image.</summary>
+    public string? LoadingImage { get; init; }
+
+    /// <summary>Pause card image (spec 015): a file path, or <c>none</c>; null = the card bundled in the image.</summary>
+    public string? PausedImage { get; init; }
+
     public StreamPreset Quality { get; init; } = Presets[DefaultQuality];
 
     /// <summary>Scaler bounding box <c>W:H</c>.</summary>
@@ -52,7 +58,7 @@ public sealed partial record SlopsoilOptions
     public int AvSyncMs { get; init; }
 
     /// <summary>Default of <see cref="StreamBufferSeconds"/> (spec 004).</summary>
-    public const double DefaultStreamBufferSeconds = 5.0;
+    public const double DefaultStreamBufferSeconds = 8.0;
 
     /// <summary>
     /// Spec 006: play the original file from Jellyfin and transcode once in the bot (subtitles still use Jellyfin's
@@ -68,6 +74,12 @@ public sealed partial record SlopsoilOptions
 
     /// <summary>How long the bot stays (and streams) in a voice channel nobody else is in; zero = leave at once.</summary>
     public TimeSpan EmptyChannelTimeout { get; init; } = DefaultEmptyChannelTimeout;
+
+    /// <summary>Default of <see cref="MaxPlaytime"/> (spec 016).</summary>
+    public static readonly TimeSpan DefaultMaxPlaytime = TimeSpan.FromHours(12);
+
+    /// <summary>Longest a stream plays from a user's start (<c>MAX_STREAM_HOURS</c>); zero = no limit.</summary>
+    public TimeSpan MaxPlaytime { get; init; } = DefaultMaxPlaytime;
 
     /// <summary>Jellyfin is usable when a URL and an API key or login are configured.</summary>
     public bool JellyfinConfigured =>
@@ -169,7 +181,7 @@ public sealed partial record SlopsoilOptions
             }
             else
             {
-                warn?.Invoke($"STREAM_BUFFER_SECONDS='{b}' invalid (want 0-30); using 5");
+                warn?.Invoke($"STREAM_BUFFER_SECONDS='{b}' invalid (want 0-30); using {DefaultStreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}");
             }
         }
 
@@ -183,6 +195,19 @@ public sealed partial record SlopsoilOptions
             else
             {
                 warn?.Invoke($"EMPTY_CHANNEL_TIMEOUT_MINUTES='{e}' invalid (want 0-1440); using 20");
+            }
+        }
+
+        var maxPlaytime = DefaultMaxPlaytime;
+        if (Get("MAX_STREAM_HOURS") is { } h)
+        {
+            if (TryDouble(h, out var hours) && hours is >= 0 and <= 168)
+            {
+                maxPlaytime = TimeSpan.FromHours(hours);
+            }
+            else
+            {
+                warn?.Invoke($"MAX_STREAM_HOURS='{h}' invalid (want 0-168); using 12");
             }
         }
 
@@ -204,6 +229,8 @@ public sealed partial record SlopsoilOptions
             JellyfinApiKey = Get("JELLYFIN_API_KEY"),
             JellyfinUsername = Get("JELLYFIN_USERNAME"),
             JellyfinPassword = Get("JELLYFIN_PASSWORD"),
+            LoadingImage = Get("STREAM_LOADING_IMAGE"),
+            PausedImage = Get("STREAM_PAUSED_IMAGE"),
             Quality = quality,
             Resolution = resolution,
             Fps = fps,
@@ -211,6 +238,7 @@ public sealed partial record SlopsoilOptions
             PacketPace = pace,
             AvSyncMs = sync,
             StreamBufferSeconds = buffer,
+            MaxPlaytime = maxPlaytime,
             JellyfinDirectStream = ParseBool(Get("JELLYFIN_DIRECT_STREAM"), true, "JELLYFIN_DIRECT_STREAM", warn),
             EmptyChannelTimeout = emptyTimeout,
         };
@@ -222,7 +250,9 @@ public sealed partial record SlopsoilOptions
         + $"Resolution = {Resolution}, Fps = {Fps.ToString(CultureInfo.InvariantCulture)}, Bitrate = {VideoBitrate}, "
         + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs}, "
         + $"StreamBufferSeconds = {StreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}, DirectStream = {JellyfinDirectStream}, "
-        + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min }}";
+        + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min, "
+        + $"MaxPlaytime = {(MaxPlaytime > TimeSpan.Zero ? MaxPlaytime.TotalHours.ToString(CultureInfo.InvariantCulture) + " h" : "unlimited")}, "
+        + $"LoadingImage = {(LoadingImage is null ? "none" : "set")}, PausedImage = {(PausedImage is null ? "none" : "set")} }}";
 
     private static bool ParseBool(string? raw, bool fallback, string name, Action<string>? warn)
     {
