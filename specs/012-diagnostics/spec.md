@@ -3,11 +3,11 @@
 **Feature Branch**: `012-diagnostics` (implemented on `claude/busy-meitner-7979sz`, with spec 011)
 **Status**: Implemented
 **Input**: "enhance container logging so it provides all the info you could need to debug this and future issues" ·
-Thunderball (H.264 + AC-3) failed to start every time after specs 007–010 although it worked 5 hours earlier.
+A film (H.264 + AC-3) failed to start every time after specs 007–010 although it worked 5 hours earlier.
 
 ## Investigation (2026-11-05)
 
-- In the production container, the bot's exact FFmpeg command for Thunderball (VA-API, `-ss 3600`, `-r 24000/1001`,
+- In the production container, the bot's exact FFmpeg command for that film (VA-API, `-ss 3600`, `-r 24000/1001`,
   `-map 0:1`) runs cleanly; reads, decodes and the VA-API encoder all work.
 - A local end-to-end run of `FfmpegPipeline` over HTTP with the same request (live, 23.976 fps source, AC-3 track 1,
   start 60 s) streams video and audio normally.

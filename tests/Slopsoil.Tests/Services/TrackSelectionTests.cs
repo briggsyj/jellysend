@@ -227,7 +227,7 @@ public sealed class DirectStreamTests
 
     // ── spec 013: Jellyfin indices vs the file's streams ──
 
-    /// <summary>Thunderball in production: two external subtitle files listed first, so the AC-3 audio is Jellyfin index 3.</summary>
+    /// <summary>The production case: two external subtitle files listed first, so the AC-3 audio is Jellyfin index 3.</summary>
     private static object ExternalFirstSource(bool externalAudio = false) => new
     {
         Id = "src",
