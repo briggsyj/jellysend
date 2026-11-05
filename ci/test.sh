@@ -12,12 +12,12 @@ results="TestResults"
 rm -rf "${results}"
 
 # P/Invoke shims (Native/) and the live-network host are reported, not gated.
-dotnet test --solution Slopsoil.slnx --results-directory "${PWD}/${results}" -- \
+dotnet test --solution JellySend.slnx --results-directory "${PWD}/${results}" -- \
     --coverlet --coverlet-output-format cobertura \
-    --coverlet-include '[Slopsoil.*]*' \
-    --coverlet-exclude '[Slopsoil.Tests]*' \
-    --coverlet-exclude '[Slopsoil.Discord]Slopsoil.Discord.Native.*' \
-    --coverlet-exclude '[Slopsoil.Host]*' \
+    --coverlet-include '[JellySend.*]*' \
+    --coverlet-exclude '[JellySend.Tests]*' \
+    --coverlet-exclude '[JellySend.Discord]JellySend.Discord.Native.*' \
+    --coverlet-exclude '[JellySend.Host]*' \
     --coverlet-exclude-by-attribute ExcludeFromCodeCoverage
 
 report="$(find "${results}" -name "coverage*.xml" -print -quit)"

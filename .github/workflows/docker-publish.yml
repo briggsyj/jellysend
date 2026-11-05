@@ -16,9 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # GHCR derives its repo from the GitHub repository and authenticates with the
-  # built-in GITHUB_TOKEN, so forks publish to their own ghcr.io/<owner>/<repo>
-  # with no extra setup. Docker Hub is optional: it is only used when the
+  # GHCR publishes to ghcr.io/<owner>/jellysend and authenticates with the
+  # built-in GITHUB_TOKEN, so forks publish to their own namespace with no
+  # extra setup. Docker Hub is optional: it is only used when the
   # DOCKERHUB_USERNAME repo variable (and DOCKERHUB_TOKEN secret) are set.
   DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
   # The image relies on VA-API / NVENC hardware H.264 paths, which are x86-only.
@@ -45,7 +45,7 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           push: false
           # Read-only: PR checks must not race the publish job for cache slots.
-          cache-from: type=gha,scope=slopsoil
+          cache-from: type=gha,scope=jellysend
 
   # Run the unit tests against the exact commit being published. The publish job
   # below gates on this, so a failing suite blocks the image from being pushed.
@@ -92,12 +92,12 @@ jobs:
         shell: bash
         run: |
           # Registry paths must be lowercase; GitHub owners may not be.
-          ghcr="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ghcr="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/jellysend"
           {
             echo "list<<EOF"
             echo "${ghcr}"
             if [[ -n "${DOCKERHUB_USERNAME}" ]]; then
-              echo "docker.io/${DOCKERHUB_USERNAME,,}/slopsoil"
+              echo "docker.io/${DOCKERHUB_USERNAME,,}/jellysend"
             fi
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
@@ -111,9 +111,10 @@ jobs:
           ref-name: ${{ env.TARGET_REF_NAME }}
           sha: ${{ env.TARGET_SHA }}
           images: ${{ steps.images.outputs.list }}
-          title: slopsoil
+          title: jellysend
           description: >-
             Discord self-bot that streams Jellyfin into a Discord voice channel.
+            A fork of Slopsoil.
           licenses: GPL-3.0-or-later
 
       - name: Set up Docker Buildx
@@ -143,10 +144,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Reuse layers across runs via the GitHub Actions cache backend.
-          cache-from: type=gha,scope=slopsoil
+          cache-from: type=gha,scope=jellysend
           # A cache write failure ("failed to reserve cache") must not fail the
           # publish — the image itself was built fine.
-          cache-to: type=gha,scope=slopsoil,mode=max,ignore-error=true
+          cache-to: type=gha,scope=jellysend,mode=max,ignore-error=true
           # Supply-chain metadata: SLSA provenance + SBOM attached to the image.
           provenance: mode=max
           sbom: true

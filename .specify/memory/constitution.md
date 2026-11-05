@@ -1,4 +1,4 @@
-# Slopsoil Constitution
+# JellySend Constitution
 
 ## Core Principles
 
@@ -28,7 +28,7 @@ Discord session.
 Every database migration MUST include a rollback plan before it is merged. The plan MUST state how
 to restore the previous schema and data, and what data, if any, the rollback cannot recover.
 
-Slopsoil has no database today, so this principle takes effect when one is introduced.
+JellySend has no database today, so this principle takes effect when one is introduced.
 
 Rationale: a schema change that cannot be undone turns a failed upgrade into data loss.
 
@@ -38,7 +38,7 @@ Before a change is merged, the repository's established unit and integration tes
 run and MUST pass. Results MUST be reported, including any suite or test that was skipped or could
 not be run. Changes MUST NOT bypass a suite or lower its coverage gate to get a passing result.
 
-Slopsoil has no separate integration suite today, so the unit suite is the required gate until one
+JellySend has no separate integration suite today, so the unit suite is the required gate until one
 is established. Any integration suite added later becomes required under this principle.
 
 Rationale: CI and local runs share one entry point, so a passing result means the same everywhere.
@@ -55,14 +55,14 @@ Internal .NET types and helper methods are not public interfaces.
 
 Layers covered by Principle II (enforced by project references):
 
-- `src/Slopsoil.Host`: process entry point and startup wiring.
-- `src/Slopsoil.Commands`: Discord commands and user-facing interaction; may use every other project.
-- `src/Slopsoil.Services`: Jellyfin and SyncPlay clients; MUST depend only on `Slopsoil.Common`.
-- `src/Slopsoil.Streaming`: the FFmpeg video and audio pipeline and stream engine; MUST depend only on
-  `Slopsoil.Discord` and `Slopsoil.Common`.
-- `src/Slopsoil.Discord`: gateway, voice, go-live, RTP, transport crypto and DAVE; MUST depend only on
-  `Slopsoil.Common`.
-- `src/Slopsoil.Common`: configuration, redaction and permissions shared by all layers.
+- `src/JellySend.Host`: process entry point and startup wiring.
+- `src/JellySend.Commands`: Discord commands and user-facing interaction; may use every other project.
+- `src/JellySend.Services`: Jellyfin and SyncPlay clients; MUST depend only on `JellySend.Common`.
+- `src/JellySend.Streaming`: the FFmpeg video and audio pipeline and stream engine; MUST depend only on
+  `JellySend.Discord` and `JellySend.Common`.
+- `src/JellySend.Discord`: gateway, voice, go-live, RTP, transport crypto and DAVE; MUST depend only on
+  `JellySend.Common`.
+- `src/JellySend.Common`: configuration, redaction and permissions shared by all layers.
 
 ## Development Workflow
 

@@ -1,6 +1,6 @@
 name: Unit tests
 description: >-
-  Set up .NET and run the slopsoil test suite with its coverage gate. Thin GitHub
+  Set up .NET and run the jellysend test suite with its coverage gate. Thin GitHub
   wrapper around ci/test.sh so the same invocation works locally and in CI.
 
 runs:

@@ -7,7 +7,7 @@ explained with examples; `!help all` documents everything; `!language <audio> <s
 
 ## Requirements
 
-- **FR-001** `!help` is one message (under Discord's limit) headed "📺 Slopsoil — now broadcasting", with sections
+- **FR-001** `!help` is one message (under Discord's limit) headed "📺 JellySend — now broadcasting", with sections
   Watch, While watching, Playlist, Picture & sound; one command per line, most-used first.
 - **FR-002** `!help <command>` shows that command's full help (what it does, one usage line per form, examples).
 - **FR-003** `!help all` sends every command in detail, one message per section, each under 1900 characters.
