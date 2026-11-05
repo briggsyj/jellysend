@@ -1,4 +1,4 @@
-# slopsoil image. Build from the repository root:  docker build -t slopsoil .
+# jellysend image. Build from the repository root:  docker build -t jellysend .
 #
 # Stage 1 builds libdave (Discord's DAVE end-to-end encryption library) as a
 # shared library so the bot can P/Invoke its C API (dave.h). This mirrors the
@@ -33,7 +33,7 @@ RUN git clone https://github.com/discord/libdave.git \
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . ./
-RUN dotnet publish src/Slopsoil.Host/Slopsoil.Host.csproj -c Release -r linux-x64 \
+RUN dotnet publish src/JellySend.Host/JellySend.Host.csproj -c Release -r linux-x64 \
         --self-contained true -o /out
 
 # Stage 3: runtime. Fedora's ffmpeg-free plus the RPM Fusion VA-API drivers
@@ -60,9 +60,9 @@ RUN microdnf install -y \
     && microdnf clean all \
     && rm -rf /var/cache/dnf /var/cache/libdnf5
 COPY --from=libdave /opt/dave/lib*/*dave*.so* /usr/local/lib/
-RUN echo /usr/local/lib > /etc/ld.so.conf.d/slopsoil.conf && ldconfig
+RUN echo /usr/local/lib > /etc/ld.so.conf.d/jellysend.conf && ldconfig
 WORKDIR /app
 COPY --from=build /out ./
 # Loading / pause cards (spec 015): assets/cards/loading.* and paused.* — credits in assets/cards/README.md.
 COPY assets/cards/ ./cards/
-ENTRYPOINT ["/app/Slopsoil.Host"]
+ENTRYPOINT ["/app/JellySend.Host"]

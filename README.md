@@ -1,13 +1,14 @@
-![](images/slopsoil-banner.png)  
-![](https://github.com/dev-topsoil/slopsoil/actions/workflows/tests.yml/badge.svg) ![.NET](https://img.shields.io/badge/.NET-10-512bd4.svg) [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/devtopsoil)  
-# Slopsoil - Stream Jellyfin directly to Discord Voice Channels
+![](https://github.com/briggsyj/slopsoil/actions/workflows/tests.yml/badge.svg) ![.NET](https://img.shields.io/badge/.NET-10-512bd4.svg)
+# JellySend - Stream Jellyfin directly to Discord Voice Channels
 
-**Slopsoil** is a Discord self-bot that streams movies and TV from a Jellyfin server into a Discord voice channel, as a screenshare that everyone in the channel can watch together.
+**JellySend** is a Discord self-bot that streams movies and TV from a Jellyfin server into a Discord voice channel, as a screenshare that everyone in the channel can watch together.
+
+JellySend is a fork of [Slopsoil](https://github.com/dev-topsoil/slopsoil), rewritten in .NET. It is not the official Slopsoil project — see [Origin & credits](#origin--credits).
 
 It searches your library, plays the original file and encodes it once with hardware-accelerated H.264 (VA-API or NVIDIA NVENC), keeps audio and video on one clock, and lets Jellyfin apps join in through SyncPlay.
 
 > **Disclaimer:**   
-> Slopsoil is a self-bot. It runs on a real Discord user account, not a bot application.  
+> JellySend is a self-bot. It runs on a real Discord user account, not a bot application.  
 > Self-bots violate Discord's [Terms of Service](https://discord.com/terms).  
 > Use it on an account you are willing to lose, and do not use it in a way that disrupts other users or servers.  
 > The authors take no responsibility for account terminations or other consequences.
@@ -18,7 +19,6 @@ It searches your library, plays the original file and encodes it once with hardw
 
 ## Table of Contents
 
-- [Screenshots](#screenshots)
 - [Features](#features)
 - [How It Works](#how-it-works)
 - [Installation - Docker Compose](#installation---docker-compose)
@@ -27,14 +27,8 @@ It searches your library, plays the original file and encodes it once with hardw
 - [Updating](#updating)
 - [Hardware Acceleration](#hardware-acceleration)
 - [Development](#development)
-
----
-
-## Screenshots
-
-| Picker | Stream Running |
-|---|---|
-| ![Numbered picker in a Discord channel](images/slopsoil4.png) | ![Bot streaming video in a Discord voice channel](images/slopsoil3.png) |
+- [Origin & credits](#origin--credits)
+- [Licence](#licence)
 
 ---
 
@@ -58,18 +52,18 @@ It searches your library, plays the original file and encodes it once with hardw
 
 ## How It Works
 
-slopsoil is a .NET 10 application with its own Discord user-account gateway, voice and go-live clients. It sends H.264 video and Opus audio over Discord's voice UDP protocol, appearing to other users as a screenshare. The pipeline does SPS/VUI rewriting, RFC 6184 FU-A fragmentation, `aead_xchacha20_poly1305_rtpsize` transport encryption, and DAVE E2EE through Discord's [libdave](https://github.com/discord/libdave) (built into the image).
+JellySend is a .NET 10 application with its own Discord user-account gateway, voice and go-live clients. It sends H.264 video and Opus audio over Discord's voice UDP protocol, appearing to other users as a screenshare. The pipeline does SPS/VUI rewriting, RFC 6184 FU-A fragmentation, `aead_xchacha20_poly1305_rtpsize` transport encryption, and DAVE E2EE through Discord's [libdave](https://github.com/discord/libdave) (built into the image).
 
 FFmpeg decodes the Jellyfin stream and encodes H.264; both video and audio are read ahead into buffers (`STREAM_BUFFER_SECONDS`) and played out against a single clock, so a slow read never pulls them apart.
 
 | Project | Role |
 |---|---|
-| `src/Slopsoil.Common` | configuration, log redaction, permissions |
-| `src/Slopsoil.Discord` | gateway, voice, go-live, RTP, crypto, DAVE |
-| `src/Slopsoil.Services` | Jellyfin and SyncPlay clients |
-| `src/Slopsoil.Streaming` | FFmpeg video player, audio sender, stream engine |
-| `src/Slopsoil.Commands` | Discord commands |
-| `src/Slopsoil.Host` | entry point |
+| `src/JellySend.Common` | configuration, log redaction, permissions |
+| `src/JellySend.Discord` | gateway, voice, go-live, RTP, crypto, DAVE |
+| `src/JellySend.Services` | Jellyfin and SyncPlay clients |
+| `src/JellySend.Streaming` | FFmpeg video player, audio sender, stream engine |
+| `src/JellySend.Commands` | Discord commands |
+| `src/JellySend.Host` | entry point |
 
 Design history and specs live in [`specs/`](specs/).
 
@@ -77,7 +71,7 @@ Design history and specs live in [`specs/`](specs/).
 
 ## Installation - Docker Compose
 
-Images are published to `ghcr.io/briggsyj/slopsoil`:
+Images are published to `ghcr.io/briggsyj/jellysend`:
 
 | Tag | What |
 |---|---|
@@ -89,8 +83,8 @@ Images are published to `ghcr.io/briggsyj/slopsoil`:
 
 ```yaml
 services:
-  slopsoil:
-    image: ghcr.io/briggsyj/slopsoil:latest
+  jellysend:
+    image: ghcr.io/briggsyj/jellysend:latest
     restart: unless-stopped
     env_file: .env
     devices:
@@ -110,14 +104,14 @@ docker compose pull && docker compose up -d
 ### Build from source
 
 ```bash
-git clone https://github.com/briggsyj/slopsoil.git && cd slopsoil
+git clone https://github.com/briggsyj/slopsoil.git jellysend && cd jellysend
 docker compose up -d --build
 ```
 
 ### View logs
 
 ```bash
-docker compose logs -f slopsoil
+docker compose logs -f jellysend
 ```
 
 ### Publishing your own image (forks)
@@ -152,7 +146,7 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 
 ### Logs
 
-Everything goes to the container's stdout (`docker compose logs -f slopsoil`). Each play attempt logs:
+Everything goes to the container's stdout (`docker compose logs -f jellysend`). Each play attempt logs:
 - **The start:** the mode (original file or Jellyfin transcode), codecs, audio track, source frame rate and start time.
 - **FFmpeg:** the full FFmpeg command, any FFmpeg warnings or errors, when the audio FIFO opened, and when the first video frame was sent.
 - **Voice and screenshare:** every voice-gateway event, labelled `[voice …]` or `[stream …]`, with Discord's close codes explained.
@@ -166,7 +160,7 @@ Everything goes to the container's stdout (`docker compose logs -f slopsoil`). E
 
 If a direct stream of the original file fails before its first frame, the bot retries it once through Jellyfin's transcode and keeps using the transcode for that item.
 
-libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__Slopsoil.Dave=Debug` to see it. `Logging__LogLevel__Default=Debug` turns on debug logging everywhere.
+libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__JellySend.Dave=Debug` to see it. `Logging__LogLevel__Default=Debug` turns on debug logging everywhere.
 
 Variables the old Python bot used (`TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE`) are ignored, so an existing `.env` keeps working.
 
@@ -193,7 +187,7 @@ Every command works as a short form (`!play`) and under `!media` (`!media play`)
 | `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
 | `!play <show>` | Pick season → episode |
 | `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |
-| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!queue` they all go to the end of the playlist (max 10). |
+| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!playlist add` they all go to the end of the playlist (max 10). |
 | `!play <title> 1:23:45` | Start at a time (also `45m`, `90s`, `1h30m`) |
 | `!play "<title>"` | Quotes: read it all as the title |
 
@@ -210,6 +204,7 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!stop` | Stop, stay in voice |
 | `!leave` | Stop and leave the voice channel |
 | `!join` | Join your voice channel |
+| `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
 | `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
@@ -222,16 +217,18 @@ Pickers accept a number or a name, and time out after 30 seconds.
 
 | Command | Description |
 |---|---|
-| `!queue <title>` | Add to the playlist (max 10, plays from the start); `!queue <show> s01e02` |
-| `!playlist` | What's playing and up next |
-| `!order <# or title> <new #>` | Move an item |
-| `!remove <# or title>` | Remove an item |
+| `!playlist` | What's playing and up next, numbered. Then reply `add`, `remove` or `order` to change it — the bot asks for the rest. |
+| `!playlist add <title>` | Add to the end (max 10, plays from the start); `!playlist add <show> s01e02`, `s1e1-6` |
+| `!playlist remove <# or title>` | Take an item off, e.g. `!playlist remove 2` |
+| `!playlist order <# or title> <new #>` | Move an item, e.g. `!playlist order 3 1` (item 3 to the top) |
+
+Leave out what comes after `add`, `remove` or `order` and the bot asks for it. The old `!queue`, `!remove` and `!order` still work and point to their new names.
 
 ### General
 
 | Command | Description |
 |---|---|
-| `!help` | All commands; `!help <command>` for one |
+| `!help` | All commands; `!help <command>` for one; `!help all` for every command in detail |
 | `!ping` | Is the bot alive? |
 
 #### Jellyfin SyncPlay (group watch)
@@ -247,7 +244,7 @@ With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay gro
 | **Viewer** | Members of any guild the bot account is in — `!help` and `!ping` |
 | **None** | Everyone else |
 
-A command run by someone whose role doesn't allow it gets the reply `_quack_ no.`
+A command run by someone whose role doesn't allow it gets a GIF in reply (a bare link, so Discord plays it inline).
 
 ---
 
@@ -263,11 +260,19 @@ Built from source:
 git pull && docker compose up -d --build
 ```
 
+### Upgrading from Slopsoil
+
+The image, the compose service and the image variable were renamed. Use the new image `ghcr.io/briggsyj/jellysend` and service `jellysend` in your compose file, and rename `SLOPSOIL_IMAGE` to `JELLYSEND_IMAGE` in `.env` if you pin a build. Then remove the old container so two bots don't run on the same account:
+
+```bash
+docker compose pull && docker compose up -d --remove-orphans
+```
+
 ---
 
 ## Hardware Acceleration
 
-slopsoil picks the best working H.264 encoder in this order:
+JellySend picks the best working H.264 encoder in this order:
 
 | Encoder | Type | Requires |
 |---|---|---|
@@ -315,3 +320,18 @@ ci/test.sh
 `ci/test.sh` builds the solution, runs the tests with coverage and fails below 90 % line coverage. CI runs the same script. The long-run soak harness is described in [`tests/soak/README.md`](tests/soak/README.md).
 
 Features are planned with [Spec Kit](https://github.com/github/spec-kit): specs, plans and tasks live in [`specs/`](specs/), and the project principles in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
+
+---
+
+## Origin & credits
+
+JellySend is a fork of [Slopsoil](https://github.com/dev-topsoil/slopsoil) by topsoil ([dev-topsoil](https://github.com/dev-topsoil)) and its contributors, rewritten in .NET, November 2026. The git history keeps every original commit and its author.
+
+This is a modified version of Slopsoil. It is not the official Slopsoil project and is not endorsed by its authors. If you enjoy it, you can also support Slopsoil's author: [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/devtopsoil)
+
+Copyright (C) 2026 John Briggs  
+Slopsoil copyright (C) 2026 its authors.
+
+## Licence
+
+JellySend is free software, distributed under the GNU General Public License version 3, the same licence as Slopsoil — see [`LICENSE`](LICENSE). It comes with no warranty.

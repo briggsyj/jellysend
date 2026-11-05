@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JellySend.Discord\JellySend.Discord.csproj" />
+    <ProjectReference Include="..\JellySend.Common\JellySend.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="JellySend.Tests" />
+  </ItemGroup>
+
+</Project>

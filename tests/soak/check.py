@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a soak CSV (SLOPSOIL_SOAK=1) against SC-008 and SC-009. Usage: check.py slopsoil-soak.csv"""
+"""Check a soak CSV (JELLYSEND_SOAK=1) against SC-008 and SC-009. Usage: check.py jellysend-soak.csv"""
 
 import csv
 import sys

@@ -1,6 +1,6 @@
 # Send just the .NET sources to the image build.
 *
-!Slopsoil.slnx
+!JellySend.slnx
 !Directory.Build.props
 !global.json
 !src/
