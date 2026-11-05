@@ -235,12 +235,15 @@ internal sealed class MediaHarness
         await Send(content);
     }
 
-    public MediaHarness(bool configured = true)
+    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null)
     {
         Pipelines = new FakePipelineFactory(Connector.Log);
         Voice = new VoiceManager(Gateway);
         Engine = new StreamEngine(Connector, Pipelines);
-        Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time);
+        Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time)
+        {
+            MaxPlaytime = maxPlaytime ?? TimeSpan.FromHours(12),
+        };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
         Media.Register(Router, new VoiceModule(Voice, Media));

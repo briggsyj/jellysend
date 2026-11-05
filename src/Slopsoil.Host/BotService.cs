@@ -61,15 +61,13 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         // Voice + go-live.
         var voiceOptions = VoiceOptionsFor(gateway, loggers.CreateLogger("Slopsoil.Voice"));
         var voice = new VoiceManager(new GatewayVoice(gateway, voiceOptions), loggers.CreateLogger<VoiceManager>());
-        using var imageHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        imageHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; slopsoil)");
         var stillLog = loggers.CreateLogger<StillImages>();
         var pipelines = new FfmpegPipelineFactory(options, loggers)
         {
-            // Spec 015: loading / pause cards, fetched once at startup (a URL is downloaded to a temp file).
+            // Spec 015: loading / pause cards — the ones bundled in the image (assets/cards), or local files.
             Stills = new StillImages(
-                await StillImageFiles.ResolveAsync(options.LoadingImage, "loading", imageHttp, stillLog, stoppingToken).ConfigureAwait(false),
-                await StillImageFiles.ResolveAsync(options.PausedImage, "paused", imageHttp, stillLog, stoppingToken).ConfigureAwait(false),
+                StillImageFiles.Resolve(options.LoadingImage, "loading", stillLog),
+                StillImageFiles.Resolve(options.PausedImage, "paused", stillLog),
                 logger: stillLog),
         };
         var engine = new StreamEngine(new GoLiveConnector(gateway, voice, voiceOptions), pipelines, loggers.CreateLogger<StreamEngine>());
@@ -98,7 +96,7 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
         }
 
         var guildNames = new GuildNames();
-        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>());
+        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>()) { MaxPlaytime = options.MaxPlaytime };
         var voiceModule = new VoiceModule(voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout);
 
         media.Register(router, voiceModule); // !media … plus the !join/!leave/!stop/!help/!ping shortcuts
@@ -225,41 +223,43 @@ internal sealed class BotService(SlopsoilOptions options, ILoggerFactory loggers
     }
 }
 
-/// <summary>Turns <c>STREAM_LOADING_IMAGE</c> / <c>STREAM_PAUSED_IMAGE</c> (a path or an http(s) URL) into a local file.</summary>
+/// <summary>
+/// Picks the card image for <c>STREAM_LOADING_IMAGE</c> / <c>STREAM_PAUSED_IMAGE</c> (spec 015): a local file path, <c>none</c>
+/// to turn the card off, or (unset) the card bundled in the image under <c>cards/</c>. Nothing is downloaded.
+/// </summary>
 internal static class StillImageFiles
 {
-    public static async Task<string?> ResolveAsync(string? value, string name, HttpClient http, ILogger log, CancellationToken ct)
+    private static readonly string[] Extensions = [".jpg", ".jpeg", ".png", ".webp"];
+
+    public static string? Resolve(string? value, string name, ILogger log)
     {
-        if (value is null)
+        if (value is not null && value.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
+            log.LogInformation("{Name} card turned off", name);
             return null;
         }
 
-        if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        if (value is not null)
         {
             if (File.Exists(value))
             {
-                log.LogInformation("{Name} image: {Path}", name, value);
+                log.LogInformation("{Name} card: {Path}", name, value);
                 return value;
             }
 
-            log.LogWarning("{Name} image {Path} not found — no {Name} card", name, value, name);
-            return null;
+            log.LogWarning("{Name} card {Path} not found — using the bundled card if there is one", name, value);
         }
 
-        try
+        var bundled = Extensions.Select(e => Path.Combine(AppContext.BaseDirectory, "cards", name + e)).FirstOrDefault(File.Exists);
+        if (bundled is not null)
         {
-            var bytes = await http.GetByteArrayAsync(value, ct).ConfigureAwait(false);
-            var extension = Path.GetExtension(new Uri(value).AbsolutePath);
-            var path = Path.Combine(Path.GetTempPath(), $"slopsoil_{name}_card{(extension.Length is > 0 and <= 5 ? extension : ".img")}");
-            await File.WriteAllBytesAsync(path, bytes, ct).ConfigureAwait(false);
-            log.LogInformation("{Name} image downloaded ({Bytes} bytes) from {Url}", name, bytes.Length, Slopsoil.Common.Logging.Redactor.RedactUrl(value));
-            return path;
+            log.LogInformation("{Name} card: bundled {Path}", name, bundled);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UriFormatException)
+        else
         {
-            log.LogWarning("could not download the {Name} image from {Url}: {Error} — no {Name} card", name, Slopsoil.Common.Logging.Redactor.RedactUrl(value), ex.Message, name);
-            return null;
+            log.LogInformation("no {Name} card (none bundled in cards/ and STREAM_{Upper}_IMAGE unset)", name, name.ToUpperInvariant());
         }
+
+        return bundled;
     }
 }

@@ -82,6 +82,16 @@ public sealed class MediaModule : IStreamControl
         _log = logger ?? NullLogger<MediaModule>.Instance;
     }
 
+    /// <summary>
+    /// Longest a stream plays (spec 016, <c>MAX_STREAM_HOURS</c>): counted from the user's start (<c>!play</c>,
+    /// <c>!queue</c> when idle) through auto-advance, skips and restarts; then the stream stops (voice and playlist
+    /// stay). Zero or negative = no limit.
+    /// </summary>
+    public TimeSpan MaxPlaytime { get; init; } = TimeSpan.FromHours(12);
+
+    /// <summary>The running playtime limit per guild — awaited by tests.</summary>
+    internal ConcurrentDictionary<ulong, (Task Task, CancellationTokenSource Cancel)> PlaytimeLimits { get; } = new();
+
     /// <summary>Background work (SyncPlay queue sync, auto-advance) — awaited by tests.</summary>
     internal ConcurrentDictionary<Task, byte> Background { get; } = new();
 
@@ -959,7 +969,56 @@ public sealed class MediaModule : IStreamControl
         }
 
         State(guild.Value, c.ReplyAsync);
-        return await StartItemAsync(guild.Value, channel.Value, item, start).ConfigureAwait(false);
+        var started = await StartItemAsync(guild.Value, channel.Value, item, start).ConfigureAwait(false);
+        if (started)
+        {
+            StartPlaytimeLimit(guild.Value);
+        }
+
+        return started;
+    }
+
+    /// <summary>A user started playback: (re)start the <see cref="MaxPlaytime"/> countdown for the guild (spec 016).</summary>
+    private void StartPlaytimeLimit(ulong guild)
+    {
+        if (MaxPlaytime <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        CancelPlaytimeLimit(guild);
+        var cts = new CancellationTokenSource();
+        PlaytimeLimits[guild] = (PlaytimeLimitAsync(guild, cts.Token), cts);
+    }
+
+    private void CancelPlaytimeLimit(ulong guild)
+    {
+        if (PlaytimeLimits.TryRemove(guild, out var running))
+        {
+            running.Cancel.Cancel();
+        }
+    }
+
+    private async Task PlaytimeLimitAsync(ulong guild, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(MaxPlaytime, _time, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!_engine.IsStreaming(guild) || !_states.TryGetValue(guild, out var state))
+        {
+            return; // nothing is playing any more
+        }
+
+        var hours = MaxPlaytime.TotalHours.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        _log.LogInformation("stream in guild {Guild} reached the {Hours} h playtime limit — stopping", guild, hours);
+        await StopStreamAsync(guild).ConfigureAwait(false);
+        await state.Send($"⏹ stopped after {hours} hours of streaming — `!play` to start again (the playlist is kept)").ConfigureAwait(false);
     }
 
     /// <summary>How a start ended.</summary>
@@ -1362,6 +1421,7 @@ public sealed class MediaModule : IStreamControl
     /// <summary>Forget the guild's session (playlist, SyncPlay group, transcode) and the debug overlay.</summary>
     private async Task TeardownAsync(ulong guild)
     {
+        CancelPlaytimeLimit(guild);
         _debug.TryRemove(guild, out _);
         _trackPrefs.TryRemove(guild, out _);
         if (!_states.TryRemove(guild, out var state))

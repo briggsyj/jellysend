@@ -4,6 +4,7 @@
 !Directory.Build.props
 !global.json
 !src/
+!assets/cards/
 **/bin/
 **/obj/
 **/TestResults/

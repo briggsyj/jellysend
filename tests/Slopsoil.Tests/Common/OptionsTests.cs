@@ -95,6 +95,21 @@ public sealed class OptionsTests
     }
 
     [Theory]
+    [InlineData(null, 12.0, 0)]
+    [InlineData("0", 0.0, 0)]
+    [InlineData("1.5", 1.5, 0)]
+    [InlineData("168", 168.0, 0)]
+    [InlineData("169", 12.0, 1)]
+    [InlineData("-2", 12.0, 1)]
+    [InlineData("forever", 12.0, 1)]
+    public void Max_stream_hours(string? raw, double hours, int warnings)
+    {
+        var o = raw is null ? Parse() : Parse(("MAX_STREAM_HOURS", raw));
+        Assert.Equal(TimeSpan.FromHours(hours), o.MaxPlaytime);
+        Assert.Equal(warnings, _warnings.Count);
+    }
+
+    [Theory]
     [InlineData(null, 8.0, 0)]
     [InlineData("0", 0.0, 0)]
     [InlineData("2.5", 2.5, 0)]

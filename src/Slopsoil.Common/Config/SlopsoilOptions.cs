@@ -36,10 +36,10 @@ public sealed partial record SlopsoilOptions
 
     public string? JellyfinPassword { get; init; }
 
-    /// <summary>Loading card image (spec 015): a file path or http(s) URL, shown while a stream buffers; null = none.</summary>
+    /// <summary>Loading card image (spec 015): a file path, or <c>none</c>; null = the card bundled in the image.</summary>
     public string? LoadingImage { get; init; }
 
-    /// <summary>Pause card image (spec 015): a file path or http(s) URL, shown while paused; null = none.</summary>
+    /// <summary>Pause card image (spec 015): a file path, or <c>none</c>; null = the card bundled in the image.</summary>
     public string? PausedImage { get; init; }
 
     public StreamPreset Quality { get; init; } = Presets[DefaultQuality];
@@ -74,6 +74,12 @@ public sealed partial record SlopsoilOptions
 
     /// <summary>How long the bot stays (and streams) in a voice channel nobody else is in; zero = leave at once.</summary>
     public TimeSpan EmptyChannelTimeout { get; init; } = DefaultEmptyChannelTimeout;
+
+    /// <summary>Default of <see cref="MaxPlaytime"/> (spec 016).</summary>
+    public static readonly TimeSpan DefaultMaxPlaytime = TimeSpan.FromHours(12);
+
+    /// <summary>Longest a stream plays from a user's start (<c>MAX_STREAM_HOURS</c>); zero = no limit.</summary>
+    public TimeSpan MaxPlaytime { get; init; } = DefaultMaxPlaytime;
 
     /// <summary>Jellyfin is usable when a URL and an API key or login are configured.</summary>
     public bool JellyfinConfigured =>
@@ -192,6 +198,19 @@ public sealed partial record SlopsoilOptions
             }
         }
 
+        var maxPlaytime = DefaultMaxPlaytime;
+        if (Get("MAX_STREAM_HOURS") is { } h)
+        {
+            if (TryDouble(h, out var hours) && hours is >= 0 and <= 168)
+            {
+                maxPlaytime = TimeSpan.FromHours(hours);
+            }
+            else
+            {
+                warn?.Invoke($"MAX_STREAM_HOURS='{h}' invalid (want 0-168); using 12");
+            }
+        }
+
         var allowed = new HashSet<ulong>();
         foreach (var part in (Get("ALLOWED_USER_IDS") ?? "").Split(','))
         {
@@ -219,6 +238,7 @@ public sealed partial record SlopsoilOptions
             PacketPace = pace,
             AvSyncMs = sync,
             StreamBufferSeconds = buffer,
+            MaxPlaytime = maxPlaytime,
             JellyfinDirectStream = ParseBool(Get("JELLYFIN_DIRECT_STREAM"), true, "JELLYFIN_DIRECT_STREAM", warn),
             EmptyChannelTimeout = emptyTimeout,
         };
@@ -231,6 +251,7 @@ public sealed partial record SlopsoilOptions
         + $"PacketPace = {PacketPace.ToString(CultureInfo.InvariantCulture)}, AvSyncMs = {AvSyncMs}, "
         + $"StreamBufferSeconds = {StreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}, DirectStream = {JellyfinDirectStream}, "
         + $"EmptyChannelTimeout = {EmptyChannelTimeout.TotalMinutes.ToString(CultureInfo.InvariantCulture)} min, "
+        + $"MaxPlaytime = {(MaxPlaytime > TimeSpan.Zero ? MaxPlaytime.TotalHours.ToString(CultureInfo.InvariantCulture) + " h" : "unlimited")}, "
         + $"LoadingImage = {(LoadingImage is null ? "none" : "set")}, PausedImage = {(PausedImage is null ? "none" : "set")} }}";
 
     private static bool ParseBool(string? raw, bool fallback, string name, Action<string>? warn)

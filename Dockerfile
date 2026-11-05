@@ -63,4 +63,6 @@ COPY --from=libdave /opt/dave/lib*/*dave*.so* /usr/local/lib/
 RUN echo /usr/local/lib > /etc/ld.so.conf.d/slopsoil.conf && ldconfig
 WORKDIR /app
 COPY --from=build /out ./
+# Loading / pause cards (spec 015): assets/cards/loading.* and paused.* — credits in assets/cards/README.md.
+COPY assets/cards/ ./cards/
 ENTRYPOINT ["/app/Slopsoil.Host"]
