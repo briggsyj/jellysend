@@ -103,6 +103,12 @@ public static class CommandCatalog
             `!res <size>` — `360p`, `480p`, `540p`, `720p`, `1080p`, or `default` (the server's setting)
             -# Remembered until you change it; applies straight away.
             """),
+        new("channel", [], Role.Friend, Extras, """
+            Which voice channel the bot broadcasts in.
+            `!channel set` — lists the voice channels the bot can reach; reply with a number to move there (what's on air carries on)
+            `!channel default` — pick a server, then the voice channel the bot uses there when you're not in voice yourself
+            -# With no default, the bot uses the server's first voice channel. Defaults are remembered across restarts.
+            """),
         new("debug", [], Role.Friend, Extras, """
             Stream stats, for when something looks or sounds wrong.
             `!debug on` / `!debug off` — show the stats on the stream itself

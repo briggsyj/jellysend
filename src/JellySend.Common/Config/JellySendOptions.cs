@@ -36,6 +36,9 @@ public sealed partial record JellySendOptions
 
     public string? JellyfinPassword { get; init; }
 
+    /// <summary>Where saved settings live (spec 027, <c>DATA_DIR</c>); mount it as a volume to keep them.</summary>
+    public string DataDirectory { get; init; } = "/data";
+
     /// <summary>Loading card image (spec 015): a file path, or <c>none</c>; null = the card bundled in the image.</summary>
     public string? LoadingImage { get; init; }
 
@@ -229,6 +232,7 @@ public sealed partial record JellySendOptions
             JellyfinApiKey = Get("JELLYFIN_API_KEY"),
             JellyfinUsername = Get("JELLYFIN_USERNAME"),
             JellyfinPassword = Get("JELLYFIN_PASSWORD"),
+            DataDirectory = Get("DATA_DIR") ?? "/data",
             LoadingImage = Get("STREAM_LOADING_IMAGE"),
             PausedImage = Get("STREAM_PAUSED_IMAGE"),
             Quality = quality,

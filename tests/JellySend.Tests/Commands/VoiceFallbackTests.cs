@@ -20,7 +20,7 @@ public sealed class VoiceFallbackTests
         await _h.Send("!play sample film");
         Assert.Equal(100UL, _h.Gateway.Links[^1].ChannelId);
         Assert.Equal("Sample Film (2010)", _h.Current.Request.Title);
-        Assert.Equal(_h.VoiceCommands.FallbackNotice, _h.Texts[0]);
+        Assert.Equal(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts[0]);
         Assert.Contains("within 20 minutes", _h.Texts[0], StringComparison.Ordinal);
         Assert.True(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5)); // nobody there yet
 
@@ -48,7 +48,7 @@ public sealed class VoiceFallbackTests
     public async Task Join_does_the_same()
     {
         await _h.Send("!join");
-        Assert.Equal([_h.VoiceCommands.FallbackNotice, "📡 Joined — ready to broadcast."], _h.Texts);
+        Assert.Equal([_h.VoiceCommands.FallbackNotice("voice-100"), "📡 Joined — ready to broadcast."], _h.Texts);
         Assert.Equal(100UL, _h.Gateway.Links[^1].ChannelId);
         Assert.True(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));
     }
@@ -62,7 +62,7 @@ public sealed class VoiceFallbackTests
         _h.Sender.Sent.Clear();
         await _h.Send("!play sample film");
         Assert.Equal(101UL, _h.Gateway.Links[^1].ChannelId);
-        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice, _h.Texts);
+        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts);
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public sealed class VoiceFallbackTests
         _h.Gateway.States[(5, 20)] = 50;
         await _h.Send("!play sample film");
         Assert.Equal(50UL, _h.Gateway.Links[^1].ChannelId);
-        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice, _h.Texts);
+        Assert.DoesNotContain(_h.VoiceCommands.FallbackNotice("voice-100"), _h.Texts);
         Assert.False(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));
     }
 
@@ -96,8 +96,8 @@ public sealed class VoiceFallbackTests
     public void With_no_timeout_the_notice_promises_nothing_and_no_countdown_starts()
     {
         var voice = new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams());
-        Assert.DoesNotContain("sign off", voice.FallbackNotice, StringComparison.Ordinal);
-        Assert.Contains("1 minute.", new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams(), emptyChannelTimeout: TimeSpan.FromMinutes(1)).FallbackNotice, StringComparison.Ordinal);
+        Assert.DoesNotContain("sign off", voice.FallbackNotice("x"), StringComparison.Ordinal);
+        Assert.Contains("1 minute.", new VoiceModule(new VoiceManager(new FakeVoiceGateway()), new FakeStreams(), emptyChannelTimeout: TimeSpan.FromMinutes(1)).FallbackNotice("x"), StringComparison.Ordinal);
     }
 
     [Fact]

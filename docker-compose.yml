@@ -8,5 +8,7 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./data:/data        # saved settings (e.g. each server's default voice channel)
     devices:
       - /dev/dri:/dev/dri   # VA-API hardware encoding (Intel/AMD)

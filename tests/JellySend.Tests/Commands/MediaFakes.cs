@@ -240,7 +240,7 @@ internal sealed class MediaHarness
     /// <summary>The voice commands registered with the media module (spec 023 tests watch its countdown).</summary>
     public VoiceModule VoiceCommands { get; }
 
-    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null, TimeSpan? emptyChannelTimeout = null)
+    public MediaHarness(bool configured = true, TimeSpan? maxPlaytime = null, TimeSpan? emptyChannelTimeout = null, JellySend.Common.Config.SettingsStore? settings = null)
     {
         Pipelines = new FakePipelineFactory(Connector.Log);
         Voice = new VoiceManager(Gateway);
@@ -248,6 +248,7 @@ internal sealed class MediaHarness
         Media = new MediaModule(configured ? Library : null, Engine, Voice, g => g == 5 ? "Movie Night" : null, Time)
         {
             MaxPlaytime = maxPlaytime ?? TimeSpan.FromHours(12),
+            Settings = settings ?? new JellySend.Common.Config.SettingsStore(null),
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);

@@ -102,6 +102,9 @@ public static partial class MediaText
         `!audio` — audio language: shows the choices · `!audio japanese`
         `!ar` — aspect ratio (picture shape): shows the choices · `!ar 16:9`
         `!res` — resolution (picture size): shows the choices · `!res 720p`
+        ### 🛠️ Extras
+        `!channel set` — move the bot to another voice channel
+        `!channel default` — the voice channel to use when you're not in one
         `!debug on` — stream stats on screen
         -# More on any command: `!help play` · everything in detail: `!help all` · every command also works as `!media <command>`.
         -# JellySend — a fork of Slopsoil, GPL-3.0.

@@ -102,7 +102,13 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         }
 
         var guildNames = new GuildNames();
-        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>()) { MaxPlaytime = options.MaxPlaytime };
+        var settingsLog = loggers.CreateLogger<SettingsStore>();
+        var settings = new SettingsStore(options.DataDirectory, m => settingsLog.LogWarning("{Message}", m));
+        var media = new MediaModule(library, engine, voice, guildNames.Get, logger: loggers.CreateLogger<MediaModule>())
+        {
+            MaxPlaytime = options.MaxPlaytime,
+            Settings = settings,
+        };
         var voiceModule = new VoiceModule(
             voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout, announcer: new RestMessageSender(rest));
 

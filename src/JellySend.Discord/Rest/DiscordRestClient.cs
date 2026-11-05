@@ -63,7 +63,7 @@ public sealed class DiscordRestClient
     /// The guild's voice channels in the order Discord lists them (position, then id), without its AFK channel
     /// (spec 023: where to broadcast when the person asking isn't in voice).
     /// </summary>
-    public async Task<IReadOnlyList<ulong>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct)
+    public async Task<IReadOnlyList<(ulong Id, string Name)>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct)
     {
         var id = guildId.ToString(CultureInfo.InvariantCulture);
         using var guild = JsonDocument.Parse(await SendAsync(HttpMethod.Get, $"guilds/{id}", null, ct).ConfigureAwait(false));
@@ -74,10 +74,20 @@ public sealed class DiscordRestClient
             .Where(c => c.TryGetProperty("type", out var t) && t.TryGetInt32(out var type) && type == VoiceChannelType)
             .Select(c => (
                 Id: ulong.Parse(c.GetProperty("id").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture),
+                Name: c.TryGetProperty("name", out var n) && n.GetString() is { } name ? name : "voice",
                 Position: c.TryGetProperty("position", out var p) && p.TryGetInt32(out var pos) ? pos : int.MaxValue))
             .Where(c => c.Id != afk)
             .OrderBy(c => c.Position).ThenBy(c => c.Id)
-            .Select(c => c.Id)];
+            .Select(c => (c.Id, c.Name))];
+    }
+
+    /// <summary>The servers the account is in (spec 027: <c>!channel default</c>), in Discord's order.</summary>
+    public async Task<IReadOnlyList<(ulong Id, string Name)>> GetGuildsAsync(CancellationToken ct)
+    {
+        using var guilds = JsonDocument.Parse(await SendAsync(HttpMethod.Get, "users/@me/guilds", null, ct).ConfigureAwait(false));
+        return [.. guilds.RootElement.EnumerateArray().Select(g => (
+            ulong.Parse(g.GetProperty("id").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture),
+            g.TryGetProperty("name", out var n) && n.GetString() is { } name ? name : "server"))];
     }
 
     /// <summary>Discord's channel type for a voice channel (stage channels, 13, are left out).</summary>

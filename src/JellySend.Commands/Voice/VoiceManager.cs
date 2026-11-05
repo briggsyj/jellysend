@@ -36,17 +36,21 @@ public sealed class VoiceManager(IVoiceGateway gateway, ILogger<VoiceManager>? l
     /// <summary>True while a join/move for the guild is in progress (a move leaves before it rejoins).</summary>
     public bool IsBusy(ulong guildId) => _locks.TryGetValue(guildId, out var gate) && gate.CurrentCount == 0;
 
+    /// <summary>The server's saved default voice channel (spec 027), if any.</summary>
+    public Func<ulong, ulong?>? DefaultChannel { get; set; }
+
     /// <summary>
     /// Where a command from <paramref name="message"/> should broadcast (spec 023): the author's voice channel; else, in a
-    /// server channel, the bot's current channel there, or else the server's first voice channel (<c>Fallback</c>).
-    /// Null when there is nowhere (a DM from someone not in voice, or a server without voice channels).
+    /// server channel, the bot's current channel there, or else the server's saved default voice channel (spec 027) or
+    /// its first one (<c>Fallback</c>, with the channel's name). Null when there is nowhere (a DM from someone not in
+    /// voice, or a server without voice channels).
     /// </summary>
-    public async Task<(ulong Guild, ulong Channel, bool Fallback)?> ResolveTargetAsync(ChatMessage message, CancellationToken ct)
+    public async Task<(ulong Guild, ulong Channel, bool Fallback, string? Name)?> ResolveTargetAsync(ChatMessage message, CancellationToken ct)
     {
         var (guild, channel) = VoiceModule.ResolveAuthorVoice(gateway, message);
         if (guild is { } g && channel is { } ch)
         {
-            return (g, ch, false);
+            return (g, ch, false, null);
         }
 
         if (message.GuildId is not { } server)
@@ -56,13 +60,16 @@ public sealed class VoiceManager(IVoiceGateway gateway, ILogger<VoiceManager>? l
 
         if (Get(server) is { } link)
         {
-            return (server, link.ChannelId, false);
+            return (server, link.ChannelId, false, null);
         }
 
         try
         {
             var channels = await gateway.GetVoiceChannelsAsync(server, ct).ConfigureAwait(false);
-            return channels.Count > 0 ? (server, channels[0], true) : null;
+            var pick = DefaultChannel?.Invoke(server) is { } saved && channels.FirstOrDefault(c => c.Id == saved) is { } found
+                ? found
+                : channels.FirstOrDefault();
+            return pick is null ? null : (server, pick.Id, true, pick.Name);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
