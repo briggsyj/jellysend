@@ -182,7 +182,8 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var (item, fellBack) = await ResolveWithFallbackAsync(c, query).ConfigureAwait(false);
+        var more = new List<MediaItem>();
+        var (item, fellBack) = await ResolveWithFallbackAsync(c, query, more).ConfigureAwait(false);
         if (item is null)
         {
             return;
@@ -200,22 +201,42 @@ public sealed class MediaModule : IStreamControl
             await c.ReplyAsync($"⏩ starting at {MediaText.FormatTimestamp(start)}").ConfigureAwait(false);
         }
 
-        await PlayItemAsync(c, item, start).ConfigureAwait(false);
+        if (await PlayItemAsync(c, item, start).ConfigureAwait(false) && more.Count > 0 && ContextGuild(c) is { } guild
+            && _states.TryGetValue(guild, out var state))
+        {
+            // Spec 014: the other picked episodes play right after this one, in the order picked.
+            var queued = state.Queue.InsertNext(more);
+            await c.ReplyAsync(QueuedText(more, queued, "up next")).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The reply for several queued episodes: what was queued, and how many did not fit.</summary>
+    private static string QueuedText(IReadOnlyList<MediaItem> items, int queued, string where)
+    {
+        var names = string.Join(", ", items.Take(queued).Select(i => $"**{MediaLabels.Format(i)}**"));
+        var text = queued > 0 ? $"➕ queued{(where.Length > 0 ? " " + where : "")}: {names}" : "";
+        if (queued < items.Count)
+        {
+            text += (text.Length > 0 ? "\n" : "") + $"the playlist is full ({MediaText.PlaylistMax} items) — {items.Count - queued} not queued";
+        }
+
+        return text;
     }
 
     /// <summary>Search <paramref name="query"/>; if its formats found nothing at all, search the whole text as a title.</summary>
-    private async Task<(MediaItem? Item, bool FellBack)> ResolveWithFallbackAsync(CommandContext c, PlayQuery query)
+    /// <param name="more">Collects further episodes picked together with the first (<c>2,5,8</c>; spec 014); null = one pick.</param>
+    private async Task<(MediaItem? Item, bool FellBack)> ResolveWithFallbackAsync(CommandContext c, PlayQuery query, List<MediaItem>? more = null)
     {
         var plain = query.AsPlainTitle();
         var canFallBack = !query.Quoted && (query.HasFormats || query.Title.Length == 0) && plain.Title.Length > 0
             && !string.Equals(plain.Title, query.Title, StringComparison.Ordinal);
         if (query.Title.Length == 0)
         {
-            return (await ResolveAsync(c, plain).ConfigureAwait(false), true); // `!play s01e02`: only formats, so a title
+            return (await ResolveAsync(c, plain, more: more).ConfigureAwait(false), true); // `!play s01e02`: only formats, so a title
         }
 
         var quiet = canFallBack ? new QuietMiss() : null;
-        var item = await ResolveAsync(c, query, quiet).ConfigureAwait(false);
+        var item = await ResolveAsync(c, query, quiet, more).ConfigureAwait(false);
         if (item is not null || quiet is not { NothingFound: true })
         {
             return (item, false); // found, or cancelled/failed in a picker or on an error (already replied)
@@ -223,7 +244,7 @@ public sealed class MediaModule : IStreamControl
 
         // Neither found anything: report the miss as asked (`S01E02 of `show` not found`), not the whole-text search.
         var second = new QuietMiss();
-        var fallback = await ResolveAsync(c, plain, second).ConfigureAwait(false);
+        var fallback = await ResolveAsync(c, plain, second, more).ConfigureAwait(false);
         if (fallback is null && second.NothingFound)
         {
             await c.ReplyAsync(NotFoundText(query)).ConfigureAwait(false);
@@ -451,7 +472,8 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        var (item, _) = await ResolveWithFallbackAsync(c, query).ConfigureAwait(false);
+        var more = new List<MediaItem>();
+        var (item, _) = await ResolveWithFallbackAsync(c, query, more).ConfigureAwait(false);
         if (item is null)
         {
             return;
@@ -462,7 +484,11 @@ public sealed class MediaModule : IStreamControl
             // Idle: play now — or, if a playlist is waiting, queue this and start the playlist from its head.
             if (state.Queue.Count == 0)
             {
-                await PlayItemAsync(c, item).ConfigureAwait(false);
+                if (await PlayItemAsync(c, item).ConfigureAwait(false) && more.Count > 0)
+                {
+                    await c.ReplyAsync(QueuedText(more, AppendAll(state, more), "up next")).ConfigureAwait(false);
+                }
+
                 return;
             }
 
@@ -472,8 +498,11 @@ public sealed class MediaModule : IStreamControl
                 return;
             }
 
+            var appended = AppendAll(state, more);
             var head = state.Queue.TakeNext()!;
-            await c.ReplyAsync($"➕ queued **{MediaLabels.Format(item)}** at #{state.Queue.Count}").ConfigureAwait(false);
+            await c.ReplyAsync(more.Count == 0
+                ? $"➕ queued **{MediaLabels.Format(item)}** at #{state.Queue.Count}"
+                : QueuedText([item, .. more], appended + 1, "")).ConfigureAwait(false);
             if (!await PlayItemAsync(c, head).ConfigureAwait(false))
             {
                 state.Queue.PushFront(head);
@@ -489,7 +518,30 @@ public sealed class MediaModule : IStreamControl
             return;
         }
 
-        await c.ReplyAsync($"➕ queued **{MediaLabels.Format(item)}** at #{position}").ConfigureAwait(false);
+        if (more.Count == 0)
+        {
+            await c.ReplyAsync($"➕ queued **{MediaLabels.Format(item)}** at #{position}").ConfigureAwait(false);
+            return;
+        }
+
+        await c.ReplyAsync(QueuedText([item, .. more], AppendAll(state, more) + 1, $"from #{position}")).ConfigureAwait(false);
+    }
+
+    /// <summary>Append <paramref name="items"/> in order while they fit; returns how many were appended.</summary>
+    private static int AppendAll(GuildState state, IReadOnlyList<MediaItem> items)
+    {
+        var added = 0;
+        foreach (var item in items)
+        {
+            if (state.Queue.Add(item) is null)
+            {
+                break;
+            }
+
+            added++;
+        }
+
+        return added;
     }
 
     private async Task OrderAsync(CommandContext c)
@@ -746,7 +798,7 @@ public sealed class MediaModule : IStreamControl
         return true;
     }
 
-    private async Task<MediaItem?> ResolveAsync(CommandContext c, PlayQuery query, QuietMiss? quiet = null)
+    private async Task<MediaItem?> ResolveAsync(CommandContext c, PlayQuery query, QuietMiss? quiet = null, List<MediaItem>? more = null)
     {
         var library = _library!;
         var (show, season, episode) = (query.Title, query.Season, query.Episode);
@@ -802,11 +854,11 @@ public sealed class MediaModule : IStreamControl
             item = results[choice - 1];
         }
 
-        return item.Type == "Series" ? await PickSeasonThenEpisodeAsync(c, item, episode is null ? season : null).ConfigureAwait(false) : item;
+        return item.Type == "Series" ? await PickSeasonThenEpisodeAsync(c, item, episode is null ? season : null, more).ConfigureAwait(false) : item;
     }
 
     /// <summary>Pick a season, then an episode; <paramref name="season"/> given (<c>&lt;show&gt; s3</c>) skips the season pick.</summary>
-    private async Task<MediaItem?> PickSeasonThenEpisodeAsync(CommandContext c, MediaItem series, int? season = null)
+    private async Task<MediaItem?> PickSeasonThenEpisodeAsync(CommandContext c, MediaItem series, int? season = null, List<MediaItem>? more = null)
     {
         var name = series.Name ?? "Unknown";
         IReadOnlyList<MediaItem> seasons;
@@ -832,7 +884,7 @@ public sealed class MediaModule : IStreamControl
         {
             if (seasons.FirstOrDefault(s => s.IndexNumber == wanted) is { } chosen)
             {
-                return await PickEpisodeAsync(c, series.Id, name, chosen).ConfigureAwait(false);
+                return await PickEpisodeAsync(c, series.Id, name, chosen, more).ConfigureAwait(false);
             }
 
             missing = $"**{name}** has no season {wanted}. ";
@@ -840,7 +892,7 @@ public sealed class MediaModule : IStreamControl
 
         if (seasons.Count == 1 && missing is null)
         {
-            return await PickEpisodeAsync(c, series.Id, name, seasons[0]).ConfigureAwait(false);
+            return await PickEpisodeAsync(c, series.Id, name, seasons[0], more).ConfigureAwait(false);
         }
 
         var lines = new List<string> { $"{missing}**{name}** — {seasons.Count} season{(seasons.Count == 1 ? "" : "s")}. Pick a season:\n" };
@@ -851,10 +903,11 @@ public sealed class MediaModule : IStreamControl
             return null;
         }
 
-        return await PickEpisodeAsync(c, series.Id, name, seasons[choice - 1]).ConfigureAwait(false);
+        return await PickEpisodeAsync(c, series.Id, name, seasons[choice - 1], more).ConfigureAwait(false);
     }
 
-    private async Task<MediaItem?> PickEpisodeAsync(CommandContext c, string seriesId, string seriesName, MediaItem season)
+    /// <summary>Pick an episode; with <paramref name="more"/>, several in order (<c>2,5,8</c>, <c>3-6</c>): the first is returned, the rest added to it.</summary>
+    private async Task<MediaItem?> PickEpisodeAsync(CommandContext c, string seriesId, string seriesName, MediaItem season, List<MediaItem>? more = null)
     {
         IReadOnlyList<MediaItem> episodes;
         try
@@ -874,11 +927,23 @@ public sealed class MediaModule : IStreamControl
             return null;
         }
 
-        var lines = new List<string> { $"**{seriesName} — {season.Name ?? "Unknown"}**. Pick an episode:\n" };
+        var pick = more is null || episodes.Count == 1 ? "Pick an episode:" : "Pick an episode, or several in order (`2,5,8`, `3-6`):";
+        var lines = new List<string> { $"**{seriesName} — {season.Name ?? "Unknown"}**. {pick}\n" };
         lines.AddRange(episodes.Select((ep, i) =>
             $"  `{i + 1}` {(ep.IndexNumber is { } n ? $"E{n:00} — {ep.Name ?? "Unknown"}" : ep.Name ?? "Unknown")}"));
         await c.ReplyAsync(string.Join('\n', lines)).ConfigureAwait(false);
-        return await NumberPrompt.AskAsync(c, episodes.Count).ConfigureAwait(false) is { } choice ? episodes[choice - 1] : null;
+        if (more is null || episodes.Count == 1)
+        {
+            return await NumberPrompt.AskAsync(c, episodes.Count).ConfigureAwait(false) is { } choice ? episodes[choice - 1] : null;
+        }
+
+        if (await NumberPrompt.AskManyAsync(c, episodes.Count).ConfigureAwait(false) is not { } picks)
+        {
+            return null;
+        }
+
+        more.AddRange(picks.Skip(1).Select(p => episodes[p - 1]));
+        return episodes[picks[0] - 1];
     }
 
     // ── Playback ─────────────────────────────────────────────────────────────

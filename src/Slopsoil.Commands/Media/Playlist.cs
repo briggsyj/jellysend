@@ -49,6 +49,20 @@ public sealed class Playlist<T>(Func<T, string> label)
         }
     }
 
+    /// <summary>
+    /// Insert <paramref name="items"/> at the head in their order (they play next), as many as fit under the cap;
+    /// returns how many were inserted (spec 014: episodes picked together with the one starting now).
+    /// </summary>
+    public int InsertNext(IReadOnlyList<T> items)
+    {
+        lock (_lock)
+        {
+            var fit = Math.Max(0, Math.Min(items.Count, MediaText.PlaylistMax - _items.Count));
+            _items.InsertRange(0, items.Take(fit));
+            return fit;
+        }
+    }
+
     /// <summary>Remove and return the first item, or null when empty (auto-advance / skip).</summary>
     public T? TakeNext()
     {

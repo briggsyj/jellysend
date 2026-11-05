@@ -94,7 +94,7 @@ public sealed class MediaPlayTests
         var run = _h.Start("!play office");
         await _h.UntilReply("**The Office** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` Special");
+        await _h.UntilReply("**The Office — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — The Dundies\n  `2` Special");
         await _h.Answer("1");
         await run;
         Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);

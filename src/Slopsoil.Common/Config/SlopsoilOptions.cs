@@ -52,7 +52,7 @@ public sealed partial record SlopsoilOptions
     public int AvSyncMs { get; init; }
 
     /// <summary>Default of <see cref="StreamBufferSeconds"/> (spec 004).</summary>
-    public const double DefaultStreamBufferSeconds = 5.0;
+    public const double DefaultStreamBufferSeconds = 8.0;
 
     /// <summary>
     /// Spec 006: play the original file from Jellyfin and transcode once in the bot (subtitles still use Jellyfin's
@@ -169,7 +169,7 @@ public sealed partial record SlopsoilOptions
             }
             else
             {
-                warn?.Invoke($"STREAM_BUFFER_SECONDS='{b}' invalid (want 0-30); using 5");
+                warn?.Invoke($"STREAM_BUFFER_SECONDS='{b}' invalid (want 0-30); using {DefaultStreamBufferSeconds.ToString(CultureInfo.InvariantCulture)}");
             }
         }
 

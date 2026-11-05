@@ -142,7 +142,7 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_RESOLUTION` | No | preset | Bounding box `W:H` (or `WxH`). |
 | `STREAM_FPS` | No | preset | Frame-rate **ceiling**, 1–60. Each stream follows the source rate at or below it; faster sources are divided evenly (60 → 30, 50 → 25). |
 | `STREAM_VIDEO_BITRATE` | No | preset | Constant bitrate, e.g. `7000k`. |
-| `STREAM_BUFFER_SECONDS` | No | `5` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
+| `STREAM_BUFFER_SECONDS` | No | `8` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
 | `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
 | `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
 | `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
@@ -185,6 +185,7 @@ Every command works as a short form (`!play`) and under `!media` (`!media play`)
 | `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
 | `!play <show>` | Pick season → episode |
 | `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |
+| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!queue` they all go to the end of the playlist (max 10). |
 | `!play <title> 1:23:45` | Start at a time (also `45m`, `90s`, `1h30m`) |
 | `!play "<title>"` | Quotes: read it all as the title |
 

@@ -140,7 +140,7 @@ public sealed class MediaCommandsTests
     public async Task Season_only_skips_the_season_picker(string content)
     {
         var run = _h.Start(content);
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        await _h.UntilReply("**The Office — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
         await _h.Answer("2");
         await run;
         Assert.Equal("The Office — S02E02 — Sexual Harassment", _h.Current.Request.Title);
@@ -152,7 +152,7 @@ public sealed class MediaCommandsTests
         var run = _h.Start("!play office s9");
         await _h.UntilReply("**The Office** has no season 9. **The Office** — 2 seasons. Pick a season:\n\n  `1` Season 1\n  `2` Season 2");
         await _h.Answer("2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        await _h.UntilReply("**The Office — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
         await _h.Answer("1");
         await run;
         Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);
@@ -163,7 +163,7 @@ public sealed class MediaCommandsTests
     {
         _h.Library.Search["office"] = [MediaHarness.Movie("m", "Office", 2015), Office];
         var run = _h.Start("!play office s2");
-        await _h.UntilReply("**The Office — Season 2**. Pick an episode:\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
+        await _h.UntilReply("**The Office — Season 2**. Pick an episode, or several in order (`2,5,8`, `3-6`):\n\n  `1` E01 — The Dundies\n  `2` E02 — Sexual Harassment");
         await _h.Answer("1");
         await run;
         Assert.Equal("The Office — S02E01 — The Dundies", _h.Current.Request.Title);

@@ -95,13 +95,13 @@ public sealed class OptionsTests
     }
 
     [Theory]
-    [InlineData(null, 5.0, 0)]
+    [InlineData(null, 8.0, 0)]
     [InlineData("0", 0.0, 0)]
     [InlineData("2.5", 2.5, 0)]
     [InlineData("30", 30.0, 0)]
-    [InlineData("31", 5.0, 1)]
-    [InlineData("-1", 5.0, 1)]
-    [InlineData("lots", 5.0, 1)]
+    [InlineData("31", 8.0, 1)]
+    [InlineData("-1", 8.0, 1)]
+    [InlineData("lots", 8.0, 1)]
     public void Stream_buffer_seconds(string? raw, double seconds, int warnings)
     {
         var o = raw is null ? Parse() : Parse(("STREAM_BUFFER_SECONDS", raw));
