@@ -248,7 +248,7 @@ public sealed class ScreeningControlTests
 }
 
 /// <summary>Spec 028: which events start the bot, and when.</summary>
-public sealed class EventSchedulerTests
+public sealed partial class EventSchedulerTests
 {
     private readonly MediaHarness _h = new();
     private readonly FakeEvents _events = new();
@@ -380,6 +380,17 @@ public sealed class EventSchedulerTests
         public int Polls { get; private set; }
 
         public void Add(EventInfo e) => _events.Add(e);
+
+        public void Replace(EventInfo e)
+        {
+            _events.RemoveAll(x => x.Id == e.Id);
+            _events.Add(e);
+        }
+
+        /// <summary>The DM channel with any user (spec 031); null = can't be messaged.</summary>
+        public ulong? Dm { get; set; } = 900;
+
+        public Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct) => Task.FromResult(Dm);
 
         public Task<IReadOnlyList<ulong>> GetServerIdsAsync(CancellationToken ct)
         {

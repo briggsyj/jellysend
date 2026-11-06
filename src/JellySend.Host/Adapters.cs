@@ -199,4 +199,6 @@ internal sealed class RestEventSource(JellySend.Discord.Rest.DiscordRestClient r
 
     public Task SetStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct) =>
         rest.SetScheduledEventStatusAsync(guildId, eventId, status, ct);
+
+    public Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct) => rest.OpenDmAsync(userId, ct);
 }

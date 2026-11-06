@@ -115,6 +115,17 @@ public sealed class DiscordRestClient
         e.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
         && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
 
+    /// <summary>Open (or reuse) the direct-message channel with <paramref name="userId"/> (spec 031); its id.</summary>
+    public async Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct)
+    {
+        using var channel = JsonDocument.Parse(await SendAsync(
+            HttpMethod.Post,
+            "users/@me/channels",
+            new JsonObject { ["recipients"] = new JsonArray(userId.ToString(CultureInfo.InvariantCulture)) },
+            ct).ConfigureAwait(false));
+        return Snowflake(channel.RootElement, "id");
+    }
+
     /// <summary>The servers the account is in (spec 027: <c>!channel default</c>), in Discord's order.</summary>
     public async Task<IReadOnlyList<(ulong Id, string Name)>> GetGuildsAsync(CancellationToken ct)
     {

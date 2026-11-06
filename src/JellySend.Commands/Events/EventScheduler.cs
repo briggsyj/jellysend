@@ -25,6 +25,9 @@ public interface IEventSource
 
     /// <summary>Set the event's status: <see cref="EventInfo.Active"/> starts it, <see cref="EventInfo.Completed"/> ends it.</summary>
     Task SetStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct);
+
+    /// <summary>The direct-message channel with <paramref name="userId"/> (spec 031), or null when it can't be opened.</summary>
+    Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct);
 }
 
 /// <summary>
@@ -43,8 +46,14 @@ public sealed class EventScheduler(
     private readonly ILogger _log = logger ?? NullLogger<EventScheduler>.Instance;
     private readonly HashSet<ulong> _handled = [];
 
+    /// <summary>Spec 031: per upcoming event, the description last checked and that check's cancellation.</summary>
+    private readonly Dictionary<ulong, (string Description, CancellationTokenSource Cancel)> _checked = [];
+
     /// <summary>The screenings started so far (tests await them).</summary>
     internal List<Task> Runs { get; } = [];
+
+    /// <summary>The ahead-of-time checks started so far (spec 031; tests await them).</summary>
+    internal List<Task> Checks { get; } = [];
 
     /// <summary>Poll until <paramref name="ct"/> is cancelled.</summary>
     public async Task RunAsync(CancellationToken ct)
@@ -114,10 +123,31 @@ public sealed class EventScheduler(
         var startedByHand = e.Status == EventInfo.Active;
         if (!due && !startedByHand)
         {
+            // Spec 031: an upcoming event, new or edited — check its list now, so the creator can fix it ahead of time.
+            if (e.Status == EventInfo.Scheduled && e.CreatorId is { } author && RoleResolver.Satisfies(roles, author, Role.Friend)
+                && !(_checked.TryGetValue(e.Id, out var last) && last.Description == e.Description))
+            {
+                if (_checked.Remove(e.Id, out var old))
+                {
+                    await old.Cancel.CancelAsync().ConfigureAwait(false);
+                    old.Cancel.Dispose();
+                }
+
+                var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                _checked[e.Id] = (e.Description, cancel);
+                _log.LogInformation("checking the screenings of upcoming event {Event} in guild {Guild}", e.Id, e.GuildId);
+                Checks.Add(CheckAsync(Request(e, channel, lines, author), e.Start, cancel.Token));
+            }
+
             return;
         }
 
         _handled.Add(e.Id);
+        if (_checked.Remove(e.Id, out var check))
+        {
+            await check.Cancel.CancelAsync().ConfigureAwait(false); // the run takes the questions over
+            check.Cancel.Dispose();
+        }
         if (startedByHand && startup)
         {
             _log.LogInformation("event {Event} in guild {Guild} was already running at startup — leaving it", e.Id, e.GuildId);
@@ -145,12 +175,43 @@ public sealed class EventScheduler(
         }
 
         _log.LogInformation("starting the screenings of event {Event} ({Count} items) in guild {Guild} channel {Channel}", e.Id, lines.Count, e.GuildId, channel);
+        Runs.Add(RunAsync(Request(e, channel, lines, creator), ct));
+    }
+
+    private MediaModule.ScreeningRequest Request(EventInfo e, ulong channel, IReadOnlyList<string> lines, ulong creator)
+    {
         var self = roles.SelfId;
-        var request = new MediaModule.ScreeningRequest(
+        return new MediaModule.ScreeningRequest(
             e.GuildId, channel, e.Name, lines, creator,
             m => m.AuthorId != self && RoleResolver.Satisfies(roles, m.AuthorId, Role.Friend),
-            () => source.SetStatusAsync(e.GuildId, e.Id, EventInfo.Completed, CancellationToken.None));
-        Runs.Add(RunAsync(request, ct));
+            () => source.SetStatusAsync(e.GuildId, e.Id, EventInfo.Completed, CancellationToken.None))
+        {
+            EventId = e.Id,
+            OpenDm = async () =>
+            {
+                try
+                {
+                    return await source.OpenDmAsync(creator, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "could not open a DM with user {User}", creator);
+                    return null;
+                }
+            },
+        };
+    }
+
+    private async Task CheckAsync(MediaModule.ScreeningRequest request, DateTimeOffset until, CancellationToken ct)
+    {
+        try
+        {
+            await media.CheckScreeningsAsync(request, until, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log.LogError(ex, "checking the screenings of {Name} failed", request.EventName);
+        }
     }
 
     private async Task RunAsync(MediaModule.ScreeningRequest request, CancellationToken ct)

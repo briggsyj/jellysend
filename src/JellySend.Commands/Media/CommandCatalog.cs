@@ -158,7 +158,7 @@ public static class CommandCatalog
         • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
-        • A title with several matches is asked about in that chat — anyone allowed to `!play` can answer before it's due; otherwise the first match plays.
+        • A title that isn't found, or matches several things, is sorted out with the event's creator in a DM — as soon as the event is created or edited, and again at the start if needed. Unanswered: several matches play the first, not found is skipped.
         • Left alone, it plays the whole list even in an empty channel, then ends the event and signs off.
         • Change the playlist (`!play`, `!skip`, `!playlist add/remove/order`) and you're at the controls: the empty-channel timeout applies again.
         -# The event's creator must be allowed to use `!play`. The bot needs **Manage Events** to start and end the event.
