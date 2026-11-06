@@ -115,6 +115,16 @@ public sealed class DiscordRestClient
         e.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
         && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
 
+    /// <summary>
+    /// Mark the account as interested in an event, or not (spec 033) — the event's "Interested" button.
+    /// </summary>
+    public Task SetEventInterestAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct) =>
+        SendAsync(
+            interested ? HttpMethod.Put : HttpMethod.Delete,
+            $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events/{eventId.ToString(CultureInfo.InvariantCulture)}/users/@me",
+            null,
+            ct);
+
     /// <summary>Open (or reuse) the direct-message channel with <paramref name="userId"/> (spec 031); its id.</summary>
     public async Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct)
     {

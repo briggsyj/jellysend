@@ -160,6 +160,7 @@ public static class CommandCatalog
         ```
         • Each line is written like `!play`: a title, an episode (`show s2e5`) or several (`show s1e1-3`).
         • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
+        • Once the bot has picked the event up, it marks itself **Interested** on it.
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
         • A title that isn't found, or matches several things, is sorted out with the event's creator in a DM — as soon as the event is created or edited, and again at the start if needed. Unanswered: several matches play the first, not found is skipped.

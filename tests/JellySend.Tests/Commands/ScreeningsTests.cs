@@ -392,6 +392,22 @@ public sealed partial class EventSchedulerTests
 
         public Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct) => Task.FromResult(Dm);
 
+        /// <summary>Interest changes (spec 033): event, interested.</summary>
+        public List<(ulong Event, bool Interested)> Interest { get; } = [];
+
+        public Exception? InterestError { get; set; }
+
+        public Task SetInterestedAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct)
+        {
+            if (InterestError is { } e)
+            {
+                return Task.FromException(e);
+            }
+
+            Interest.Add((eventId, interested));
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<ulong>> GetServerIdsAsync(CancellationToken ct)
         {
             Polls++;

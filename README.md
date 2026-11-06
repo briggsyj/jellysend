@@ -252,7 +252,7 @@ Screenings:
 ```
 
 - At the event's start time the bot starts the event and streams the screenings in the event's voice channel, taking over anything already playing (the rest of the playlist plays afterwards). Starting the event by hand in Discord starts them too.
-- Only events created by someone allowed to use `!play` count.
+- Only events created by someone allowed to use `!play` count. Once the bot has picked an event up, it marks itself **Interested** in it (and removes that if the event is edited so it no longer qualifies).
 - In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
 - A title that isn't found, or matches several things, is sorted out with the event's creator in a **DM**: as soon as the event is created or its description edited, and again when it starts if still open. For a missing title they reply with another title to search for (or `skip`); for several matches they pick from a numbered list. At the start the question stays open until shortly before that item is due; unanswered, several matches play the first and a missing title is skipped, with a note in the voice channel's chat. The schedule is posted again after each answer. If the creator can't be messaged, several matches are asked about in the voice channel's chat instead (anyone allowed to `!play` can answer) and missing titles are skipped.
 - Left alone, the bot plays the whole list, even if the channel is empty (the empty-channel timeout doesn't apply), then ends the event and leaves.

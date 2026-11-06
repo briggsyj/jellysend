@@ -28,6 +28,9 @@ public interface IEventSource
 
     /// <summary>The direct-message channel with <paramref name="userId"/> (spec 031), or null when it can't be opened.</summary>
     Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct);
+
+    /// <summary>Mark the bot's account as interested in the event, or not (spec 033).</summary>
+    Task SetInterestedAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct);
 }
 
 /// <summary>
@@ -45,6 +48,9 @@ public sealed class EventScheduler(
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ILogger _log = logger ?? NullLogger<EventScheduler>.Instance;
     private readonly HashSet<ulong> _handled = [];
+
+    /// <summary>Spec 033: events the bot marked itself interested in (it will run them).</summary>
+    private readonly HashSet<ulong> _interested = [];
 
     /// <summary>Spec 031: per upcoming event, the description last checked and that check's cancellation.</summary>
     private readonly Dictionary<ulong, (string Description, CancellationTokenSource Cancel)> _checked = [];
@@ -113,10 +119,23 @@ public sealed class EventScheduler(
 
     private async Task ConsiderAsync(EventInfo e, bool startup, CancellationToken ct)
     {
-        if (_handled.Contains(e.Id) || e.EntityType != EventInfo.VoiceEntity || e.ChannelId is not { } channel
-            || Screenings.Parse(e.Description) is not { Count: > 0 } lines)
+        if (_handled.Contains(e.Id))
         {
             return;
+        }
+
+        if (e.EntityType != EventInfo.VoiceEntity || e.ChannelId is not { } channel
+            || Screenings.Parse(e.Description) is not { Count: > 0 } lines)
+        {
+            await InterestAsync(e, false, ct).ConfigureAwait(false); // edited so it's no longer the bot's
+            return;
+        }
+
+        // Spec 033: "Interested" shows on the event that the bot has picked it up (only events it will run).
+        var eligible = e.CreatorId is { } maker && RoleResolver.Satisfies(roles, maker, Role.Friend);
+        if (e.Status == EventInfo.Scheduled || (e.Status == EventInfo.Active && !startup))
+        {
+            await InterestAsync(e, eligible, ct).ConfigureAwait(false);
         }
 
         var due = e.Status == EventInfo.Scheduled && e.Start <= _time.GetUtcNow();
@@ -211,6 +230,35 @@ public sealed class EventScheduler(
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _log.LogError(ex, "checking the screenings of {Name} failed", request.EventName);
+        }
+    }
+
+    /// <summary>Mark (or unmark) the bot as interested in <paramref name="e"/>, once per change; failures are logged.</summary>
+    private async Task InterestAsync(EventInfo e, bool interested, CancellationToken ct)
+    {
+        if (_interested.Contains(e.Id) == interested)
+        {
+            return;
+        }
+
+        try
+        {
+            await source.SetInterestedAsync(e.GuildId, e.Id, interested, ct).ConfigureAwait(false);
+            _log.LogInformation("{What} interested in event {Event} in guild {Guild}", interested ? "marked" : "no longer", e.Id, e.GuildId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not change interest in event {Event} in guild {Guild}", e.Id, e.GuildId);
+        }
+
+        // Remembered either way: a refusal is not retried every 30 s.
+        if (interested)
+        {
+            _interested.Add(e.Id);
+        }
+        else
+        {
+            _interested.Remove(e.Id);
         }
     }
 

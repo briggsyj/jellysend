@@ -180,6 +180,45 @@ public sealed partial class EventSchedulerTests
     }
 
     [Fact]
+    public async Task The_bot_marks_itself_interested_in_events_it_will_run_once()
+    {
+        _events.Add(Event(id: 1, startInMinutes: 60));
+        await PollAsync();
+        await PollAsync();
+        Assert.Equal([(1UL, true)], _events.Interest);
+
+        _events.Replace(Event(id: 1, startInMinutes: 60, description: "Movie night, no list"));  // edited: not the bot's any more
+        await PollAsync();
+        Assert.Equal([(1UL, true), (1UL, false)], _events.Interest);
+    }
+
+    [Fact]
+    public async Task No_interest_in_events_it_will_not_run()
+    {
+        _events.Add(Event(id: 1, startInMinutes: 60, creator: 30));               // creator can't use the bot
+        _events.Add(Event(id: 2, startInMinutes: 60, description: "No list here"));
+        _events.Add(Event(id: 3, status: EventInfo.Active));                       // already running at startup
+        await PollAsync(startup: true);
+        Assert.Empty(_events.Interest);
+    }
+
+    [Fact]
+    public async Task A_due_event_is_marked_as_it_starts_and_a_refusal_is_not_retried()
+    {
+        _events.InterestError = new InvalidOperationException("403");
+        _events.Add(Event(startInMinutes: 60));
+        await PollAsync();
+        await PollAsync();
+        Assert.Empty(_events.Interest);
+        Assert.Empty(_events.StatusChanges);
+        _events.InterestError = null;
+        _h.Time.Advance(TimeSpan.FromMinutes(60));
+        await PollAsync();
+        Assert.Empty(_events.Interest);                                            // remembered: not retried
+        Assert.Single(_events.StatusChanges);                                      // and it still starts
+    }
+
+    [Fact]
     public async Task Upcoming_events_from_others_are_not_checked()
     {
         _events.Add(Event(startInMinutes: 60, creator: 30, description: "Screenings:\n1. lost film"));
