@@ -1,4 +1,4 @@
-![](https://github.com/briggsyj/slopsoil/actions/workflows/tests.yml/badge.svg) ![.NET](https://img.shields.io/badge/.NET-10-512bd4.svg)
+![](https://github.com/briggsyj/jellysend/actions/workflows/tests.yml/badge.svg) ![.NET](https://img.shields.io/badge/.NET-10-512bd4.svg)
 # JellySend - Stream Jellyfin directly to Discord Voice Channels
 
 **JellySend** is a Discord self-bot that streams movies and TV from a Jellyfin server into a Discord voice channel, as a screenshare that everyone in the channel can watch together.
@@ -106,7 +106,7 @@ docker compose pull && docker compose up -d
 ### Build from source
 
 ```bash
-git clone https://github.com/briggsyj/slopsoil.git jellysend && cd jellysend
+git clone https://github.com/briggsyj/jellysend.git && cd jellysend
 docker compose up -d --build
 ```
 
