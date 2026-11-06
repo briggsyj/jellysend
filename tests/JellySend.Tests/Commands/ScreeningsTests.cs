@@ -354,15 +354,79 @@ public sealed partial class EventSchedulerTests
     }
 
     [Fact]
-    public async Task The_loop_polls_until_cancelled()
+    public async Task The_loop_fetches_at_startup_and_every_15_minutes_only()
     {
         using var cts = new CancellationTokenSource();
         var loop = _scheduler.RunAsync(cts.Token);
-        await _h.Until(() => _events.Polls >= 1);
-        _h.Time.Advance(EventScheduler.PollInterval);
-        await _h.Until(() => _events.Polls >= 2);
+        await _h.Until(() => _events.Polls == 1);
+        for (var i = 0; i < 29; i++)                                     // 29 regular looks: no network
+        {
+            _h.Time.Advance(EventScheduler.PollInterval);
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1, _events.Polls);
+        _h.Time.Advance(EventScheduler.PollInterval);                    // 15 minutes in: the safety-net refresh
+        await _h.Until(() => _events.Polls == 2);
         await cts.CancelAsync();
         await loop;
+    }
+
+    private static System.Text.Json.JsonElement Json(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement;
+
+    private string EventJson(ulong id = 1, int status = EventInfo.Scheduled, double startInMinutes = -1, string description = "Screenings:\\n1. First Film") =>
+        $$"""{"id":"{{id}}","guild_id":"5","name":"Movie Night","description":"{{description}}","channel_id":"300","status":{{status}},"entity_type":2,"scheduled_start_time":"{{_h.Time.GetUtcNow().AddMinutes(startInMinutes):O}}","creator_id":"20"}""";
+
+    [Fact]
+    public async Task A_pushed_event_starts_on_time_without_asking_discord()
+    {
+        using var cts = new CancellationTokenSource();
+        var loop = _scheduler.RunAsync(cts.Token);
+        await _h.Until(() => _events.Polls == 1);
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_CREATE", Json(EventJson(startInMinutes: 2)));
+        await _h.Until(() => _events.Interest.Count == 1, "picked up straight away");
+        Assert.Empty(_events.StatusChanges);
+        _h.Time.Advance(TimeSpan.FromMinutes(2));
+        await _h.Until(() => _events.StatusChanges.Count == 1, "started at its time");
+        await _h.Until(() => _h.Pipelines.Created.Count == 1, "streaming");
+        Assert.Equal(1, _events.Polls);                                  // all from the push, no REST listing
+        await cts.CancelAsync();
+        await loop;
+    }
+
+    [Fact]
+    public async Task Pushed_edits_and_deletes_update_what_is_known()
+    {
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_CREATE", Json(EventJson(startInMinutes: 60)));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Equal([(1UL, true)], _events.Interest);
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_UPDATE", Json(EventJson(startInMinutes: 60, description: "No list now")));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Equal([(1UL, true), (1UL, false)], _events.Interest);
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_DELETE", Json("""{"id":"1","guild_id":"5"}"""));
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_UPDATE", Json("""{"id":"x"}"""));               // malformed: ignored
+        _h.Time.Advance(TimeSpan.FromMinutes(61));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Empty(_events.StatusChanges);
+    }
+
+    [Fact]
+    public async Task A_guilds_events_arrive_with_it()
+    {
+        _scheduler.Apply("GUILD_CREATE", Json($$"""{"id":"5","guild_scheduled_events":[{{EventJson()}}]}"""));
+        _scheduler.Apply("GUILD_CREATE", Json("""{"id":"6"}"""));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Single(_events.StatusChanges);
+    }
+
+    [Fact]
+    public async Task The_refresh_forgets_events_that_are_gone()
+    {
+        _scheduler.Apply("GUILD_SCHEDULED_EVENT_CREATE", Json(EventJson(startInMinutes: 60)));
+        await PollAsync();                                               // Discord no longer lists it
+        _h.Time.Advance(TimeSpan.FromMinutes(61));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Empty(_events.StatusChanges);
     }
 
     private sealed class FakeEvents : IEventSource
