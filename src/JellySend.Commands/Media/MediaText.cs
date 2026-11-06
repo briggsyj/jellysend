@@ -106,6 +106,7 @@ public static partial class MediaText
         `!channel set` — move the bot to another voice channel
         `!channel default` — the voice channel to use when you're not in one
         `!debug on` — stream stats on screen
+        `!help events` — play a list from a Discord event (Screenings)
         -# More on any command: `!help play` · everything in detail: `!help all` · every command also works as `!media <command>`.
         -# JellySend — a fork of Slopsoil, GPL-3.0.
         """;

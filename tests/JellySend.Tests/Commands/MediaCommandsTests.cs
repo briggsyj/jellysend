@@ -367,7 +367,29 @@ public sealed class MediaHelpAllAndLanguageTests
         var all = string.Join("\n", _h.Texts);
         Assert.All(CommandCatalog.All, c => Assert.Contains($"**`!{c.Name}`**", all, StringComparison.Ordinal));
         Assert.StartsWith("## 📺 JellySend — the full guide\n### ▶️ Watch", _h.Texts[0], StringComparison.Ordinal);
-        Assert.Equal(CommandCatalog.Sections.Count, _h.Texts.Count(t => t.Contains("### ", StringComparison.Ordinal)));
+        Assert.Equal(CommandCatalog.Sections.Count + 1, _h.Texts.Count(t => t.Contains("### ", StringComparison.Ordinal)));
+        Assert.StartsWith(CommandCatalog.EventsHelp, _h.Texts[^1], StringComparison.Ordinal); // spec 028, then the footer
+    }
+
+    [Theory]
+    [InlineData("!help events")]
+    [InlineData("!help Event")]
+    [InlineData("!help screenings")]
+    [InlineData("!help !events")]
+    public async Task Help_events_explains_the_screenings_format(string content)
+    {
+        await _h.Send(content);
+        Assert.Equal([CommandCatalog.EventsHelp], _h.Texts);
+        Assert.True(CommandCatalog.EventsHelp.Length <= CommandCatalog.MessageLimit);
+        Assert.Contains("Screenings:\n1. Big Buck Bunny", CommandCatalog.EventsHelp, StringComparison.Ordinal);
+        Assert.Contains("`!help events`", MediaText.HelpText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_example_in_the_events_help_parses()
+    {
+        var example = CommandCatalog.EventsHelp.Split("```")[1];
+        Assert.Equal(["Big Buck Bunny", "Example Show s1e1-3"], JellySend.Commands.Events.Screenings.Parse(example));
     }
 
     [Fact]
