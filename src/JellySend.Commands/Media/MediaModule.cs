@@ -1635,13 +1635,9 @@ public sealed partial class MediaModule : IStreamControl
 
         await send($"📡 Tuning in to **{label}**…").ConfigureAwait(false);
         var allowDirect = !_directFailed.ContainsKey(item.Id);
+        // Spec 029: a new item starts on the tracks Jellyfin would pick, unless a language was picked here (spec 005).
+        tracks ??= await AutoTracksAsync(guild, library, item.Id).ConfigureAwait(false);
         var stream = await library.StartPlaybackAsync(item.Id, tracks, CancellationToken.None, allowDirect).ConfigureAwait(false);
-        if (stream is not null && tracks is null && ResolveTracks(guild, stream.Tracks) is { } preferred && preferred != stream.Selection)
-        {
-            // The remembered subtitle/audio language picks other tracks: reopen the session with them (spec 005).
-            await library.StopEncodingAsync(stream.PlaySessionId, CancellationToken.None).ConfigureAwait(false);
-            stream = await library.StartPlaybackAsync(item.Id, preferred, CancellationToken.None, allowDirect).ConfigureAwait(false);
-        }
 
         if (stream is null)
         {
@@ -2241,30 +2237,60 @@ public sealed partial class MediaModule : IStreamControl
 
     // ── Subtitle and audio tracks (spec 005) ─────────────────────────────────
 
-    /// <summary>Remembered per guild: subtitles on in a language (or off), audio in a language (null: default).</summary>
-    private sealed record TrackPrefs(bool SubtitlesOn, string? SubtitleLanguage, string? AudioLanguage);
+    /// <summary>
+    /// Remembered per guild after <c>!audio</c> / <c>!subs</c> / <c>!language</c>: audio in a language (null: not
+    /// picked), subtitles on in a language or off (<see cref="SubtitlesOn"/> null: not picked).
+    /// </summary>
+    private sealed record TrackPrefs(bool? SubtitlesOn, string? SubtitleLanguage, string? AudioLanguage);
 
-    /// <summary>The tracks the guild's remembered languages pick for an item (default/off when nothing matches).</summary>
-    private TrackSelection ResolveTracks(ulong guild, IReadOnlyList<MediaTrack> tracks)
+    /// <summary>
+    /// Spec 029: the tracks a new item starts on — Jellyfin's own pick for its user (audio and subtitles, or none), with
+    /// any language picked here this session (spec 005) on top. Falls back to the file's defaults if Jellyfin can't say.
+    /// </summary>
+    private async Task<TrackSelection> AutoTracksAsync(ulong guild, IMediaLibrary library, string itemId)
     {
+        JellyfinTracks? jellyfin = null;
+        try
+        {
+            jellyfin = await library.GetDefaultTracksAsync(itemId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Jellyfin's default tracks for {Item} unavailable; using the file's defaults", itemId);
+        }
+
+        return jellyfin is null ? TrackSelection.Default : ResolveTracks(guild, jellyfin);
+    }
+
+    /// <summary>Jellyfin's pick, overridden by the guild's remembered languages where they match a track.</summary>
+    private TrackSelection ResolveTracks(ulong guild, JellyfinTracks jellyfin)
+    {
+        var (audio, subtitle) = (jellyfin.Defaults.AudioIndex, jellyfin.Defaults.SubtitleIndex);
         if (!_trackPrefs.TryGetValue(guild, out var prefs))
         {
-            return TrackSelection.Default;
+            return jellyfin.Defaults;
         }
 
+        var tracks = jellyfin.Tracks;
         static bool Same(string? a, string? b) => a is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
-
-        int? audio = null;
-        if (prefs.AudioLanguage is { } language && tracks.FirstOrDefault(t => t.IsAudio && Same(t.Language, language)) is { } a && !a.IsDefault)
+        if (prefs.AudioLanguage is { } language)
         {
-            audio = a.Index;
+            // Jellyfin's own pick when it's in that language (not a commentary track listed first), else the first one.
+            var inLanguage = tracks.Where(t => t.IsAudio && Same(t.Language, language)).ToList();
+            if (inLanguage.Count > 0)
+            {
+                audio = (inLanguage.FirstOrDefault(t => t.Index == audio) ?? inLanguage.FirstOrDefault(t => t.IsDefault) ?? inLanguage[0]).Index;
+            }
         }
 
-        int? subtitle = null;
-        if (prefs.SubtitlesOn && prefs.SubtitleLanguage is { } subLanguage)
+        if (prefs.SubtitlesOn is false)
+        {
+            subtitle = null;
+        }
+        else if (prefs.SubtitlesOn is true && prefs.SubtitleLanguage is { } subLanguage)
         {
             var matches = tracks.Where(t => !t.IsAudio && Same(t.Language, subLanguage)).ToList();
-            subtitle = (matches.FirstOrDefault(t => !t.IsForced) ?? matches.FirstOrDefault())?.Index;
+            subtitle = (matches.FirstOrDefault(t => t.Index == subtitle) ?? matches.FirstOrDefault(t => !t.IsForced) ?? matches.FirstOrDefault())?.Index;
         }
 
         return new TrackSelection(audio, subtitle);
@@ -2338,7 +2364,7 @@ public sealed partial class MediaModule : IStreamControl
         }
 
         var track = options[choice];
-        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(false, null, null));
+        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(null, null, null));
         _trackPrefs[guild.Value] = audio
             ? prefs with { AudioLanguage = track?.Language }
             : prefs with { SubtitlesOn = track is not null, SubtitleLanguage = track?.Language };
@@ -2415,7 +2441,7 @@ public sealed partial class MediaModule : IStreamControl
             subtitlePick = subtitleOptions[s];
         }
 
-        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(false, null, null)) with { AudioLanguage = audioPick.Language };
+        var prefs = _trackPrefs.GetValueOrDefault(guild.Value, new TrackPrefs(null, null, null)) with { AudioLanguage = audioPick.Language };
         if (words.Length == 2)
         {
             prefs = prefs with { SubtitlesOn = subtitlePick is not null, SubtitleLanguage = subtitlePick?.Language };

@@ -140,6 +140,26 @@ internal sealed class FakeLibrary : IMediaLibrary
     /// <summary>The allowDirect argument of each StartPlaybackAsync call, in order (spec 012).</summary>
     public List<bool> AllowDirectCalls { get; } = [];
 
+    /// <summary>Spec 029: Jellyfin's own track pick per item id (default: the file's default audio, no subtitles).</summary>
+    public Dictionary<string, TrackSelection> JellyfinDefaults { get; } = [];
+
+    public Exception? DefaultTracksError { get; set; }
+
+    public int DefaultTracksCalls { get; private set; }
+
+    public Task<JellyfinTracks?> GetDefaultTracksAsync(string itemId, CancellationToken ct)
+    {
+        DefaultTracksCalls++;
+        if (DefaultTracksError is { } error)
+        {
+            return Task.FromException<JellyfinTracks?>(error);
+        }
+
+        return Task.FromResult<JellyfinTracks?>(new JellyfinTracks(
+            JellyfinDefaults.GetValueOrDefault(itemId, TrackSelection.Default),
+            Tracks.TryGetValue(itemId, out var tracks) ? tracks : []));
+    }
+
     public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true)
     {
         lock (PlaybackCalls)

@@ -37,7 +37,7 @@ It searches your library, plays the original file and encodes it once with hardw
 
 - **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play example show s2e3 10m`
 - **Transcode once** - the bot plays the original file and encodes it itself; Jellyfin transcodes only to burn in subtitles
-- **Subtitles and audio tracks** - pick by number or language (`!subs english`, `!audio japanese`); the choice is remembered by language
+- **Subtitles and audio tracks** - each film starts on the audio and subtitles Jellyfin picks for it (the bot's Jellyfin user's language and subtitle settings); pick others by number or language (`!subs english`, `!audio japanese`), remembered by language until the bot leaves
 - **Source frame rate** - streams follow the film's own frame rate (23.976 stays 23.976) up to `STREAM_FPS`
 - **One clock for audio and video** - a read-ahead buffer keeps them in sync, even for high-bitrate files
 - **Playlist** - queue up to 10 items; they play in order

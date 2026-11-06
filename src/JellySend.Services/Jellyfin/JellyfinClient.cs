@@ -220,6 +220,48 @@ public sealed class JellyfinClient : IDisposable
     /// can override the body's -1 and burn subtitles in) and <c>api_key</c> appended so FFmpeg can fetch segments.
     /// Returns null when the request fails or yields no usable source (logged).
     /// </summary>
+    /// <summary>
+    /// Spec 029: the audio and subtitle tracks Jellyfin picks for the bot's user — <c>DefaultAudioStreamIndex</c> and
+    /// <c>DefaultSubtitleStreamIndex</c> of the item's playback info, which apply that user's language and subtitle-mode
+    /// settings (and remembered selections) to the file. Null when Jellyfin can't be asked.
+    /// </summary>
+    public async Task<JellyfinTracks?> GetDefaultTracksAsync(string itemId, CancellationToken ct = default)
+    {
+        var userId = await GetUserIdAsync(ct).ConfigureAwait(false);
+        JsonElement result;
+        try
+        {
+            result = await SendAsync(
+                HttpMethod.Get,
+                $"/Items/{Uri.EscapeDataString(itemId)}/PlaybackInfo" + (string.IsNullOrEmpty(userId) ? "" : $"?{Query(("userId", userId))}"),
+                null,
+                AuthHeader.Build(_token),
+                PlaybackInfoTimeout,
+                ct).ConfigureAwait(false);
+        }
+        catch (JellyfinException ex)
+        {
+            _log.LogWarning("Jellyfin's default tracks for item {ItemId} unavailable: {Error}", itemId, Describe(ex));
+            return null;
+        }
+
+        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("MediaSources", out var sources)
+            || sources.ValueKind != JsonValueKind.Array || sources.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var source = sources[0];
+        static int? Index(JsonElement s, string name) =>
+            s.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) && i >= 0 ? i : null;
+        var tracks = ParseTracks(source);
+        var audio = Index(source, "DefaultAudioStreamIndex") is { } a && tracks.Any(t => t.IsAudio && t.Index == a) ? a : (int?)null;
+        var subtitle = Index(source, "DefaultSubtitleStreamIndex") is { } s && tracks.Any(t => !t.IsAudio && t.Index == s) ? s : (int?)null;
+        _log.LogInformation("Jellyfin's default tracks for item {ItemId}: audio {Audio}, subtitles {Subtitle}",
+            itemId, audio?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "default", subtitle?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "off");
+        return new JellyfinTracks(new TrackSelection(audio, subtitle), tracks);
+    }
+
     public async Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks = null, CancellationToken ct = default, bool allowDirect = true)
     {
         tracks ??= TrackSelection.Default;

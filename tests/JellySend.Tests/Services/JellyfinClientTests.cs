@@ -158,6 +158,61 @@ public sealed class JellyfinClientTests
         Assert.True(_log.Has(LogLevel.Warning, logged));
     }
 
+    // ---- Spec 029: Jellyfin's own track pick ----
+
+    private const string Streams = """
+        "MediaStreams": [
+          {"Index": 0, "Type": "Video", "Codec": "h264"},
+          {"Index": 1, "Type": "Audio", "Language": "eng", "DisplayTitle": "English", "IsDefault": true},
+          {"Index": 2, "Type": "Audio", "Language": "jpn", "DisplayTitle": "Japanese"},
+          {"Index": 3, "Type": "Subtitle", "Language": "eng", "DisplayTitle": "English"}
+        ]
+        """;
+
+    [Fact]
+    public async Task Default_tracks_are_jellyfins_pick_for_its_user()
+    {
+        _client.CachedUserId = "u";
+        _http.Responder = _ => FakeHttpHandler.Json($$"""{"MediaSources": [{"Id": "s", "DefaultAudioStreamIndex": 2, "DefaultSubtitleStreamIndex": 3, {{Streams}}}]}""");
+        var result = await _client.GetDefaultTracksAsync("item-1", Ct);
+        Assert.Equal(new TrackSelection(2, 3), result!.Defaults);
+        Assert.Equal([1, 2, 3], result.Tracks.Select(t => t.Index));
+        var request = Assert.Single(_http.Requests);
+        Assert.Equal("/Items/item-1/PlaybackInfo", request.Path);
+        Assert.Equal("u", request.Query["userId"]);
+    }
+
+    [Theory]
+    [InlineData(""" "DefaultSubtitleStreamIndex": -1, """, null, null)]           // no subtitles, audio unset
+    [InlineData(""" "DefaultAudioStreamIndex": 9, "DefaultSubtitleStreamIndex": 9, """, null, null)]  // not real tracks
+    [InlineData(""" "DefaultAudioStreamIndex": 3, "DefaultSubtitleStreamIndex": 1, """, null, null)]  // wrong kinds
+    [InlineData(""" "DefaultAudioStreamIndex": 1, """, 1, null)]
+    public async Task Default_tracks_only_name_real_tracks(string defaults, int? audio, int? subtitle)
+    {
+        _client.CachedUserId = "u";
+        _http.Responder = _ => FakeHttpHandler.Json($$"""{"MediaSources": [{"Id": "s", {{defaults}} {{Streams}}}]}""");
+        Assert.Equal(new TrackSelection(audio, subtitle), (await _client.GetDefaultTracksAsync("item-1", Ct))!.Defaults);
+    }
+
+    [Theory]
+    [InlineData("""{}""")]
+    [InlineData("""{"MediaSources": []}""")]
+    public async Task Default_tracks_without_a_source_are_unknown(string body)
+    {
+        _client.CachedUserId = "u";
+        _http.Responder = _ => FakeHttpHandler.Json(body);
+        Assert.Null(await _client.GetDefaultTracksAsync("item-1", Ct));
+    }
+
+    [Fact]
+    public async Task Default_tracks_on_an_error_are_unknown()
+    {
+        _client.CachedUserId = "u";
+        _http.Responder = _ => FakeHttpHandler.Json("{}", HttpStatusCode.InternalServerError);
+        Assert.Null(await _client.GetDefaultTracksAsync("item-1", Ct));
+        Assert.True(_log.Has(LogLevel.Warning, "default tracks for item item-1 unavailable"));
+    }
+
     [Fact]
     public async Task Start_playback_returns_null_on_request_failure_with_redacted_log()
     {
