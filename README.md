@@ -255,7 +255,8 @@ Screenings:
 - Only events created by someone allowed to use `!play` count.
 - In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
 - A title that matches several things is asked about in that chat; anyone allowed to `!play` can answer, until shortly before that item is due. Unanswered, the first match is used. The schedule is posted again after each pick. Titles that aren't found are skipped.
-- When the last screening ends, the bot ends the event.
+- Left alone, the bot plays the whole list, even if the channel is empty (the empty-channel timeout doesn't apply), then ends the event and leaves.
+- Change the playlist during the event (`!play`, `!skip`, `!playlist add` / `remove` / `order`) and it's under manual control: the empty-channel timeout applies again, and after the last screening it carries on with the playlist instead of leaving. The event is still ended in Discord.
 - The bot's account needs **Manage Events** in the server to start and end events (the screenings still run without it), and permission to post in the voice channel's chat.
 
 #### Jellyfin SyncPlay (group watch)

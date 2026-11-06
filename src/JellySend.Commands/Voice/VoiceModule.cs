@@ -188,6 +188,12 @@ public sealed class VoiceModule(
     /// <summary>Nobody but the bot is left in its channel: leave now (timeout 0) or start the countdown.</summary>
     private async Task OnChannelEmptyAsync(ulong guildId, ulong channelId)
     {
+        if (streams.HoldsChannel(guildId))
+        {
+            _log.LogInformation("channel {Channel} in guild {Guild} is empty, but an event's screenings are on — staying", channelId, guildId);
+            return;
+        }
+
         if (EmptyChannelTimeout <= TimeSpan.Zero)
         {
             _log.LogInformation("all users left channel {Channel} in guild {Guild} — disconnecting", channelId, guildId);
@@ -222,8 +228,8 @@ public sealed class VoiceModule(
         }
 
         _emptyTimers.TryRemove(new KeyValuePair<ulong, CancellationTokenSource>(guildId, cts));
-        // Re-check at expiry: still in voice, and still nobody else in the bot's channel.
-        if (voice.Find(guildId) is null || BotChannel(guildId) is not { } channel || HasOthers(guildId, channel))
+        // Re-check at expiry: still in voice, still nobody else in the bot's channel, and no event holding it.
+        if (voice.Find(guildId) is null || BotChannel(guildId) is not { } channel || HasOthers(guildId, channel) || streams.HoldsChannel(guildId))
         {
             return;
         }
