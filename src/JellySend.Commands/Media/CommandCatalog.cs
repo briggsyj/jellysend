@@ -140,6 +140,29 @@ public static class CommandCatalog
         return All.FirstOrDefault(c => c.Names.Contains(name, StringComparer.OrdinalIgnoreCase));
     }
 
+    /// <summary>Names that show <see cref="EventsHelp"/> with <c>!help</c> (spec 028).</summary>
+    public static readonly IReadOnlyList<string> EventTopics = ["events", "event", "screenings"];
+
+    /// <summary><c>!help events</c> (spec 028): how a Discord event starts screenings, and how to write them.</summary>
+    public const string EventsHelp = """
+        ### 📅 Discord Events — screenings
+        Schedule a **voice channel** event and list what to play in its description, under a line `Screenings`:
+        ```
+        Movie night!
+
+        Screenings:
+        1. Big Buck Bunny
+        2. Example Show s1e1-3
+        ```
+        • Each line is written like `!play`: a title, an episode (`show s2e5`) or several (`show s1e1-3`).
+        • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
+        • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
+        • It posts each item's start time and the end time in that channel's chat (in your own time zone).
+        • A title with several matches is asked about in that chat — anyone allowed to `!play` can answer before it's due; otherwise the first match plays.
+        • When the last one ends, the bot ends the event.
+        -# The event's creator must be allowed to use `!play`. The bot needs **Manage Events** to start and end the event.
+        """;
+
     /// <summary>Discord's message limit, with room to spare.</summary>
     public const int MessageLimit = 1900;
 
@@ -168,6 +191,7 @@ public static class CommandCatalog
             messages.Add(current.TrimEnd());
         }
 
+        messages.Add(EventsHelp);
         messages[0] = "## 📺 JellySend — the full guide\n" + messages[0];
         messages[^1] += "\n-# Every command also works as `!media <command>`, e.g. `!media play`."
             + "\n-# JellySend is a fork of Slopsoil, rewritten in .NET · free software under the GPL-3.0.";

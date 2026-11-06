@@ -330,6 +330,12 @@ public sealed partial class MediaModule : IStreamControl
             return;
         }
 
+        if (CommandCatalog.EventTopics.Contains(arg.TrimStart('!'), StringComparer.OrdinalIgnoreCase))
+        {
+            await c.ReplyAsync(CommandCatalog.EventsHelp).ConfigureAwait(false); // spec 028
+            return;
+        }
+
         await c.ReplyAsync(CommandCatalog.Find(arg) is { } info
             ? info.HelpText()
             : $"🙅 No command called `{Shorten(arg.TrimStart('!'))}` — `!help` lists them all.").ConfigureAwait(false);
