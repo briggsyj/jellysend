@@ -61,6 +61,10 @@ public static class CommandCatalog
         new("stop", [], Role.Friend, WhileWatching, "`!stop` — stop the stream; the bot stays in voice and keeps the playlist (`!play` starts it again)."),
         new("leave", [], Role.Friend, WhileWatching, "`!leave` — stop and leave the voice channel. The bot also leaves on its own when the channel stays empty."),
         new("join", [], Role.Friend, WhileWatching, "`!join` — bring the bot into your voice channel (`!play` does this for you)."),
+        new("schedule", [], Role.Friend, Schedule, """
+            `!schedule` — when each thing on the playlist starts, and when it all ends, worked out from the time left in what's on now
+            -# Times show in your own time zone. With nothing queued, it just says when the current one ends. Pausing or skipping changes them.
+            """),
         new("playlist", [], Role.Friend, Schedule, """
             The playlist: up to 10 things that play in order, each from the start.
             `!playlist` — what's on now and coming up, numbered; then reply `add`, `remove` or `order` to change it
