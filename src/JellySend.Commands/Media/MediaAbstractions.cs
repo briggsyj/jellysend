@@ -24,6 +24,9 @@ public interface IMediaLibrary
     /// <param name="allowDirect">False forces Jellyfin's transcode (spec 012: the original already failed to start).</param>
     Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true);
 
+    /// <summary>Spec 029: the tracks Jellyfin would play for this item (its user settings), or null when unknown.</summary>
+    Task<JellyfinTracks?> GetDefaultTracksAsync(string itemId, CancellationToken ct);
+
     /// <summary>Jellyfin's live transcode stats for an item (spec 017); null when not reported.</summary>
     Task<string?> GetTranscodeStatsAsync(string itemId, CancellationToken ct) => Task.FromResult<string?>(null);
 

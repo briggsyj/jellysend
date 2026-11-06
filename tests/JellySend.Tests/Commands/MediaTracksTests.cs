@@ -86,10 +86,9 @@ public sealed class MediaTracksTests
         await _h.Send("!media subs 2");    // English subtitles
         await _h.Send("!media audio 2");   // Japanese audio
         await _h.Send("!play next");
-        // First the default session, then reopened with the remembered languages; forced English signs are skipped.
-        Assert.Equal([("n", null), ("n", new TrackSelection(11, 13))], _h.Library.PlaybackCalls.TakeLast(2));
-        var defaultSession = $"ps{_h.Library.PlaybackCalls.Count - 1}";  // the fake numbers sessions by call
-        Assert.Contains(defaultSession, _h.Library.Stopped);              // the default session was released
+        // Spec 029: one session, opened straight on the remembered languages; forced English signs are skipped.
+        Assert.Equal(("n", new TrackSelection(11, 13)), _h.Library.PlaybackCalls[^1]);
+        Assert.Single(_h.Library.PlaybackCalls, c => c.Item == "n");
         Assert.Equal("Next (2001)", _h.Current.Request.Title);
     }
 
@@ -101,12 +100,12 @@ public sealed class MediaTracksTests
         _h.Library.Search["other"] = [MediaHarness.Movie("o", "Other", 2002)];
         _h.Library.Tracks["o"] = [new(1, true, "eng", "English", true, false), new(2, false, "eng", "English", false, false)];
         await _h.Send("!play other");
-        Assert.Equal(("o", null), _h.Library.PlaybackCalls[^1]); // no French track: default session kept
+        Assert.Equal(("o", TrackSelection.Default), _h.Library.PlaybackCalls[^1]); // no French track: subtitles off
 
         await _h.Send("!media subs 2");
         await _h.Send("!media leave");
         await _h.Send("!play other");
-        Assert.Equal(("o", null), _h.Library.PlaybackCalls[^1]); // forgotten on leave
+        Assert.Equal(("o", TrackSelection.Default), _h.Library.PlaybackCalls[^1]); // forgotten on leave
     }
 
     [Fact]
@@ -130,6 +129,77 @@ public sealed class MediaTracksTests
     {
         await _h.Send("!media help");
         Assert.Contains("`!language japanese english` — audio + subtitles shortcut: set both at once", _h.Texts[0], StringComparison.Ordinal);
+    }
+
+    // ── Spec 029: Jellyfin's own track pick is the default ──────────────────
+
+    private async Task PlayOther(TrackSelection jellyfinPick)
+    {
+        _h.Library.Search["other"] = [MediaHarness.Movie("o", "Other", 2002)];
+        _h.Library.Tracks["o"] =
+        [
+            new(1, true, "eng", "English commentary", false, false),
+            new(2, true, "eng", "English", true, false),
+            new(3, true, "jpn", "Japanese", false, false),
+            new(4, false, "eng", "English", false, false),
+            new(5, false, "eng", "English signs", false, true),
+        ];
+        _h.Library.JellyfinDefaults["o"] = jellyfinPick;
+        await _h.Send("!play other");
+    }
+
+    [Fact]
+    public async Task A_new_item_starts_on_jellyfins_audio_and_subtitles()
+    {
+        await PlayOther(new TrackSelection(3, 4));                   // e.g. Japanese audio, English subtitles in Jellyfin
+        Assert.Equal(("o", new TrackSelection(3, 4)), _h.Library.PlaybackCalls[^1]);
+        Assert.Single(_h.Library.PlaybackCalls, c => c.Item == "o");
+    }
+
+    [Fact]
+    public async Task Jellyfin_saying_no_subtitles_means_off()
+    {
+        await PlayOther(new TrackSelection(2, null));
+        Assert.Equal(("o", new TrackSelection(2, null)), _h.Library.PlaybackCalls[^1]);
+    }
+
+    [Fact]
+    public async Task A_language_picked_here_wins_but_keeps_jellyfins_track_in_that_language()
+    {
+        await PlayFilm();
+        await _h.Send("!media audio 1");                             // English audio picked here
+        await PlayOther(new TrackSelection(2, 5));                   // Jellyfin: the main English track, forced signs
+        // English audio: Jellyfin's own English track (not the commentary listed first); subtitles untouched: Jellyfin's.
+        Assert.Equal(("o", new TrackSelection(2, 5)), _h.Library.PlaybackCalls[^1]);
+    }
+
+    [Fact]
+    public async Task Subtitles_turned_off_here_stay_off()
+    {
+        await PlayFilm();
+        await _h.Send("!media subs off");
+        await PlayOther(new TrackSelection(3, 4));
+        Assert.Equal(("o", new TrackSelection(3, null)), _h.Library.PlaybackCalls[^1]);
+    }
+
+    [Fact]
+    public async Task Without_jellyfins_pick_the_files_defaults_are_used()
+    {
+        _h.Library.DefaultTracksError = new InvalidOperationException("Jellyfin down");
+        await PlayOther(new TrackSelection(3, 4));
+        Assert.Equal(("o", TrackSelection.Default), _h.Library.PlaybackCalls[^1]);
+        Assert.Equal("Other (2002)", _h.Current.Request.Title);
+    }
+
+    [Fact]
+    public async Task A_restart_keeps_the_tracks_on_air_without_asking_jellyfin_again()
+    {
+        await PlayOther(new TrackSelection(3, 4));
+        var asked = _h.Library.DefaultTracksCalls;
+        await _h.Send("!res 480p");                                   // restarts the stream
+        await _h.Until(() => _h.Library.PlaybackCalls.Count(c => c.Item == "o") == 2, "the restart");
+        Assert.Equal(("o", new TrackSelection(3, 4)), _h.Library.PlaybackCalls[^1]);
+        Assert.Equal(asked, _h.Library.DefaultTracksCalls);
     }
 }
 

@@ -76,13 +76,13 @@ public static class CommandCatalog
             `!subs` — shows the subtitles this has; reply with a number or language
             `!subs <language or #>` — e.g. `!subs english`, `!subs eng`, `!subs 2`
             `!subs off` — no subtitles
-            -# The language is remembered for the next things you watch.
+            -# Each new film starts on the tracks Jellyfin picks for it; a language chosen here is used instead until the bot leaves.
             """),
         new("audio", [], Role.Friend, PictureAndSound, """
             The audio track (language you hear).
             `!audio` — shows the audio tracks; reply with a number or language
             `!audio <language or #>` — e.g. `!audio japanese`, `!audio jpn`, `!audio 2`
-            -# The language is remembered for the next things you watch.
+            -# Each new film starts on the tracks Jellyfin picks for it; a language chosen here is used instead until the bot leaves.
             """),
         new("language", ["lang"], Role.Friend, PictureAndSound, """
             Audio + subtitles shortcut: set the language you hear and the subtitles you see in one go.

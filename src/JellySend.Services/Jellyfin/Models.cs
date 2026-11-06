@@ -127,6 +127,13 @@ public sealed record TrackSelection(int? AudioIndex, int? SubtitleIndex)
     public static TrackSelection Default { get; } = new(null, null);
 }
 
+/// <summary>
+/// Spec 029: the tracks Jellyfin itself would play for the bot's user (its audio/subtitle language and subtitle-mode
+/// settings, remembered selections, the file's flags), and the item's tracks.
+/// </summary>
+/// <param name="Defaults">Jellyfin's audio track, and its subtitle track or null for none.</param>
+public sealed record JellyfinTracks(TrackSelection Defaults, IReadOnlyList<MediaTrack> Tracks);
+
 /// <summary>Result of <c>/Users/AuthenticateByName</c>.</summary>
 /// <param name="AccessToken">User access token (use as <c>Token</c> / <c>api_key</c>).</param>
 /// <param name="UserId">Signed-in user's id.</param>

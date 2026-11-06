@@ -111,6 +111,8 @@ internal sealed class JellyfinLibrary(JellyfinClient client, HlsVariantResolver 
     public Task<PlaybackStream?> StartPlaybackAsync(string itemId, TrackSelection? tracks, CancellationToken ct, bool allowDirect = true) =>
         client.StartPlaybackAsync(itemId, tracks, ct, allowDirect);
 
+    public Task<JellyfinTracks?> GetDefaultTracksAsync(string itemId, CancellationToken ct) => client.GetDefaultTracksAsync(itemId, ct);
+
     public Task<string?> GetTranscodeStatsAsync(string itemId, CancellationToken ct) => client.GetTranscodeStatsAsync(itemId, ct);
 
     public Task StopEncodingAsync(string? playSessionId, CancellationToken ct) => client.StopEncodingAsync(playSessionId, ct);
