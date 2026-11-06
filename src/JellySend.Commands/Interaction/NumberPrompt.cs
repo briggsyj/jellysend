@@ -8,6 +8,20 @@ public static partial class NumberPrompt
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>Wait for a reply, marking the context as waiting meanwhile (spec 035: no "typing…" while it waits).</summary>
+    private static async Task<ChatMessage?> WaitAsync(CommandContext context, Func<ChatMessage, bool> check)
+    {
+        Interlocked.Increment(ref context.Prompts.Waiting);
+        try
+        {
+            return await context.Hub.WaitForAsync(check, WaitFor(context), context.Cancellation).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref context.Prompts.Waiting);
+        }
+    }
+
     /// <summary>The context's own wait (spec 028), else <see cref="Timeout"/>.</summary>
     private static TimeSpan WaitFor(CommandContext context) => context.PromptTimeout ?? Timeout;
 
@@ -28,7 +42,7 @@ public static partial class NumberPrompt
         }
 
         context.Prompts.Shown = true;
-        var reply = await context.Hub.WaitForAsync(Check, WaitFor(context), context.Cancellation).ConfigureAwait(false);
+        var reply = await WaitAsync(context, Check).ConfigureAwait(false);
         if (reply is null)
         {
             if (context.PickFirstOnTimeout)
@@ -71,10 +85,9 @@ public static partial class NumberPrompt
     {
         string? Word(string text) => words.FirstOrDefault(w => w.Equals(text.Trim(), StringComparison.OrdinalIgnoreCase));
 
-        var reply = await context.Hub.WaitForAsync(
-            m => context.CanAnswer(m)
-                && (Word(m.Content) is not null || m.Content.TrimStart().StartsWith(CommandRouter.Prefix)),
-            WaitFor(context), context.Cancellation).ConfigureAwait(false);
+        var reply = await WaitAsync(
+            context,
+            m => context.CanAnswer(m) && (Word(m.Content) is not null || m.Content.TrimStart().StartsWith(CommandRouter.Prefix))).ConfigureAwait(false);
         return reply is null ? null : Word(reply.Content);
     }
 
@@ -85,9 +98,7 @@ public static partial class NumberPrompt
     /// </summary>
     public static async Task<string?> AskTextAsync(CommandContext context)
     {
-        var reply = await context.Hub.WaitForAsync(
-            m => context.CanAnswer(m) && m.Content.Trim().Length > 0,
-            WaitFor(context), context.Cancellation).ConfigureAwait(false);
+        var reply = await WaitAsync(context, m => context.CanAnswer(m) && m.Content.Trim().Length > 0).ConfigureAwait(false);
         if (reply is null)
         {
             await context.ReplyAsync("⌛ No answer — cancelled.").ConfigureAwait(false);
@@ -122,7 +133,7 @@ public static partial class NumberPrompt
         }
 
         context.Prompts.Shown = true;
-        var reply = await context.Hub.WaitForAsync(Check, WaitFor(context), context.Cancellation).ConfigureAwait(false);
+        var reply = await WaitAsync(context, Check).ConfigureAwait(false);
         if (reply is null)
         {
             if (context.PickFirstOnTimeout)

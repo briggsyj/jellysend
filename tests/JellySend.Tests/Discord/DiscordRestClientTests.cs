@@ -92,6 +92,39 @@ public sealed class DiscordRestClientTests
         Assert.Equal("""{"status":2}""", body);
     }
 
+    [Theory]
+    [InlineData(true, "PUT")]
+    [InlineData(false, "DELETE")]
+    public async Task Event_interest_is_set_and_cleared(bool interested, string method)
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.NoContent));
+        await _client.SetEventInterestAsync(5, 9, interested, Ct);
+        var (request, body) = Assert.Single(_requests);
+        Assert.Equal(method, request.Method.Method);
+        Assert.Equal("https://discord.com/api/v9/guilds/5/scheduled-events/9/users/@me", request.RequestUri!.ToString());
+        Assert.Null(body);
+    }
+
+    [Fact]
+    public async Task Typing_is_a_bodyless_post_to_the_channel()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.NoContent));
+        await _client.TriggerTypingAsync(123, Ct);
+        var (request, body) = Assert.Single(_requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://discord.com/api/v9/channels/123/typing", request.RequestUri!.ToString());
+        Assert.Null(body);
+    }
+
+    [Fact]
+    public async Task A_dm_channel_is_opened_with_the_user()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.OK, """{"id":"900","type":1}"""));
+        Assert.Equal(900UL, await _client.OpenDmAsync(20, Ct));
+        Assert.Equal("""{"recipients":["20"]}""", _requests[0].Body);
+        Assert.Equal("https://discord.com/api/v9/users/@me/channels", _requests[0].Request.RequestUri!.ToString());
+    }
+
     [Fact]
     public async Task Guilds_come_with_their_names()
     {

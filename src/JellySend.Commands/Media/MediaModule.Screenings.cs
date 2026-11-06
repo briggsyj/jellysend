@@ -1,4 +1,5 @@
 using System.Globalization;
+using JellySend.Commands.Interaction;
 using JellySend.Commands.Routing;
 using JellySend.Services.Jellyfin;
 using Microsoft.Extensions.Logging;
@@ -26,22 +27,184 @@ public sealed partial class MediaModule
     private MessageHub? _hub;
 
     /// <summary>A screening request from the event scheduler.</summary>
-    /// <param name="MayAnswer">Who may answer a pick in the channel's chat.</param>
+    /// <param name="MayAnswer">Who may answer a pick in the channel's chat (when the creator can't be messaged).</param>
     /// <param name="EndEvent">Ends the Discord event (after the last screening).</param>
+    /// <param name="OpenDm">Spec 031: the direct-message channel with the event's creator, or null.</param>
     public sealed record ScreeningRequest(
         ulong Guild, ulong Channel, string EventName, IReadOnlyList<string> Lines, ulong CreatorId,
-        Func<ChatMessage, bool> MayAnswer, Func<Task> EndEvent);
+        Func<ChatMessage, bool> MayAnswer, Func<Task> EndEvent)
+    {
+        public ulong EventId { get; init; }
+
+        public Func<Task<ulong?>>? OpenDm { get; init; }
+    }
 
     private sealed class Slot(string line)
     {
         public string Line { get; } = line;
 
-        /// <summary>Resolved items (a range gives several); null while still to be picked.</summary>
+        /// <summary>Resolved items (a range gives several); null while unsettled.</summary>
         public List<MediaItem>? Items { get; set; }
 
+        /// <summary>Settled as left out (not found and not replaced, or skipped by the creator).</summary>
         public bool Missing { get; set; }
 
+        /// <summary>Unsettled because nothing matched (else: several matched).</summary>
+        public bool NotFound { get; set; }
+
         public bool Settled => Items is not null || Missing;
+    }
+
+    /// <summary>
+    /// Spec 031: what the event's creator settled in a DM ahead of time, per (event, line): the items, or an empty list
+    /// for "skip". Kept until the bot restarts.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(ulong Event, string Line), List<MediaItem>> _eventAnswers = new();
+
+    /// <summary>
+    /// Spec 031: check an event's screenings ahead of its start (when it's created or edited). Titles with no single
+    /// match are taken up with the creator in a DM until <paramref name="until"/>; answers are kept for the start.
+    /// </summary>
+    public async Task CheckScreeningsAsync(ScreeningRequest request, DateTimeOffset until, CancellationToken ct)
+    {
+        if (_library is null || _hub is null || Announcer is null || request.OpenDm is null)
+        {
+            return;
+        }
+
+        try
+        {
+            ulong? dm = null;
+            foreach (var line in request.Lines.Distinct())
+            {
+                if (_eventAnswers.ContainsKey((request.EventId, line)))
+                {
+                    continue;
+                }
+
+                var slot = await QuietResolveAsync(request, line, ct).ConfigureAwait(false);
+                if (slot.Settled)
+                {
+                    continue; // a single match: resolved again at the start
+                }
+
+                dm ??= await request.OpenDm().ConfigureAwait(false);
+                if (dm is not { } channel || until - _time.GetUtcNow() <= TimeSpan.Zero)
+                {
+                    return; // can't message the creator: dealt with at the start
+                }
+
+                var (items, _) = await ClarifyInDmAsync(request, channel, slot, until - _time.GetUtcNow(), ct).ConfigureAwait(false);
+                if (items is not null)
+                {
+                    _eventAnswers[(request.EventId, line)] = items;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The event started (or changed): the run takes over.
+        }
+    }
+
+    /// <summary>Resolve a line without asking anyone: items, or unsettled as several matches / nothing found.</summary>
+    private async Task<Slot> QuietResolveAsync(ScreeningRequest request, string line, CancellationToken ct)
+    {
+        var slot = new Slot(line);
+        if (_eventAnswers.TryGetValue((request.EventId, line), out var answered))
+        {
+            if (answered.Count > 0)
+            {
+                slot.Items = answered;
+            }
+            else
+            {
+                slot.Missing = true;
+            }
+
+            return slot;
+        }
+
+        var quiet = new CommandContext(new ChatMessage(request.Guild, request.Channel, request.CreatorId, line), "", Silent.Instance, _hub!, ct)
+        {
+            PromptTimeout = TimeSpan.Zero,
+            Answerers = _ => false,
+        };
+        var more = new List<MediaItem>();
+        var (item, _) = await ResolveWithFallbackAsync(quiet, PlayQuery.Parse(line, withTime: false), more).ConfigureAwait(false);
+        if (item is not null)
+        {
+            slot.Items = [item, .. more];
+        }
+        else
+        {
+            slot.NotFound = !quiet.Prompts.Shown;
+        }
+
+        return slot;
+    }
+
+    /// <summary>
+    /// Spec 031: settle one line with the event's creator in a DM within <paramref name="wait"/>. Several matches: a
+    /// numbered pick (unanswered: the first). Nothing found: they reply with another title (searched like
+    /// <c>!play</c>, asked again while nothing matches) or <c>skip</c>. Returns the items (empty: skipped), or null
+    /// with no answer.
+    /// </summary>
+    private async Task<(List<MediaItem>? Items, bool Answered)> ClarifyInDmAsync(
+        ScreeningRequest request, ulong dm, Slot slot, TimeSpan wait, CancellationToken ct)
+    {
+        var deadline = _time.GetUtcNow() + wait;
+        Task Dm(string text) => Announcer!.SendAsync(dm, text, CancellationToken.None);
+        CommandContext Context(string text) =>
+            new(new ChatMessage(null, dm, request.CreatorId, text), "", Announcer!, _hub!, ct)
+            {
+                Answerers = m => m.AuthorId == request.CreatorId,
+                PromptTimeout = deadline - _time.GetUtcNow() is var left && left > TimeSpan.Zero ? left : TimeSpan.Zero,
+                PickFirstOnTimeout = true,
+            };
+
+        var where = $"**{Shorten(request.EventName, 60)}**" + (_guildName(request.Guild) is { } server ? $" in **{Shorten(server, 40)}**" : "");
+        var line = slot.Line;
+        if (!slot.NotFound)
+        {
+            await Dm($"🎬 {where}: the screening `{Shorten(line)}` matches several things — which one?").ConfigureAwait(false);
+            var more = new List<MediaItem>();
+            var (item, _) = await ResolveWithFallbackAsync(Context(line), PlayQuery.Parse(line, withTime: false), more).ConfigureAwait(false);
+            if (item is null)
+            {
+                return (null, false);
+            }
+
+            await Dm($"✅ Got it: **{MediaLabels.Format(item)}**.").ConfigureAwait(false);
+            return ([item, .. more], true);
+        }
+
+        await Dm($"🎬 {where}: the screening `{Shorten(line)}` isn't in the library. Reply with another title to search for, or `skip` to leave it out.").ConfigureAwait(false);
+        while (deadline > _time.GetUtcNow())
+        {
+            if (await NumberPrompt.AskTextAsync(Context(line)).ConfigureAwait(false) is not { } reply)
+            {
+                return (null, false);
+            }
+
+            if (reply.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            {
+                await Dm($"👍 `{Shorten(line)}` is left out.").ConfigureAwait(false);
+                return ([], true);
+            }
+
+            var more = new List<MediaItem>();
+            var (item, _) = await ResolveWithFallbackAsync(Context(reply), PlayQuery.Parse(reply, withTime: false), more).ConfigureAwait(false);
+            if (item is not null)
+            {
+                await Dm($"✅ Got it: **{MediaLabels.Format(item)}** instead of `{Shorten(line)}`.").ConfigureAwait(false);
+                return ([item, .. more], true);
+            }
+
+            await Dm("Try another title, or `skip`.").ConfigureAwait(false);
+        }
+
+        return (null, false);
     }
 
     private sealed class ScreeningRun(ScreeningRequest request, List<Slot> slots)
@@ -81,28 +244,33 @@ public sealed partial class MediaModule
         Task Say(string text) => Announcer.SendAsync(request.Channel, text, CancellationToken.None);
         await Say($"🎬 **{Shorten(request.EventName, 80)}** — the screenings are starting! Tuning in…").ConfigureAwait(false);
 
-        // Pass 1, quietly: everything with a single match. A title that would show a picker is asked about later.
+        // Pass 1, quietly: everything with a single match, and what the creator settled ahead of time (spec 031).
         var slots = new List<Slot>();
         foreach (var line in request.Lines)
         {
-            var slot = new Slot(line);
-            var quiet = new CommandContext(new ChatMessage(request.Guild, request.Channel, request.CreatorId, line), "", Silent.Instance, _hub, ct)
+            slots.Add(await QuietResolveAsync(request, line, ct).ConfigureAwait(false));
+        }
+
+        // Without a DM to the creator, nothing found is skipped and several matches go to the channel (spec 028).
+        ulong? dm = null;
+        if (request.OpenDm is { } openDm && slots.Any(s => !s.Settled))
+        {
+            try
             {
-                PromptTimeout = TimeSpan.Zero,
-                Answerers = _ => false,
-            };
-            var more = new List<MediaItem>();
-            var (item, _) = await ResolveWithFallbackAsync(quiet, PlayQuery.Parse(line, withTime: false), more).ConfigureAwait(false);
-            if (item is not null)
-            {
-                slot.Items = [item, .. more];
+                dm = await openDm().ConfigureAwait(false);
             }
-            else if (!quiet.Prompts.Shown)
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "could not open a DM with the creator of event {Name}", request.EventName);
+            }
+        }
+
+        if (dm is null)
+        {
+            foreach (var slot in slots.Where(s => s is { Settled: false, NotFound: true }))
             {
                 slot.Missing = true;
             }
-
-            slots.Add(slot);
         }
 
         // The event takes over: stop what's on, keep the rest of the playlist behind the screenings.
@@ -112,12 +280,14 @@ public sealed partial class MediaModule
         state.Screening = run;
         foreach (var missing in slots.Where(s => s.Missing))
         {
-            await Say($"🔎 `{Shorten(missing.Line)}` isn't in the library — skipped.").ConfigureAwait(false);
+            await Say(_eventAnswers.ContainsKey((request.EventId, missing.Line))
+                ? $"🎬 `{Shorten(missing.Line)}` is left out (the event's creator skipped it)."
+                : $"🔎 `{Shorten(missing.Line)}` isn't in the library — skipped.").ConfigureAwait(false);
         }
 
         await QueueSettledAsync(state, run).ConfigureAwait(false);
 
-        // Pass 2, in order: ask about each title with several matches, until shortly before it's due.
+        // Pass 2, in order, until shortly before each is due: the creator in a DM (spec 031), else the channel's chat.
         foreach (var slot in slots.Where(s => !s.Settled).ToList())
         {
             if (!StillRunning(state, run))
@@ -127,23 +297,44 @@ public sealed partial class MediaModule
 
             var due = DueTime(run, slot);
             var wait = due is { } d ? d - PickLead - _time.GetUtcNow() : MinPickWait;
-            var context = new CommandContext(new ChatMessage(request.Guild, request.Channel, request.CreatorId, slot.Line), "", Announcer, _hub, ct)
+            wait = wait < MinPickWait ? MinPickWait : wait;
+            var number = slots.IndexOf(slot) + 1;
+            if (dm is { } channel)
             {
-                PromptTimeout = wait < MinPickWait ? MinPickWait : wait,
-                PickFirstOnTimeout = true,
-                Answerers = m => m.ChannelId == request.Channel && request.MayAnswer(m),
-            };
-            await Say($"🎬 Screening {slots.IndexOf(slot) + 1}, `{Shorten(slot.Line)}`, needs a pick — anyone can answer below.").ConfigureAwait(false);
-            var more = new List<MediaItem>();
-            var (item, _) = await ResolveWithFallbackAsync(context, PlayQuery.Parse(slot.Line, withTime: false), more).ConfigureAwait(false);
-            if (item is not null)
-            {
-                slot.Items = [item, .. more];
+                await Say($"🎬 Screening {number}, `{Shorten(slot.Line)}`, needs a word with the event's creator — asking them now.").ConfigureAwait(false);
+                var (items, answered) = await ClarifyInDmAsync(request, channel, slot, wait, ct).ConfigureAwait(false);
+                if (items is { Count: > 0 })
+                {
+                    slot.Items = items;
+                }
+                else
+                {
+                    slot.Missing = true;
+                    await Say(answered
+                        ? $"🎬 Screening {number}, `{Shorten(slot.Line)}`, is left out (the event's creator skipped it)."
+                        : $"🎬 Screening {number}, `{Shorten(slot.Line)}`, is skipped — no answer from the event's creator.").ConfigureAwait(false);
+                }
             }
             else
             {
-                slot.Missing = true;
-                await Say($"🎬 Screening {slots.IndexOf(slot) + 1} skipped.").ConfigureAwait(false);
+                var context = new CommandContext(new ChatMessage(request.Guild, request.Channel, request.CreatorId, slot.Line), "", Announcer, _hub, ct)
+                {
+                    PromptTimeout = wait,
+                    PickFirstOnTimeout = true,
+                    Answerers = m => m.ChannelId == request.Channel && request.MayAnswer(m),
+                };
+                await Say($"🎬 Screening {number}, `{Shorten(slot.Line)}`, needs a pick — anyone can answer below.").ConfigureAwait(false);
+                var more = new List<MediaItem>();
+                var (item, _) = await ResolveWithFallbackAsync(context, PlayQuery.Parse(slot.Line, withTime: false), more).ConfigureAwait(false);
+                if (item is not null)
+                {
+                    slot.Items = [item, .. more];
+                }
+                else
+                {
+                    slot.Missing = true;
+                    await Say($"🎬 Screening {number} skipped.").ConfigureAwait(false);
+                }
             }
 
             if (StillRunning(state, run))

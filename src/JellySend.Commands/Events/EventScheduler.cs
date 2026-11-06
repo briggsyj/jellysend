@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using JellySend.Commands.Media;
 using JellySend.Commands.Routing;
 using JellySend.Common.Permissions;
@@ -25,6 +27,12 @@ public interface IEventSource
 
     /// <summary>Set the event's status: <see cref="EventInfo.Active"/> starts it, <see cref="EventInfo.Completed"/> ends it.</summary>
     Task SetStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct);
+
+    /// <summary>The direct-message channel with <paramref name="userId"/> (spec 031), or null when it can't be opened.</summary>
+    Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct);
+
+    /// <summary>Mark the bot's account as interested in the event, or not (spec 033).</summary>
+    Task SetInterestedAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct);
 }
 
 /// <summary>
@@ -36,38 +44,113 @@ public sealed class EventScheduler(
     IEventSource source, MediaModule media, IRoleDirectory roles, IMessageSender announcer,
     TimeProvider? time = null, ILogger<EventScheduler>? logger = null)
 {
-    /// <summary>How often events are checked: the most an event can start late.</summary>
+    /// <summary>
+    /// How often the known events are looked at (no network): the most an event can start late. Spec 034: changes
+    /// arrive pushed over the gateway, so Discord is only asked for the full list every <see cref="FullRefreshInterval"/>.
+    /// </summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>Spec 034: how often every server's events are fetched over REST — a safety net for missed pushes.</summary>
+    public static readonly TimeSpan FullRefreshInterval = TimeSpan.FromMinutes(15);
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly ILogger _log = logger ?? NullLogger<EventScheduler>.Instance;
     private readonly HashSet<ulong> _handled = [];
 
+    /// <summary>Spec 033: events the bot marked itself interested in (it will run them).</summary>
+    private readonly HashSet<ulong> _interested = [];
+
+    /// <summary>Spec 031: per upcoming event, the description last checked and that check's cancellation.</summary>
+    private readonly Dictionary<ulong, (string Description, CancellationTokenSource Cancel)> _checked = [];
+
     /// <summary>The screenings started so far (tests await them).</summary>
     internal List<Task> Runs { get; } = [];
 
-    /// <summary>Poll until <paramref name="ct"/> is cancelled.</summary>
+    /// <summary>The ahead-of-time checks started so far (spec 031; tests await them).</summary>
+    internal List<Task> Checks { get; } = [];
+
+    /// <summary>Spec 034: every event the bot knows of, kept current by gateway pushes and the full refresh.</summary>
+    private readonly Dictionary<ulong, EventInfo> _known = [];
+
+    /// <summary>Set when a push arrives, to look at it straight away.</summary>
+    private readonly SemaphoreSlim _wake = new(0);
+
+    /// <summary>
+    /// Until <paramref name="ct"/> is cancelled: fetch every server's events now and every
+    /// <see cref="FullRefreshInterval"/>, and look at the known events every <see cref="PollInterval"/> or as soon
+    /// as a change is pushed.
+    /// </summary>
     public async Task RunAsync(CancellationToken ct)
     {
-        var startup = true;
+        await PollAsync(startup: true, ct).ConfigureAwait(false);
+        var lastRefresh = _time.GetUtcNow();
         while (!ct.IsCancellationRequested)
         {
-            await PollAsync(startup, ct).ConfigureAwait(false);
-            startup = false;
-            try
+            // Whichever comes first: a pushed change, or the next regular look (on the bot's clock).
+            using (var lap = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                await Task.Delay(PollInterval, _time, ct).ConfigureAwait(false);
+                var woke = _wake.WaitAsync(lap.Token);
+                var timer = Task.Delay(PollInterval, _time, lap.Token);
+                await Task.WhenAny(woke, timer).ConfigureAwait(false);
+                await lap.CancelAsync().ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+
+            if (ct.IsCancellationRequested)
             {
                 return;
+            }
+
+            if (_time.GetUtcNow() - lastRefresh >= FullRefreshInterval)
+            {
+                await PollAsync(startup: false, ct).ConfigureAwait(false);
+                lastRefresh = _time.GetUtcNow();
+            }
+            else
+            {
+                await TickAsync(startup: false, ct).ConfigureAwait(false);
             }
         }
     }
 
     /// <summary>
-    /// One check of every server's events. On the first (<paramref name="startup"/>), events already running are left
-    /// alone: they were started before this process (a restart must not start the screenings again).
+    /// Spec 034: a gateway dispatch. Scheduled-event changes update the known events (and wake the loop); a
+    /// guild's arrival brings its events along.
+    /// </summary>
+    public void Apply(string type, JsonElement data)
+    {
+        var changed = false;
+        lock (_known)
+        {
+            switch (type)
+            {
+                case "GUILD_SCHEDULED_EVENT_CREATE" or "GUILD_SCHEDULED_EVENT_UPDATE" when Parse(data) is { } e:
+                    _known[e.Id] = e;
+                    changed = true;
+                    break;
+                case "GUILD_SCHEDULED_EVENT_DELETE" when Snowflake(data, "id") is { } id:
+                    changed = _known.Remove(id);
+                    break;
+                case "GUILD_CREATE" when data.ValueKind == JsonValueKind.Object
+                    && data.TryGetProperty("guild_scheduled_events", out var events) && events.ValueKind == JsonValueKind.Array:
+                    foreach (var e in events.EnumerateArray().Select(Parse).OfType<EventInfo>())
+                    {
+                        _known[e.Id] = e;
+                        changed = true;
+                    }
+
+                    break;
+            }
+        }
+
+        if (changed)
+        {
+            _wake.Release();
+        }
+    }
+
+    /// <summary>
+    /// The full refresh: every server's events over REST, replacing what's known, then a look at them. On the first
+    /// (<paramref name="startup"/>), events already running are left alone: they were started before this process.
     /// </summary>
     public async Task PollAsync(bool startup, CancellationToken ct)
     {
@@ -79,6 +162,7 @@ public sealed class EventScheduler(
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _log.LogWarning(ex, "could not list servers for scheduled events");
+            await TickAsync(startup, ct).ConfigureAwait(false);
             return;
         }
 
@@ -95,29 +179,108 @@ public sealed class EventScheduler(
                 continue;
             }
 
-            foreach (var e in events)
+            lock (_known)
             {
-                await ConsiderAsync(e, startup, ct).ConfigureAwait(false);
+                foreach (var stale in _known.Values.Where(k => k.GuildId == guild).Select(k => k.Id).ToList())
+                {
+                    _known.Remove(stale);
+                }
+
+                foreach (var e in events)
+                {
+                    _known[e.Id] = e;
+                }
             }
+        }
+
+        await TickAsync(startup, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Look at every known event (no network): start what's due, check what's new or edited.</summary>
+    public async Task TickAsync(bool startup, CancellationToken ct)
+    {
+        List<EventInfo> events;
+        lock (_known)
+        {
+            events = [.. _known.Values];
+        }
+
+        foreach (var e in events)
+        {
+            await ConsiderAsync(e, startup, ct).ConfigureAwait(false);
         }
     }
 
+    /// <summary>A scheduled event from a gateway dispatch (the same shape as the REST one); null when malformed.</summary>
+    internal static EventInfo? Parse(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object || Snowflake(e, "id") is not { } id || Snowflake(e, "guild_id") is not { } guild)
+        {
+            return null;
+        }
+
+        static int Int(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.TryGetInt32(out var i) ? i : 0;
+        static string Text(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+        var start = DateTimeOffset.TryParse(Text(e, "scheduled_start_time"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at)
+            ? at : DateTimeOffset.MaxValue;
+        return new EventInfo(id, guild, Text(e, "name"), Text(e, "description"), Snowflake(e, "channel_id"),
+            Int(e, "status"), Int(e, "entity_type"), start, Snowflake(e, "creator_id"));
+    }
+
+    private static ulong? Snowflake(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+        && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
+
     private async Task ConsiderAsync(EventInfo e, bool startup, CancellationToken ct)
     {
-        if (_handled.Contains(e.Id) || e.EntityType != EventInfo.VoiceEntity || e.ChannelId is not { } channel
-            || Screenings.Parse(e.Description) is not { Count: > 0 } lines)
+        if (_handled.Contains(e.Id))
         {
             return;
+        }
+
+        if (e.EntityType != EventInfo.VoiceEntity || e.ChannelId is not { } channel
+            || Screenings.Parse(e.Description) is not { Count: > 0 } lines)
+        {
+            await InterestAsync(e, false, ct).ConfigureAwait(false); // edited so it's no longer the bot's
+            return;
+        }
+
+        // Spec 033: "Interested" shows on the event that the bot has picked it up (only events it will run).
+        var eligible = e.CreatorId is { } maker && RoleResolver.Satisfies(roles, maker, Role.Friend);
+        if (e.Status == EventInfo.Scheduled || (e.Status == EventInfo.Active && !startup))
+        {
+            await InterestAsync(e, eligible, ct).ConfigureAwait(false);
         }
 
         var due = e.Status == EventInfo.Scheduled && e.Start <= _time.GetUtcNow();
         var startedByHand = e.Status == EventInfo.Active;
         if (!due && !startedByHand)
         {
+            // Spec 031: an upcoming event, new or edited — check its list now, so the creator can fix it ahead of time.
+            if (e.Status == EventInfo.Scheduled && e.CreatorId is { } author && RoleResolver.Satisfies(roles, author, Role.Friend)
+                && !(_checked.TryGetValue(e.Id, out var last) && last.Description == e.Description))
+            {
+                if (_checked.Remove(e.Id, out var old))
+                {
+                    await old.Cancel.CancelAsync().ConfigureAwait(false);
+                    old.Cancel.Dispose();
+                }
+
+                var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                _checked[e.Id] = (e.Description, cancel);
+                _log.LogInformation("checking the screenings of upcoming event {Event} in guild {Guild}", e.Id, e.GuildId);
+                Checks.Add(CheckAsync(Request(e, channel, lines, author), e.Start, cancel.Token));
+            }
+
             return;
         }
 
         _handled.Add(e.Id);
+        if (_checked.Remove(e.Id, out var check))
+        {
+            await check.Cancel.CancelAsync().ConfigureAwait(false); // the run takes the questions over
+            check.Cancel.Dispose();
+        }
         if (startedByHand && startup)
         {
             _log.LogInformation("event {Event} in guild {Guild} was already running at startup — leaving it", e.Id, e.GuildId);
@@ -145,12 +308,72 @@ public sealed class EventScheduler(
         }
 
         _log.LogInformation("starting the screenings of event {Event} ({Count} items) in guild {Guild} channel {Channel}", e.Id, lines.Count, e.GuildId, channel);
+        Runs.Add(RunAsync(Request(e, channel, lines, creator), ct));
+    }
+
+    private MediaModule.ScreeningRequest Request(EventInfo e, ulong channel, IReadOnlyList<string> lines, ulong creator)
+    {
         var self = roles.SelfId;
-        var request = new MediaModule.ScreeningRequest(
+        return new MediaModule.ScreeningRequest(
             e.GuildId, channel, e.Name, lines, creator,
             m => m.AuthorId != self && RoleResolver.Satisfies(roles, m.AuthorId, Role.Friend),
-            () => source.SetStatusAsync(e.GuildId, e.Id, EventInfo.Completed, CancellationToken.None));
-        Runs.Add(RunAsync(request, ct));
+            () => source.SetStatusAsync(e.GuildId, e.Id, EventInfo.Completed, CancellationToken.None))
+        {
+            EventId = e.Id,
+            OpenDm = async () =>
+            {
+                try
+                {
+                    return await source.OpenDmAsync(creator, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "could not open a DM with user {User}", creator);
+                    return null;
+                }
+            },
+        };
+    }
+
+    private async Task CheckAsync(MediaModule.ScreeningRequest request, DateTimeOffset until, CancellationToken ct)
+    {
+        try
+        {
+            await media.CheckScreeningsAsync(request, until, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log.LogError(ex, "checking the screenings of {Name} failed", request.EventName);
+        }
+    }
+
+    /// <summary>Mark (or unmark) the bot as interested in <paramref name="e"/>, once per change; failures are logged.</summary>
+    private async Task InterestAsync(EventInfo e, bool interested, CancellationToken ct)
+    {
+        if (_interested.Contains(e.Id) == interested)
+        {
+            return;
+        }
+
+        try
+        {
+            await source.SetInterestedAsync(e.GuildId, e.Id, interested, ct).ConfigureAwait(false);
+            _log.LogInformation("{What} interested in event {Event} in guild {Guild}", interested ? "marked" : "no longer", e.Id, e.GuildId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "could not change interest in event {Event} in guild {Guild}", e.Id, e.GuildId);
+        }
+
+        // Remembered either way: a refusal is not retried every 30 s.
+        if (interested)
+        {
+            _interested.Add(e.Id);
+        }
+        else
+        {
+            _interested.Remove(e.Id);
+        }
     }
 
     private async Task RunAsync(MediaModule.ScreeningRequest request, CancellationToken ct)

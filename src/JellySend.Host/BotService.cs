@@ -131,6 +131,11 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         gateway.Dispatch += directory.Apply;
         gateway.Dispatch += guildNames.Apply;
         gateway.Dispatch += OnDispatch;
+
+        // Spec 028/034: Discord events with a "Screenings" list start the bot; changes arrive pushed over the gateway.
+        var events = new EventScheduler(
+            new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>());
+        gateway.Dispatch += events.Apply;
         var gatewayTrace = loggers.CreateLogger("JellySend.Gateway.Voice");
         gateway.Dispatch += (type, data) =>
         {
@@ -162,10 +167,6 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         {
             await gateway.ConnectAsync(token, stoppingToken);
             _log.LogInformation("Logged in as user {UserId}", gateway.UserId);
-
-            // Spec 028: Discord events with a "Screenings" list start the bot.
-            var events = new EventScheduler(
-                new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>());
             _ = events.RunAsync(stoppingToken);
             await gateway.Completion.WaitAsync(stoppingToken);
             _log.LogError("Gateway connection ended; stopping");
@@ -237,9 +238,11 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         };
     }
 
-    private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
+    private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender, ITypingIndicator
     {
         public Task SendAsync(ulong channelId, string content, CancellationToken ct) => rest.SendMessageAsync(channelId, content, ct);
+
+        public Task TypingAsync(ulong channelId, CancellationToken ct) => rest.TriggerTypingAsync(channelId, ct);
     }
 }
 

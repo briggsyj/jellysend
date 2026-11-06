@@ -115,6 +115,27 @@ public sealed class DiscordRestClient
         e.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
         && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
 
+    /// <summary>
+    /// Mark the account as interested in an event, or not (spec 033) — the event's "Interested" button.
+    /// </summary>
+    public Task SetEventInterestAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct) =>
+        SendAsync(
+            interested ? HttpMethod.Put : HttpMethod.Delete,
+            $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events/{eventId.ToString(CultureInfo.InvariantCulture)}/users/@me",
+            null,
+            ct);
+
+    /// <summary>Open (or reuse) the direct-message channel with <paramref name="userId"/> (spec 031); its id.</summary>
+    public async Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct)
+    {
+        using var channel = JsonDocument.Parse(await SendAsync(
+            HttpMethod.Post,
+            "users/@me/channels",
+            new JsonObject { ["recipients"] = new JsonArray(userId.ToString(CultureInfo.InvariantCulture)) },
+            ct).ConfigureAwait(false));
+        return Snowflake(channel.RootElement, "id");
+    }
+
     /// <summary>The servers the account is in (spec 027: <c>!channel default</c>), in Discord's order.</summary>
     public async Task<IReadOnlyList<(ulong Id, string Name)>> GetGuildsAsync(CancellationToken ct)
     {
@@ -126,6 +147,10 @@ public sealed class DiscordRestClient
 
     /// <summary>Discord's channel type for a voice channel (stage channels, 13, are left out).</summary>
     public const int VoiceChannelType = 2;
+
+    /// <summary>POST /channels/{id}/typing: "typing…" for about 10 seconds or until the next message (spec 035).</summary>
+    public Task TriggerTypingAsync(ulong channelId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/typing", null, ct);
 
     internal string Nonce() =>
         ((_time.GetUtcNow().ToUnixTimeMilliseconds() - DiscordEpochMs) << 22).ToString(CultureInfo.InvariantCulture);

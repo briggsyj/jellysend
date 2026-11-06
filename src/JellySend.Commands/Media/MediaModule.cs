@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
@@ -129,6 +130,7 @@ public sealed partial class MediaModule : IStreamControl
             ["join"] = voice.JoinAsync,
             ["playlist"] = PlaylistAsync,
             ["channel"] = ChannelAsync,
+            ["schedule"] = ScheduleAsync,
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
             ["language"] = LanguageAsync,
@@ -1084,6 +1086,64 @@ public sealed partial class MediaModule : IStreamControl
 
         await c.ReplyAsync($"📺 Resolution set to **{name}** — adjusting the picture…").ConfigureAwait(false);
         await RestartWithTracksAsync(guild.Value, state, now, now.Stream.Selection).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// <c>!schedule</c> (spec 032): when each playlist item starts, from now and the time left in what's on, and when
+    /// it all ends — as Discord timestamps, so each reader sees their own time zone. Nothing queued: just the end.
+    /// </summary>
+    private async Task ScheduleAsync(CommandContext c)
+    {
+        var guild = ContextGuild(c);
+        GuildState? state = null;
+        if (guild is { } g)
+        {
+            _states.TryGetValue(g, out state);
+        }
+
+        var player = guild is { } id ? _engine.GetPlayback(id) : null;
+        var now = state?.Now is { } playing && player is not null ? playing : null;
+        var queue = state?.Queue.Snapshot() ?? [];
+        if (now is null && queue.Count == 0)
+        {
+            await c.ReplyAsync("📭 Nothing on air and nothing on the playlist.").ConfigureAwait(false);
+            return;
+        }
+
+        static string At(DateTimeOffset t) => string.Create(CultureInfo.InvariantCulture, $"<t:{t.ToUnixTimeSeconds()}:t>");
+        static string In(DateTimeOffset t) => string.Create(CultureInfo.InvariantCulture, $"<t:{t.ToUnixTimeSeconds()}:R>");
+        DateTimeOffset? at = _time.GetUtcNow();
+        var lines = new List<string>();
+        if (now is not null)
+        {
+            var left = now.Item.RuntimeSeconds is { } runtime ? Math.Max(0, runtime - player!.Position) : (double?)null;
+            at = left is { } seconds ? at + TimeSpan.FromSeconds(seconds) : null;
+            var paused = player!.IsPaused ? " — paused, so times assume it carries on now" : "";
+            if (queue.Count == 0)
+            {
+                await c.ReplyAsync(at is { } end
+                    ? $"🗓️ **{MediaLabels.Format(now.Item)}** ends around {At(end)} ({In(end)}){paused}."
+                    : $"🗓️ **{MediaLabels.Format(now.Item)}** — its running time isn't known, so neither is the end.").ConfigureAwait(false);
+                return;
+            }
+
+            lines.Add($"🗓️ **Schedule** (in your time zone){paused}:");
+            lines.Add($"📺 Now: {MediaLabels.Format(now.Item)}");
+        }
+        else
+        {
+            lines.Add("🗓️ **Schedule** if the playlist starts now (`!play`), in your time zone:");
+        }
+
+        for (var i = 0; i < queue.Count; i++)
+        {
+            lines.Add($"`{i + 1}` {(at is { } t ? At(t) : "—")} {MediaLabels.Format(queue[i])}");
+            at = at is { } t2 && queue[i].RuntimeSeconds is { } seconds ? t2 + TimeSpan.FromSeconds(seconds) : null;
+        }
+
+        lines.Add(at is { } finish ? $"🏁 Ends around {At(finish)} ({In(finish)})" : "🏁 End time unknown — an item's running time isn't known.");
+        var text = string.Join('\n', lines);
+        await c.ReplyAsync(text.Length <= CommandCatalog.MessageLimit ? text : text[..CommandCatalog.MessageLimit] + "…").ConfigureAwait(false);
     }
 
     /// <summary><c>!playlist</c> on its own: what's on and coming up, then a menu (add / remove / order) for a while.</summary>

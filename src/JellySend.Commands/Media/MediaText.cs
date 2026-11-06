@@ -96,6 +96,7 @@ public static partial class MediaText
         `!playlist add <title>` — add to the end
         `!playlist remove 2` — take item 2 off
         `!playlist order 3 1` — move item 3 to the top (position 1)
+        `!schedule` — start times of what's coming up, and the end time
         ### 🎛️ Picture & sound
         `!language japanese english` — audio + subtitles shortcut: set both at once
         `!subs` — subtitles: shows the choices · `!subs english`, `!subs off`

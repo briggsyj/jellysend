@@ -61,6 +61,10 @@ public static class CommandCatalog
         new("stop", [], Role.Friend, WhileWatching, "`!stop` — stop the stream; the bot stays in voice and keeps the playlist (`!play` starts it again)."),
         new("leave", [], Role.Friend, WhileWatching, "`!leave` — stop and leave the voice channel. The bot also leaves on its own when the channel stays empty."),
         new("join", [], Role.Friend, WhileWatching, "`!join` — bring the bot into your voice channel (`!play` does this for you)."),
+        new("schedule", [], Role.Friend, Schedule, """
+            `!schedule` — when each thing on the playlist starts, and when it all ends, worked out from the time left in what's on now
+            -# Times show in your own time zone. With nothing queued, it just says when the current one ends. Pausing or skipping changes them.
+            """),
         new("playlist", [], Role.Friend, Schedule, """
             The playlist: up to 10 things that play in order, each from the start.
             `!playlist` — what's on now and coming up, numbered; then reply `add`, `remove` or `order` to change it
@@ -156,9 +160,10 @@ public static class CommandCatalog
         ```
         • Each line is written like `!play`: a title, an episode (`show s2e5`) or several (`show s1e1-3`).
         • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
+        • Once the bot has picked the event up, it marks itself **Interested** on it.
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
-        • A title with several matches is asked about in that chat — anyone allowed to `!play` can answer before it's due; otherwise the first match plays.
+        • A title that isn't found, or matches several things, is sorted out with the event's creator in a DM — as soon as the event is created or edited, and again at the start if needed. Unanswered: several matches play the first, not found is skipped.
         • Left alone, it plays the whole list even in an empty channel, then ends the event and signs off.
         • Change the playlist (`!play`, `!skip`, `!playlist add/remove/order`) and you're at the controls: the empty-channel timeout applies again.
         -# The event's creator must be allowed to use `!play`. The bot needs **Manage Events** to start and end the event.
