@@ -1,0 +1,74 @@
+# Dependabot: weekly update PRs into develop, where CI (tests + Docker build check) runs on them.
+# Docs: https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+
+updates:
+  # NuGet packages in every project (src/*, tests/*), found from the solution at the repository root.
+  - package-ecosystem: "nuget"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Australia/Brisbane"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Microsoft.Extensions.* move together with each .NET release: one PR for all of them.
+      microsoft-extensions:
+        patterns: ["Microsoft.Extensions.*"]
+      # Test-only packages (xunit, coverlet): one PR.
+      test-tooling:
+        patterns: ["xunit*", "coverlet*"]
+
+  # The .NET SDK pinned in global.json.
+  - package-ecosystem: "dotnet-sdk"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Australia/Brisbane"
+    commit-message:
+      prefix: "deps"
+    ignore:
+      # Stay on the .NET 10 line; a new major is a deliberate upgrade, not a weekly bump.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Base images in the Dockerfile (dotnet/sdk, fedora, fedora-minimal).
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Australia/Brisbane"
+    commit-message:
+      prefix: "deps"
+    ignore:
+      # The SDK image follows global.json's major; Fedora releases are upgraded on purpose (codecs, VA-API drivers).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions used by the workflows and the local composite actions.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Australia/Brisbane"
+    commit-message:
+      prefix: "ci"
+    groups:
+      # All action bumps in one PR.
+      actions:
+        patterns: ["*"]
