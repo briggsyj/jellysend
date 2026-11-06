@@ -73,7 +73,7 @@ public sealed partial record JellySendOptions
     public double StreamBufferSeconds { get; init; } = DefaultStreamBufferSeconds;
 
     /// <summary>Default of <see cref="EmptyChannelTimeout"/> (spec 003).</summary>
-    public static readonly TimeSpan DefaultEmptyChannelTimeout = TimeSpan.FromMinutes(20);
+    public static readonly TimeSpan DefaultEmptyChannelTimeout = TimeSpan.FromMinutes(15);
 
     /// <summary>How long the bot stays (and streams) in a voice channel nobody else is in; zero = leave at once.</summary>
     public TimeSpan EmptyChannelTimeout { get; init; } = DefaultEmptyChannelTimeout;
@@ -197,7 +197,7 @@ public sealed partial record JellySendOptions
             }
             else
             {
-                warn?.Invoke($"EMPTY_CHANNEL_TIMEOUT_MINUTES='{e}' invalid (want 0-1440); using 20");
+                warn?.Invoke($"EMPTY_CHANNEL_TIMEOUT_MINUTES='{e}' invalid (want 0-1440); using 15");
             }
         }
 
