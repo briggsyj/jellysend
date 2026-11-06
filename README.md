@@ -348,6 +348,8 @@ ci/test.sh
 
 `ci/test.sh` builds the solution, runs the tests with coverage and fails below 90 % line coverage. CI runs the same script. The long-run soak harness is described in [`tests/soak/README.md`](tests/soak/README.md).
 
+Dependencies are kept current by [Dependabot](.github/dependabot.yml): every Monday it opens pull requests into `develop` for NuGet packages, the .NET SDK in `global.json`, the Dockerfile's base images and the GitHub Actions, and CI checks each one. Major upgrades (.NET, Fedora) are left for deliberate updates.
+
 Features are planned with [Spec Kit](https://github.com/github/spec-kit): specs, plans and tasks live in [`specs/`](specs/), and the project principles in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
 
 ---
