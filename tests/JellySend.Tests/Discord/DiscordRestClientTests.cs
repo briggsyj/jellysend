@@ -106,6 +106,17 @@ public sealed class DiscordRestClientTests
     }
 
     [Fact]
+    public async Task Typing_is_a_bodyless_post_to_the_channel()
+    {
+        _responses.Enqueue(Respond(HttpStatusCode.NoContent));
+        await _client.TriggerTypingAsync(123, Ct);
+        var (request, body) = Assert.Single(_requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://discord.com/api/v9/channels/123/typing", request.RequestUri!.ToString());
+        Assert.Null(body);
+    }
+
+    [Fact]
     public async Task A_dm_channel_is_opened_with_the_user()
     {
         _responses.Enqueue(Respond(HttpStatusCode.OK, """{"id":"900","type":1}"""));

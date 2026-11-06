@@ -148,6 +148,10 @@ public sealed class DiscordRestClient
     /// <summary>Discord's channel type for a voice channel (stage channels, 13, are left out).</summary>
     public const int VoiceChannelType = 2;
 
+    /// <summary>POST /channels/{id}/typing: "typing…" for about 10 seconds or until the next message (spec 035).</summary>
+    public Task TriggerTypingAsync(ulong channelId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/typing", null, ct);
+
     internal string Nonce() =>
         ((_time.GetUtcNow().ToUnixTimeMilliseconds() - DiscordEpochMs) << 22).ToString(CultureInfo.InvariantCulture);
 

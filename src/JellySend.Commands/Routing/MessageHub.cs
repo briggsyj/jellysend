@@ -7,6 +7,9 @@ namespace JellySend.Commands.Routing;
 public sealed class MessageHub(TimeProvider? time = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
+
+    /// <summary>The clock prompts and the typing indicator run on (fake in tests).</summary>
+    internal TimeProvider Time => _time;
     private readonly List<(Func<ChatMessage, bool> Check, TaskCompletionSource<ChatMessage> Tcs)> _waiters = [];
 
     /// <summary>Number of pending waiters (tests use it to answer a prompt only once it listens).</summary>

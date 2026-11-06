@@ -9,6 +9,12 @@ public interface IMessageSender
     Task SendAsync(ulong channelId, string content, CancellationToken ct);
 }
 
+/// <summary>Shows "typing…" in a channel for about 10 seconds, or until the next message (spec 035).</summary>
+public interface ITypingIndicator
+{
+    Task TypingAsync(ulong channelId, CancellationToken ct);
+}
+
 /// <summary>The invocation a handler sees: the message, the text after the command, and a reply helper.</summary>
 public sealed class CommandContext(ChatMessage message, string rest, IMessageSender sender, MessageHub hub, CancellationToken ct)
 {
@@ -65,4 +71,7 @@ public sealed class CommandContext(ChatMessage message, string rest, IMessageSen
 public sealed class PromptLog
 {
     public bool Shown { get; set; }
+
+    /// <summary>Pickers waiting for an answer right now (spec 035: the bot isn't "typing" then).</summary>
+    public int Waiting;
 }

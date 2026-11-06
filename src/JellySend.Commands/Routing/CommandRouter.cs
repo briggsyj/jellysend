@@ -171,8 +171,16 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
         }
     }
 
+    /// <summary>Spec 035: a command still busy after this long shows "typing…" (a quick one doesn't bother).</summary>
+    public static readonly TimeSpan TypingAfter = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>How often "typing…" is renewed while a command is busy (Discord shows it for about 10 s).</summary>
+    public static readonly TimeSpan TypingEvery = TimeSpan.FromSeconds(8);
+
     private async Task RunAsync(Command command, CommandContext context)
     {
+        using var done = CancellationTokenSource.CreateLinkedTokenSource(context.Cancellation);
+        var typing = output is ITypingIndicator indicator ? KeepTypingAsync(indicator, context, done.Token) : Task.CompletedTask;
         try
         {
             await command.Handler(context).ConfigureAwait(false);
@@ -183,6 +191,45 @@ public sealed class CommandRouter(IRoleDirectory roles, IMessageSender output, M
         catch (Exception ex)
         {
             onError?.Invoke(command.Name, ex);
+        }
+        finally
+        {
+            await done.CancelAsync().ConfigureAwait(false);
+            await typing.ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Spec 035: while the command is busy — after <see cref="TypingAfter"/>, then every <see cref="TypingEvery"/> —
+    /// show "typing…" in its channel, except while it waits for someone's answer to a picker.
+    /// </summary>
+    private async Task KeepTypingAsync(ITypingIndicator indicator, CommandContext context, CancellationToken done)
+    {
+        var time = hub.Time;
+        try
+        {
+            await Task.Delay(TypingAfter, time, done).ConfigureAwait(false);
+            while (!done.IsCancellationRequested)
+            {
+                if (Volatile.Read(ref context.Prompts.Waiting) == 0)
+                {
+                    try
+                    {
+                        await indicator.TypingAsync(context.ChannelId, done).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        onError?.Invoke("typing", ex);
+                        return; // not worth retrying: the reply still comes
+                    }
+                }
+
+                await Task.Delay(TypingEvery, time, done).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The command finished.
         }
     }
 

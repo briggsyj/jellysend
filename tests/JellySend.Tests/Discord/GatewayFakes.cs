@@ -33,6 +33,18 @@ internal sealed class ManualTimeProvider : TimeProvider
         return timer;
     }
 
+    /// <summary>Timers waiting to fire.</summary>
+    public int ActiveCount
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _active.Count;
+            }
+        }
+    }
+
     /// <summary>The next timer created (and not yet disposed), in creation order.</summary>
     public async Task<ManualTimer> NextTimerAsync()
     {

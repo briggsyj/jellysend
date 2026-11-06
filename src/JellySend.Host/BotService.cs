@@ -238,9 +238,11 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         };
     }
 
-    private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender
+    private sealed class RestMessageSender(DiscordRestClient rest) : IMessageSender, ITypingIndicator
     {
         public Task SendAsync(ulong channelId, string content, CancellationToken ct) => rest.SendMessageAsync(channelId, content, ct);
+
+        public Task TypingAsync(ulong channelId, CancellationToken ct) => rest.TriggerTypingAsync(channelId, ct);
     }
 }
 
