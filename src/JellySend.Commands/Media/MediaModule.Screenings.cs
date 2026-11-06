@@ -55,6 +55,81 @@ public sealed partial class MediaModule
         public bool Settled => Items is not null || Missing;
     }
 
+    /// <summary>An upcoming event the bot will run (spec 036: <c>!schedule events</c>).</summary>
+    public sealed record UpcomingScreening(
+        ulong EventId, ulong Guild, string Name, DateTimeOffset Start, IReadOnlyList<string> Lines, ulong CreatorId, ulong Channel);
+
+    /// <summary>The upcoming events the bot will run, from the event scheduler (spec 036). Set by the host.</summary>
+    public Func<IReadOnlyList<UpcomingScreening>>? UpcomingEvents { get; set; }
+
+    /// <summary>
+    /// <c>!schedule events</c> (spec 036): every upcoming event with screenings — this server's, or every server's from a
+    /// DM — soonest first, each with the start time of every item worked out from the event's start, and its end.
+    /// Titles are looked up like the event will (answers the creator gave included); ones still open are marked.
+    /// </summary>
+    private async Task UpcomingEventsAsync(CommandContext c)
+    {
+        var events = (UpcomingEvents?.Invoke() ?? [])
+            .Where(e => c.GuildId is not { } here || e.Guild == here)
+            .OrderBy(e => e.Start)
+            .ToList();
+        if (events.Count == 0 || _library is null || _hub is null)
+        {
+            await c.ReplyAsync("📭 No upcoming events with screenings. `!help events` shows how to set one up.").ConfigureAwait(false);
+            return;
+        }
+
+        static string At(DateTimeOffset t) => string.Create(CultureInfo.InvariantCulture, $"<t:{t.ToUnixTimeSeconds()}:t>");
+        var blocks = new List<string>();
+        foreach (var e in events)
+        {
+            var request = new ScreeningRequest(e.Guild, e.Channel, e.Name, e.Lines, e.CreatorId, _ => false, () => Task.CompletedTask) { EventId = e.EventId };
+            var where = c.GuildId is null && _guildName(e.Guild) is { } server ? $" · {Shorten(server, 40)}" : "";
+            var lines = new List<string>
+            {
+                string.Create(CultureInfo.InvariantCulture, $"🎬 **{Shorten(e.Name, 60)}**{where} — <t:{e.Start.ToUnixTimeSeconds()}:f> (<t:{e.Start.ToUnixTimeSeconds()}:R>)"),
+            };
+            DateTimeOffset? at = e.Start;
+            var n = 0;
+            foreach (var line in e.Lines)
+            {
+                var slot = await QuietResolveAsync(request, line, c.Cancellation).ConfigureAwait(false);
+                if (slot.Items is { } items)
+                {
+                    foreach (var item in items)
+                    {
+                        lines.Add($"`{++n}` {(at is { } t ? At(t) : "—")} {MediaLabels.Format(item)}");
+                        at = at is { } t2 && item.RuntimeSeconds is { } seconds ? t2 + TimeSpan.FromSeconds(seconds) : null;
+                    }
+                }
+                else if (!slot.Missing)
+                {
+                    lines.Add($"`{++n}` {(at is { } t ? At(t) : "—")} `{Shorten(line)}` — {(slot.NotFound ? "🔎 not found yet" : "⏳ several matches, to be picked")}");
+                    at = null; // its length isn't known yet
+                }
+            }
+
+            lines.Add(at is { } end ? $"🏁 Ends around {At(end)}" : "🏁 End time to follow, once every title is settled.");
+            blocks.Add(string.Join('\n', lines));
+        }
+
+        // One message, or several (a whole event per message) within Discord's limit.
+        var header = "📅 **Upcoming events** (in your time zone):";
+        var message = header;
+        foreach (var block in blocks)
+        {
+            if (message.Length + block.Length + 2 > CommandCatalog.MessageLimit && message != header)
+            {
+                await c.ReplyAsync(message).ConfigureAwait(false);
+                message = "📅 **Upcoming events** (continued):";
+            }
+
+            message += "\n\n" + (block.Length > CommandCatalog.MessageLimit - 60 ? block[..(CommandCatalog.MessageLimit - 60)] + "…" : block);
+        }
+
+        await c.ReplyAsync(message).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Spec 031: what the event's creator settled in a DM ahead of time, per (event, line): the items, or an empty list
     /// for "skip". Kept until the bot restarts.

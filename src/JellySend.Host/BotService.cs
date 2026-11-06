@@ -136,6 +136,7 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
         var events = new EventScheduler(
             new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>());
         gateway.Dispatch += events.Apply;
+        media.UpcomingEvents = events.Upcoming; // spec 036: !schedule events
         var gatewayTrace = loggers.CreateLogger("JellySend.Gateway.Voice");
         gateway.Dispatch += (type, data) =>
         {

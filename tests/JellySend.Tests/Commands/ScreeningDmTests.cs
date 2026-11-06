@@ -219,6 +219,20 @@ public sealed partial class EventSchedulerTests
     }
 
     [Fact]
+    public async Task Upcoming_lists_only_events_the_bot_will_run()
+    {
+        _events.Add(Event(id: 1, startInMinutes: 60));
+        _events.Add(Event(id: 2, startInMinutes: 60, creator: 30));                // can't use the bot
+        _events.Add(Event(id: 3, startInMinutes: 60, description: "No list"));
+        _events.Add(Event(id: 4, status: EventInfo.Active));                       // already on
+        _events.Add(Event(id: 5, startInMinutes: 60, entity: 3));                  // not a voice event
+        await _scheduler.PollAsync(true, TestContext.Current.CancellationToken);
+        var upcoming = Assert.Single(_scheduler.Upcoming());
+        Assert.Equal((1UL, 5UL, "Movie Night", 20UL, 300UL), (upcoming.EventId, upcoming.Guild, upcoming.Name, upcoming.CreatorId, upcoming.Channel));
+        Assert.Equal(["First Film"], upcoming.Lines);
+    }
+
+    [Fact]
     public async Task Upcoming_events_from_others_are_not_checked()
     {
         _events.Add(Event(startInMinutes: 60, creator: 30, description: "Screenings:\n1. lost film"));

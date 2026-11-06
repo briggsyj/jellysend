@@ -1094,6 +1094,13 @@ public sealed partial class MediaModule : IStreamControl
     /// </summary>
     private async Task ScheduleAsync(CommandContext c)
     {
+        var (word, _) = CommandRouter.SplitFirst(c.Rest);
+        if (word.ToLowerInvariant() is "events" or "event" or "upcoming")
+        {
+            await UpcomingEventsAsync(c).ConfigureAwait(false); // spec 036
+            return;
+        }
+
         var guild = ContextGuild(c);
         GuildState? state = null;
         if (guild is { } g)
@@ -1106,7 +1113,7 @@ public sealed partial class MediaModule : IStreamControl
         var queue = state?.Queue.Snapshot() ?? [];
         if (now is null && queue.Count == 0)
         {
-            await c.ReplyAsync("📭 Nothing on air and nothing on the playlist.").ConfigureAwait(false);
+            await c.ReplyAsync("📭 Nothing on air and nothing on the playlist.\n-# Upcoming events: `!schedule events`.").ConfigureAwait(false);
             return;
         }
 
