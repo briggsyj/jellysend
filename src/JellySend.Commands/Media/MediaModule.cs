@@ -498,6 +498,7 @@ public sealed partial class MediaModule : IStreamControl
         }
 
         state.Send = c.ReplyAsync;
+        await MarkManualAsync(guild.Value, "skip").ConfigureAwait(false); // spec 030
         if (_voice.Get(guild.Value) is null)
         {
             var item = state.Queue.TakeNext()!;
@@ -574,6 +575,7 @@ public sealed partial class MediaModule : IStreamControl
             return;
         }
 
+        await MarkManualAsync(guild.Value, "add").ConfigureAwait(false); // spec 030
         if (state.Queue.Add(item) is not { } position)
         {
             // Filled while the user was picking.
@@ -845,6 +847,10 @@ public sealed partial class MediaModule : IStreamControl
         }
     }
 
+    /// <summary>Spec 030: the playlist of the command's guild was changed by hand.</summary>
+    private Task MarkManualOfAsync(CommandContext c, string what) =>
+        ContextGuild(c) is { } guild ? MarkManualAsync(guild, what) : Task.CompletedTask;
+
     private Playlist<MediaItem> QueueOf(CommandContext c) =>
         ContextGuild(c) is { } g && _states.TryGetValue(g, out var state) ? state.Queue : EmptyQueue;
 
@@ -891,7 +897,12 @@ public sealed partial class MediaModule : IStreamControl
         }
 
         // Looked up after the answer: the playlist may have been replaced meanwhile (left and rejoined).
-        await c.ReplyAsync(QueueOf(c).Remove(target)).ConfigureAwait(false);
+        var removed = QueueOf(c).Remove(target);
+        await c.ReplyAsync(removed).ConfigureAwait(false);
+        if (removed.StartsWith("➖", StringComparison.Ordinal))
+        {
+            await MarkManualOfAsync(c, "remove").ConfigureAwait(false);
+        }
     }
 
     /// <summary><c>!playlist order [# or title] [new #]</c>: move it, or ask which one and where first.</summary>
@@ -920,7 +931,12 @@ public sealed partial class MediaModule : IStreamControl
             args = picked;
         }
 
-        await c.ReplyAsync(QueueOf(c).Move(args)).ConfigureAwait(false);
+        var moved = QueueOf(c).Move(args);
+        await c.ReplyAsync(moved).ConfigureAwait(false);
+        if (moved.StartsWith("↕️", StringComparison.Ordinal))
+        {
+            await MarkManualOfAsync(c, "order").ConfigureAwait(false);
+        }
     }
 
     private static string UpNextList(IReadOnlyList<MediaItem> queue) =>
@@ -1506,6 +1522,7 @@ public sealed partial class MediaModule : IStreamControl
         }
 
         State(guild, c.ReplyAsync);
+        await MarkManualAsync(guild, "play").ConfigureAwait(false); // spec 030
         var started = await StartItemAsync(guild, channel, item, start).ConfigureAwait(false);
         if (started)
         {
@@ -1931,9 +1948,11 @@ public sealed partial class MediaModule : IStreamControl
     /// </summary>
     private async Task<bool> AdvanceHoldingLockAsync(ulong guild, GuildState state)
     {
-        if (state.Queue.Count == 0)
+        // Spec 028/030: the item about to play tells whether the screenings are over (and, untouched, the bot signs off).
+        if (await ScreeningAdvanceAsync(state, state.Queue.Snapshot().FirstOrDefault()).ConfigureAwait(false))
         {
-            await ScreeningAdvanceAsync(state, null).ConfigureAwait(false); // spec 028: the last screening ended
+            _ = SignOffAfterScreeningsAsync(guild); // outside this start lock
+            return false;
         }
 
         while (state.Queue.Count > 0)
@@ -1944,7 +1963,7 @@ public sealed partial class MediaModule : IStreamControl
             }
 
             var item = state.Queue.TakeNext()!;
-            await ScreeningAdvanceAsync(state, item).ConfigureAwait(false);
+            state.Screening?.Waiting.Remove(item); // spec 028: a screening that's starting
             await state.Send($"⏭ Coming up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
             switch (await StartItemHoldingLockAsync(guild, state, link.ChannelId, item, 0, sync: true).ConfigureAwait(false))
             {

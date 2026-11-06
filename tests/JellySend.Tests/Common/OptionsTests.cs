@@ -79,14 +79,14 @@ public sealed class OptionsTests
         Assert.Equal(expected, Parse(("STREAM_AV_SYNC_MS", raw)).AvSyncMs);
 
     [Theory]
-    [InlineData(null, 20.0, 0)]
+    [InlineData(null, 15.0, 0)]
     [InlineData("5", 5.0, 0)]
     [InlineData("0", 0.0, 0)]
     [InlineData("1.5", 1.5, 0)]
     [InlineData("1440", 1440.0, 0)]
-    [InlineData("1441", 20.0, 1)]
-    [InlineData("-1", 20.0, 1)]
-    [InlineData("soon", 20.0, 1)]
+    [InlineData("1441", 15.0, 1)]
+    [InlineData("-1", 15.0, 1)]
+    [InlineData("soon", 15.0, 1)]
     public void Empty_channel_timeout(string? raw, double minutes, int warnings)
     {
         var o = raw is null ? Parse() : Parse(("EMPTY_CHANNEL_TIMEOUT_MINUTES", raw));

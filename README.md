@@ -45,7 +45,7 @@ It searches your library, plays the original file and encodes it once with hardw
 - **Go-live / screenshare delivery** - streams appear as a screenshare so all members in the channel can watch
 - **H.264 hardware acceleration** - auto-detects NVIDIA NVENC, VA-API (Intel/AMD), or falls back to software encoding
 - **Discord DAVE E2EE support** - handles Discord's end-to-end encryption for voice channels
-- **Auto-leave** - stops and leaves after the voice channel has been empty for a while (default 20 minutes)
+- **Auto-leave** - stops and leaves after the voice channel has been empty for a while (default 15 minutes)
 - **Debug overlay** - `!debug on` burns frame rate, A/V drift, buffer and network stats into the stream
 - **Role-based access control** - admin, friend, viewer and none tiers; friends list and guild membership are used automatically
 
@@ -145,7 +145,7 @@ All settings are environment variables (see [`.env.example`](.env.example)). Inv
 | `STREAM_LOADING_IMAGE` | No | bundled card | Image shown on the stream while it loads (start and after a jump). Default: the test card in [`assets/cards/`](assets/cards/), built into the image. A file path in the container overrides it; `none` turns it off. |
 | `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused (default: the pause symbol in `assets/cards/`); same rules. |
 | `MAX_STREAM_HOURS` | No | `12` | Longest a stream plays, counted from a `!play` (through auto-advance and skips). Then it stops, staying in voice and keeping the playlist; `!play` starts again. 0–168, 0 = no limit. |
-| `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `20` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
+| `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `15` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
 | `DATA_DIR` | No | `/data` | Where saved settings (`settings.json`) are kept. Mount it as a volume (`./data:/data`) so they survive updates. |
 
 ### Logs
@@ -217,7 +217,7 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!res` / `!resolution` | Output resolution: `!res 360p`, `480p`, `540p`, `720p`, `1080p`, `!res default`. Lower resolutions also lower the bitrate; applies now and to later items. |
 | `!debug` | Stream stats; `!debug on` / `off` toggles the overlay |
 
-Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 20), with a note in that voice channel's chat.
+Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 15), with a note in that voice channel's chat.
 
 Pickers accept a number or a name, and time out after 30 seconds.
 
@@ -255,7 +255,8 @@ Screenings:
 - Only events created by someone allowed to use `!play` count.
 - In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
 - A title that matches several things is asked about in that chat; anyone allowed to `!play` can answer, until shortly before that item is due. Unanswered, the first match is used. The schedule is posted again after each pick. Titles that aren't found are skipped.
-- When the last screening ends, the bot ends the event.
+- Left alone, the bot plays the whole list, even if the channel is empty (the empty-channel timeout doesn't apply), then ends the event and leaves.
+- Change the playlist during the event (`!play`, `!skip`, `!playlist add` / `remove` / `order`) and it's under manual control: the empty-channel timeout applies again, and after the last screening it carries on with the playlist instead of leaving. The event is still ended in Discord.
 - The bot's account needs **Manage Events** in the server to start and end events (the screenings still run without it), and permission to post in the voice channel's chat.
 
 #### Jellyfin SyncPlay (group watch)

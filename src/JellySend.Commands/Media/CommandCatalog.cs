@@ -159,7 +159,8 @@ public static class CommandCatalog
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
         • A title with several matches is asked about in that chat — anyone allowed to `!play` can answer before it's due; otherwise the first match plays.
-        • When the last one ends, the bot ends the event.
+        • Left alone, it plays the whole list even in an empty channel, then ends the event and signs off.
+        • Change the playlist (`!play`, `!skip`, `!playlist add/remove/order`) and you're at the controls: the empty-channel timeout applies again.
         -# The event's creator must be allowed to use `!play`. The bot needs **Manage Events** to start and end the event.
         """;
 

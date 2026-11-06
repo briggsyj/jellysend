@@ -83,20 +83,24 @@ public sealed class ScreeningRunTests
         Assert.Empty(_ended);
         _h.Current.End(PipelineEndReason.Natural);
         await _h.Until(() => _ended.Count == 1, "the event ended");
-        Assert.Contains("🎬 That's all the screenings — thanks for watching!", InChannel());
+        Assert.Contains("🎬 That's all the screenings — thanks for watching! 📴 Signing off.", InChannel());
+        await _h.Until(() => _h.Voice.Get(5) is null, "signed off");   // spec 030: untouched, the bot leaves
+        Assert.False(_h.Media.IsStreaming(5));
     }
 
     [Fact]
-    public async Task The_event_takes_over_and_the_old_playlist_plays_after()
+    public async Task The_event_takes_over_and_untouched_signs_off_at_the_end()
     {
         await _h.Send("!play other");
         _h.Library.Search["queued"] = [MediaHarness.Movie("q", "Queued", 2000)];
         await _h.Send("!playlist add queued");
         await _h.Media.RunScreeningAsync(Request("first film"), TestContext.Current.CancellationToken);
         Assert.Equal("First Film (2001)", _h.Current.Request.Title);
+        var created = _h.Pipelines.Created.Count;
         _h.Current.End(PipelineEndReason.Natural);
-        await _h.Until(() => _h.Current.Request.Title == "Queued (2000)" && _h.Current.Started);
-        Assert.Single(_ended);                                       // the screenings are over; the playlist carries on
+        await _h.Until(() => _h.Voice.Get(5) is null, "signed off");
+        Assert.Single(_ended);
+        Assert.Equal(created, _h.Pipelines.Created.Count);           // what was queued before the event doesn't play
     }
 
     [Fact]
@@ -159,6 +163,87 @@ public sealed class ScreeningRunTests
         var h = new MediaHarness(configured: false);
         await h.Media.RunScreeningAsync(Request("first film"), TestContext.Current.CancellationToken);
         Assert.Empty(h.Texts);
+    }
+}
+
+/// <summary>Spec 030: an untouched event holds its channel; a changed playlist hands control (and the timeout) back.</summary>
+public sealed class ScreeningControlTests
+{
+    private const ulong Channel = 300;
+    private readonly MediaHarness _h = new(emptyChannelTimeout: TimeSpan.FromMinutes(20));
+    private readonly List<string> _ended = [];
+
+    public ScreeningControlTests()
+    {
+        _h.Library.Search["first film"] = [MediaHarness.Movie("f1", "First Film", 2001, 90L * 60 * 10_000_000)];
+        _h.Library.Search["second film"] = [MediaHarness.Movie("f2", "Second Film", 2002, 60L * 60 * 10_000_000)];
+        _h.Library.Search["other"] = [MediaHarness.Movie("o", "Other", 2000)];
+    }
+
+    private Task Run() => _h.Media.RunScreeningAsync(new MediaModule.ScreeningRequest(
+        5, Channel, "Movie Night", ["first film", "second film"], 20, m => m.AuthorId == 20,
+        () =>
+        {
+            _ended.Add("ended");
+            return Task.CompletedTask;
+        }), TestContext.Current.CancellationToken);
+
+    [Fact]
+    public async Task An_untouched_event_ignores_the_empty_channel_timeout()
+    {
+        await Run();
+        Assert.True(_h.Media.HoldsChannel(5));
+        await _h.VoiceCommands.WatchIfEmptyAsync(5);                 // nobody but the bot in the event's channel
+        _h.Gateway.States[(5, 30)] = Channel;
+        _h.Gateway.States.Remove((5, 30));
+        await _h.VoiceCommands.OnVoiceStateChangedAsync(5, 30, Channel, null); // the last person leaves
+        Assert.False(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));
+        _h.Time.Advance(TimeSpan.FromMinutes(30));
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.True(_h.Media.IsStreaming(5));
+    }
+
+    [Theory]
+    [InlineData("!playlist add other")]
+    [InlineData("!play other")]
+    [InlineData("!skip")]
+    [InlineData("!playlist remove 1")]
+    public async Task Changing_the_playlist_hands_control_back_and_starts_the_timeout(string command)
+    {
+        await Run();
+        _h.Gateway.States.Remove((5, 20));                            // typed from text, not in voice: the bot stays put
+        _h.Sender.Sent.Clear();
+        await _h.Send(command);
+        Assert.False(_h.Media.HoldsChannel(5));
+        Assert.Contains(_h.Texts, t => t.StartsWith("🎛️ The playlist's been changed", StringComparison.Ordinal));
+        Assert.True(_h.VoiceCommands.EmptyCountdowns.ContainsKey(5));  // nobody in the channel: the countdown runs
+        _h.Time.Advance(TimeSpan.FromMinutes(20));
+        await _h.VoiceCommands.EmptyCountdowns[5];
+        Assert.Null(_h.Voice.Get(5));                                 // signed off by the timeout
+    }
+
+    [Fact]
+    public async Task A_failed_change_is_not_a_change()
+    {
+        await Run();
+        await _h.Send("!playlist remove 9");
+        await _h.Send("!playlist order 1 9");
+        Assert.True(_h.Media.HoldsChannel(5));
+    }
+
+    [Fact]
+    public async Task Under_manual_control_the_bot_carries_on_after_the_last_screening()
+    {
+        await Run();
+        _h.Gateway.States[(5, 20)] = Channel;                         // someone is watching: no timeout
+        await _h.Send("!playlist add other");                         // after the screenings
+        _h.Current.End(PipelineEndReason.Natural);
+        await _h.Until(() => _h.Current.Request.Title == "Second Film (2002)" && _h.Current.Started);
+        _h.Current.End(PipelineEndReason.Natural);
+        await _h.Until(() => _ended.Count == 1, "the event ended");
+        await _h.Until(() => _h.Current.Request.Title == "Other (2000)" && _h.Current.Started, "the added item");
+        Assert.NotNull(_h.Voice.Get(5));
+        Assert.Contains("🎬 That's all the screenings — thanks for watching!", _h.Texts);
     }
 }
 

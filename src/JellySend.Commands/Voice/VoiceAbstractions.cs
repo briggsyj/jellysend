@@ -55,6 +55,12 @@ public interface IStreamControl
     /// media state that ends with the voice session (playlist, SyncPlay, debug overlay). Never throws.
     /// </summary>
     Task StopAsync(ulong guildId, string reason);
+
+    /// <summary>
+    /// Spec 030: an event's screenings are running untouched in the guild, so the empty-channel timeout doesn't apply
+    /// (the bot runs through them and signs off by itself).
+    /// </summary>
+    bool HoldsChannel(ulong guildId) => false;
 }
 
 /// <summary>A voice channel by id and name (spec 027).</summary>

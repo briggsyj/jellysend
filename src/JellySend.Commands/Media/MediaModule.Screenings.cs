@@ -60,6 +60,12 @@ public sealed partial class MediaModule
 
         public bool Ended { get; set; }
 
+        /// <summary>
+        /// Spec 030: someone changed the playlist (play, add, remove, order, skip) — the bot is under manual control:
+        /// the empty-channel timeout applies again, and it doesn't sign off after the last screening.
+        /// </summary>
+        public bool Manual { get; set; }
+
         public bool AllSettled => Slots.TrueForAll(s => s.Settled);
     }
 
@@ -253,36 +259,78 @@ public sealed partial class MediaModule
     private static string Stamp(DateTimeOffset t) =>
         string.Create(CultureInfo.InvariantCulture, $"<t:{t.ToUnixTimeSeconds()}:t>");
 
+    /// <summary>Spec 030: an untouched event run holds the channel (no empty-channel timeout).</summary>
+    public bool HoldsChannel(ulong guildId) =>
+        _states.TryGetValue(guildId, out var state) && state.Screening is { Ended: false, Manual: false };
+
     /// <summary>
-    /// Called before each advance (spec 028): marks the next screening as started, and once the last one has ended,
-    /// ends the Discord event.
+    /// Spec 030: a user changed what plays during an event — from now on the bot is under manual control: the
+    /// empty-channel timeout applies (starting now if nobody's there), and it won't sign off after the last screening.
     /// </summary>
-    private async Task ScreeningAdvanceAsync(GuildState state, MediaItem? next)
+    private async Task MarkManualAsync(ulong guild, string what)
+    {
+        if (!_states.TryGetValue(guild, out var state) || state.Screening is not { Ended: false, Manual: false } run)
+        {
+            return;
+        }
+
+        run.Manual = true;
+        _log.LogInformation("event screenings in guild {Guild} are now under manual control ({What})", guild, what);
+        var timeout = _voiceModule?.EmptyChannelTimeout ?? TimeSpan.Zero;
+        await state.Send(timeout > TimeSpan.Zero
+            ? $"🎛️ The playlist's been changed, so you're at the controls now — the bot signs off if the channel stays empty for {timeout.TotalMinutes:0} minutes."
+            : "🎛️ The playlist's been changed, so you're at the controls now.").ConfigureAwait(false);
+        if (_voiceModule is { } voiceModule)
+        {
+            await voiceModule.WatchIfEmptyAsync(guild).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Called before each advance (spec 028) with the item about to play: marks a screening as started; once the last
+    /// one has ended, ends the Discord event. Returns true when the bot should stop here and sign off (spec 030: the
+    /// screenings ran untouched to the end).
+    /// </summary>
+    private async Task<bool> ScreeningAdvanceAsync(GuildState state, MediaItem? next)
     {
         if (state.Screening is not { Ended: false } run)
         {
-            return;
+            return false;
         }
 
         if (next is not null && run.Waiting.Remove(next))
         {
-            return;
+            return false;
         }
 
-        if (run.Waiting.Count == 0 && run.AllSettled && run.Queued == run.Slots.Count)
+        if (run.Waiting.Count > 0 || !run.AllSettled || run.Queued != run.Slots.Count)
         {
-            run.Ended = true;
-            state.Screening = null;
-            await state.Send("🎬 That's all the screenings — thanks for watching!").ConfigureAwait(false);
-            try
-            {
-                await run.Request.EndEvent().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "could not end the Discord event in guild {Guild}", run.Request.Guild);
-            }
+            return false;
         }
+
+        run.Ended = true;
+        state.Screening = null;
+        await state.Send(run.Manual
+            ? "🎬 That's all the screenings — thanks for watching!"
+            : "🎬 That's all the screenings — thanks for watching! 📴 Signing off.").ConfigureAwait(false);
+        try
+        {
+            await run.Request.EndEvent().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "could not end the Discord event in guild {Guild}", run.Request.Guild);
+        }
+
+        return !run.Manual;
+    }
+
+    /// <summary>Spec 030: the untouched screenings are over — stop, drop the session and leave the channel.</summary>
+    private async Task SignOffAfterScreeningsAsync(ulong guild)
+    {
+        _log.LogInformation("event screenings in guild {Guild} finished untouched — signing off", guild);
+        await StopAsync(guild, "screenings-ended").ConfigureAwait(false);
+        await _voice.LeaveAsync(guild).ConfigureAwait(false);
     }
 
     /// <summary>Swallows messages (the quiet first pass).</summary>
