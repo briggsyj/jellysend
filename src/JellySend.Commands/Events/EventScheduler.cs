@@ -196,6 +196,24 @@ public sealed class EventScheduler(
         await TickAsync(startup, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Spec 036: the upcoming events the bot will run — scheduled voice events with a Screenings list, from someone
+    /// allowed to <c>!play</c> — for <c>!schedule events</c>.
+    /// </summary>
+    public IReadOnlyList<MediaModule.UpcomingScreening> Upcoming()
+    {
+        lock (_known)
+        {
+            return [.. _known.Values
+                .Where(e => e.Status == EventInfo.Scheduled && e.EntityType == EventInfo.VoiceEntity && e.ChannelId is not null
+                    && e.CreatorId is { } creator && RoleResolver.Satisfies(roles, creator, Role.Friend))
+                .Select(e => (Event: e, Lines: Screenings.Parse(e.Description)))
+                .Where(x => x.Lines is { Count: > 0 })
+                .Select(x => new MediaModule.UpcomingScreening(
+                    x.Event.Id, x.Event.GuildId, x.Event.Name, x.Event.Start, x.Lines!, x.Event.CreatorId!.Value, x.Event.ChannelId!.Value))];
+        }
+    }
+
     /// <summary>Look at every known event (no network): start what's due, check what's new or edited.</summary>
     public async Task TickAsync(bool startup, CancellationToken ct)
     {

@@ -229,6 +229,8 @@ Pickers accept a number or a name, and time out after 30 seconds.
 | `!playlist add <title>` | Add to the end (max 10, plays from the start); `!playlist add <show> s01e02`, `s1e1-6` |
 | `!playlist remove <# or title>` | Take an item off, e.g. `!playlist remove 2` |
 | `!playlist order <# or title> <new #>` | Move an item, e.g. `!playlist order 3 1` (item 3 to the top) |
+| `!schedule` | When each queued item starts and when it all ends, from the time left in what's on now (in each reader's time zone) |
+| `!schedule events` | Every upcoming event with screenings — this server's, or every server's in a DM — soonest first, each with its item start times and end time |
 
 Leave out what comes after `add`, `remove` or `order` and the bot asks for it. The old `!queue`, `!remove` and `!order` still work and point to their new names.
 
