@@ -65,7 +65,7 @@ public sealed class EventScheduler(
     private readonly HashSet<ulong> _interested = [];
 
     /// <summary>Spec 031: per upcoming event, the description last checked and that check's cancellation.</summary>
-    private readonly Dictionary<ulong, (string Description, CancellationTokenSource Cancel)> _checked = [];
+    private readonly Dictionary<ulong, (string Description, DateTimeOffset Start, CancellationTokenSource Cancel)> _checked = [];
 
     /// <summary>The screenings started so far (tests await them).</summary>
     internal List<Task> Runs { get; } = [];
@@ -323,8 +323,9 @@ public sealed class EventScheduler(
         if (!due && !startedByHand)
         {
             // Spec 031: an upcoming event, new or edited — check its list now, so the creator can fix it ahead of time.
+            // Spec 040: a new start time counts as an edit, so questions to the creator stay open until the new start.
             if (e.Status == EventInfo.Scheduled && e.CreatorId is { } author && RoleResolver.Satisfies(roles, author, Role.Friend)
-                && !(_checked.TryGetValue(e.Id, out var last) && last.Description == e.Description))
+                && !(_checked.TryGetValue(e.Id, out var last) && last.Description == e.Description && last.Start == e.Start))
             {
                 if (_checked.Remove(e.Id, out var old))
                 {
@@ -333,7 +334,7 @@ public sealed class EventScheduler(
                 }
 
                 var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                _checked[e.Id] = (e.Description, cancel);
+                _checked[e.Id] = (e.Description, e.Start, cancel);
                 _log.LogInformation("checking the screenings of upcoming event {Event} in guild {Guild}", e.Id, e.GuildId);
                 Checks.Add(CheckAsync(Request(e, channel, lines, author), e.Start, cancel.Token));
             }
