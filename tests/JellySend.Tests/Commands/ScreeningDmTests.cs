@@ -259,6 +259,32 @@ public sealed partial class EventSchedulerTests
     }
 
     [Fact]
+    public async Task Moving_the_start_keeps_the_question_open_until_the_new_time()
+    {
+        _h.Library.Search["second film"] = [MediaHarness.Movie("f2", "Second Film", 2002)];
+        _events.Add(Event(startInMinutes: 60, description: "Screenings:\n1. lost film"));
+        await _scheduler.PollAsync(false, TestContext.Current.CancellationToken);
+        await _h.Until(() => _h.Hub.WaiterCount == 1, "the first question");
+        var asked = _h.Texts.Count(t => t.Contains("`lost film` isn't in the library", StringComparison.Ordinal));
+
+        _events.Replace(Event(startInMinutes: 180, description: "Screenings:\n1. lost film"));   // moved two hours later
+        await _scheduler.PollAsync(false, TestContext.Current.CancellationToken);
+        await _h.Until(() => _h.Texts.Count(t => t.Contains("`lost film` isn't in the library", StringComparison.Ordinal)) == asked + 1, "asked again");
+        await _h.Until(() => _h.Hub.WaiterCount == 1, "one open question");
+
+        _h.Time.Advance(TimeSpan.FromMinutes(90));                                 // past the old start
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.Equal(1, _h.Hub.WaiterCount);                                       // still listening
+        await _h.Send("second film", guild: null, author: 20, channel: 900);
+        await _h.Until(() => _h.Texts.Any(t => t.StartsWith("✅ Got it: **Second Film", StringComparison.Ordinal)), "the answer");
+
+        _events.Replace(Event(startInMinutes: 240, description: "Screenings:\n1. lost film"));   // moved again: answer kept
+        await _scheduler.PollAsync(false, TestContext.Current.CancellationToken);
+        await Task.WhenAll(_scheduler.Checks);
+        Assert.Equal(asked + 1, _h.Texts.Count(t => t.Contains("`lost film` isn't in the library", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task Upcoming_events_from_others_are_not_checked()
     {
         _events.Add(Event(startInMinutes: 60, creator: 30, description: "Screenings:\n1. lost film"));
