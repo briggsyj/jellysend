@@ -220,6 +220,8 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 
 Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 15), with a note in that voice channel's chat.
 
+The bot's account can only be in one voice call at a time. If it's already streaming in another server, `!play` (and anything else that starts a stream) says what's on there and asks you to reply `yes` before stopping it; `no`, or no answer, leaves it running.
+
 Pickers accept a number or a name, and time out after 30 seconds.
 
 ### Playlist
