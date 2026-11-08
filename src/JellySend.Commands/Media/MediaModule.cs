@@ -1594,6 +1594,13 @@ public sealed partial class MediaModule : IStreamControl
             return false;
         }
 
+        // Spec 041: one account, one call — starting here ends a stream in another server, so ask first.
+        if (_engine.ActiveGuilds.FirstOrDefault(g => g != guild) is var other and not 0
+            && !await ConfirmTakeoverAsync(c, other).ConfigureAwait(false))
+        {
+            return false;
+        }
+
         if (fallback && _voiceModule is { } notice)
         {
             await c.ReplyAsync(notice.FallbackNotice(channelName)).ConfigureAwait(false);
@@ -1612,6 +1619,43 @@ public sealed partial class MediaModule : IStreamControl
         }
 
         return started;
+    }
+
+    /// <summary>
+    /// Spec 041: the bot is streaming in <paramref name="other"/> (another server). The account can only be in one call,
+    /// so starting here would stop that stream: say what's on there and ask the author to confirm. On <c>yes</c>, that
+    /// stream stops (its chat is told) and the bot leaves that call; on <c>no</c> or no answer within the usual 30 s,
+    /// nothing changes.
+    /// </summary>
+    private async Task<bool> ConfirmTakeoverAsync(CommandContext c, ulong other)
+    {
+        _states.TryGetValue(other, out var there);
+        var what = there?.Now is { } now ? $"**{MediaLabels.Format(now.Item)}**" : "something";
+        var server = _guildName(other) is { } name ? $"**{Shorten(name, 40)}**" : "another server";
+        var eventNote = there?.Screening is { Ended: false } ? " for an event" : "";
+        await c.ReplyAsync(
+            $"⚠️ The bot is streaming {what} in {server}{eventNote} right now, and can only be in one call. "
+            + "Starting here stops that stream. Reply `yes` to go ahead, or `no`.").ConfigureAwait(false);
+        var answer = await NumberPrompt.AskWordAsync(c, ["yes", "y", "no", "n"]).ConfigureAwait(false);
+        switch (answer?.ToLowerInvariant())
+        {
+            case "yes" or "y":
+                _log.LogInformation("stopping the stream in guild {Other} to start one in guild {Guild}", other, c.GuildId);
+                if (there is not null)
+                {
+                    await there.Send("📴 Someone started a stream in another server, so this one has stopped.").ConfigureAwait(false);
+                }
+
+                await StopAsync(other, "takeover").ConfigureAwait(false);
+                await _voice.LeaveAsync(other).ConfigureAwait(false);
+                return true;
+            case "no" or "n":
+                await c.ReplyAsync("👍 Left as it is — nothing started here.").ConfigureAwait(false);
+                return false;
+            default:
+                await c.ReplyAsync("⌛ No answer — nothing started here.").ConfigureAwait(false);
+                return false;
+        }
     }
 
     /// <summary>A user started playback: (re)start the <see cref="MaxPlaytime"/> countdown for the guild (spec 016).</summary>
