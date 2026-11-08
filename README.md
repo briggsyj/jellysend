@@ -243,7 +243,7 @@ Leave out what comes after `add`, `remove` or `order` and the bot asks for it. T
 
 ### Discord Events (screenings)
 
-Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
+Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). `Screening`, `Showing`, `Showings`, `Playlist`, `Play list`, `Runlist`, `Run list` and `Run-list` work too, also at the end of a short line such as `Now showing:` or `Movie playlist` (up to three words before the keyword; not on a bulleted line). The first such line starts the list. Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
 
 ```
 Our monthly movie night!

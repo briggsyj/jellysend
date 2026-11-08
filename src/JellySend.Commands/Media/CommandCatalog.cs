@@ -160,7 +160,8 @@ public static class CommandCatalog
         2. Example Show s1e1-3
         ```
         • Each line is written like `!play`: a title, an episode (`show s2e5`) or several (`show s1e1-3`).
-        • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
+        • Number them (`1.`), bullet them (`-`), or just put one per line. The list ends at a blank line.
+        • Instead of `Screenings` you can write `Screening`, `Showing(s)`, `Playlist`, `Play list`, `Runlist`, `Run list` or `Run-list` — any case, colon optional, even after a few words (`Now showing:`, `Movie playlist`).
         • Once the bot has picked the event up, it marks itself **Interested** on it.
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
