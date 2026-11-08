@@ -274,8 +274,7 @@ With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay gro
 |---|---|
 | **Admin** | User IDs listed in `ALLOWED_USER_IDS` — everything, including the admin-only `!debug` and `!channel default` |
 | **Friend** | Users on the bot account's friends list — every other command (`!play`, playlist, tracks, `!channel set`, `!event`, …), and their Discord events with a list are run |
-| **Viewer** | Members of any guild the bot account is in — `!help` and `!ping` |
-| **None** | Everyone else |
+| **Everyone else** | Anyone who isn't an admin or a friend, including members of the bot's servers — no commands at all, not even `!help` or `!ping` |
 
 A command run by someone whose role doesn't allow it gets a GIF in reply (a bare link, so Discord plays it inline).
 

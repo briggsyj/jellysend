@@ -126,12 +126,12 @@ public static class CommandCatalog
             `!debug` — post the stats here once
             -# The stats show each step: Jellyfin (original file or its conversion), the bot's encoder and its speed, and the stream to Discord.
             """),
-        new("help", [], Role.Viewer, Extras, """
+        new("help", [], Role.Friend, Extras, """
             `!help` — the command list
             `!help <command>` — one command in detail, e.g. `!help play`
             `!help all` — every command in detail
             """),
-        new("ping", [], Role.Viewer, Extras, "`!ping` — check the bot is awake."),
+        new("ping", [], Role.Friend, Extras, "`!ping` — check the bot is awake."),
     ];
 
     /// <summary>The old playlist commands (still working); their help is <c>!playlist</c>'s.</summary>

@@ -352,14 +352,16 @@ public sealed class MediaControlTests
     }
 
     [Fact]
-    public async Task Help_and_ping_are_open_to_viewers_but_playback_is_not()
+    public async Task Viewers_can_use_nothing()
     {
+        // Spec 039: someone who only shares a server with the bot gets the GIF for every command, help and ping too.
         await _h.Send("!media help", author: 30);
+        await _h.Send("!help", author: 30);
         await _h.Send("!ping", author: 30);
-        await _h.Send("!help sample film", author: 30);      // not a command: never a search
-        await _h.Send("!play film", author: 30);           // viewers can't play
+        await _h.Send("!play film", author: 30);
         await _h.Send("!join", author: 30);
-        Assert.Equal([MediaText.HelpText, "🏓 Pong! Still broadcasting.", "🙅 No command called `sample film` — `!help` lists them all.", CommandRouter.DeniedReply, CommandRouter.DeniedReply], _h.Texts);
+        Assert.All(_h.Texts, t => Assert.Equal(CommandRouter.DeniedReply, t));
+        Assert.Equal(5, _h.Texts.Count);
         Assert.Empty(_h.Pipelines.Created);
     }
 
