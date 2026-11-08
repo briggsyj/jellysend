@@ -54,7 +54,7 @@ public sealed class ScreeningDmTests
         await Reply("second film");
         await run;
         Assert.Contains("✅ Got it: **Second Film (2002)** instead of `lost film`.", In(Dm));
-        var schedule = In(Channel).Last(t => t.Contains("screening times", StringComparison.Ordinal));
+        var schedule = In(Channel).Last(t => t.Contains("creening times", StringComparison.Ordinal));
         Assert.Contains("Second Film (2002)", schedule, StringComparison.Ordinal);
     }
 
@@ -97,7 +97,7 @@ public sealed class ScreeningDmTests
         _dm = null;
         var run = _h.Media.RunScreeningAsync(Request("first film", "lost film", "twin"), TestContext.Current.CancellationToken);
         await _h.Until(() => In(Channel).Any(t => t.StartsWith("🔎 Found 2 matches", StringComparison.Ordinal)) && _h.Hub.WaiterCount > 0, "the channel picker");
-        Assert.Contains("🔎 `lost film` isn't in the library — skipped.", In(Channel));
+        Assert.Contains(In(Channel), t => t.Contains("🔎 `lost film` isn't in the library — skipped.", StringComparison.Ordinal));
         await _h.Send("1", author: Creator, channel: Channel);
         await run;
         Assert.Empty(In(Dm));
@@ -119,8 +119,8 @@ public sealed class ScreeningDmTests
         await _h.Media.RunScreeningAsync(Request("lost film", "twin", "gone too"), TestContext.Current.CancellationToken);
         Assert.Empty(In(Dm));                                            // nothing to ask again
         Assert.Equal("Second Film (2002)", _h.Current.Request.Title);
-        Assert.Contains(In(Channel), t => t.Contains("Twin (1990)", StringComparison.Ordinal) && t.Contains("screening times", StringComparison.Ordinal));
-        Assert.Contains("🎬 `gone too` is left out (the event's creator skipped it).", In(Channel));
+        Assert.Contains(In(Channel), t => t.Contains("Twin (1990)", StringComparison.Ordinal) && t.Contains("creening times", StringComparison.Ordinal));
+        Assert.Contains(In(Channel), t => t.Contains("🎬 `gone too` is left out (the event's creator skipped it).", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class ScreeningDmTests
         await WhenAsked("isn't in the library");
         await Reply("second film");
         await run;
-        Assert.Contains("Second Film (2002)", In(Channel).Last(t => t.Contains("screening times", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.Contains("Second Film (2002)", In(Channel).Last(t => t.Contains("creening times", StringComparison.Ordinal)), StringComparison.Ordinal);
     }
 
     [Fact]

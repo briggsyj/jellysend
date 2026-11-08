@@ -2086,7 +2086,12 @@ public sealed partial class MediaModule : IStreamControl
 
             var item = state.Queue.TakeNext()!;
             state.Screening?.Waiting.Remove(item); // spec 028: a screening that's starting
-            await state.Send($"⏭ Coming up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
+            if (!state.QuietAdvance)
+            {
+                await state.Send($"⏭ Coming up next: **{MediaLabels.Format(item)}**").ConfigureAwait(false);
+            }
+
+            state.QuietAdvance = false;
             switch (await StartItemHoldingLockAsync(guild, state, link.ChannelId, item, 0, sync: true).ConfigureAwait(false))
             {
                 case StartResult.Started:
@@ -2633,6 +2638,9 @@ public sealed partial class MediaModule : IStreamControl
         public long Generation;
 
         public Playlist<MediaItem> Queue { get; } = new(MediaLabels.Format);
+
+        /// <summary>Spec 042: skip the next "Coming up next" (an event's opening message already said it).</summary>
+        public bool QuietAdvance { get; set; }
 
         /// <summary>The Discord event whose screenings are on (spec 028), if any.</summary>
         public ScreeningRun? Screening { get; set; }

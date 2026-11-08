@@ -373,6 +373,12 @@ public sealed partial class MediaModule
         public bool Manual { get; set; }
 
         public bool AllSettled => Slots.TrueForAll(s => s.Settled);
+
+        /// <summary>Spec 042: the opening message (starting + schedule + notes) has been posted.</summary>
+        public bool Announced { get; set; }
+
+        /// <summary>Spec 042: notes for the opening message (titles skipped), so the start is one message.</summary>
+        public List<string> Notes { get; } = [];
     }
 
     /// <summary>Run an event's screenings (spec 028). Returns once every pick is settled.</summary>
@@ -385,7 +391,6 @@ public sealed partial class MediaModule
         }
 
         Task Say(string text) => Announcer.SendAsync(request.Channel, text, CancellationToken.None);
-        await Say($"🎬 **{Shorten(request.EventName, 80)}** — the screenings are starting! Tuning in…").ConfigureAwait(false);
 
         // Pass 1, quietly: everything with a single match, and what the creator settled ahead of time (spec 031).
         var slots = new List<Slot>();
@@ -423,9 +428,9 @@ public sealed partial class MediaModule
         state.Screening = run;
         foreach (var missing in slots.Where(s => s.Missing))
         {
-            await Say(_eventAnswers.ContainsKey((request.EventId, missing.Line))
+            run.Notes.Add(_eventAnswers.ContainsKey((request.EventId, missing.Line))
                 ? $"🎬 `{Shorten(missing.Line)}` is left out (the event's creator skipped it)."
-                : $"🔎 `{Shorten(missing.Line)}` isn't in the library — skipped.").ConfigureAwait(false);
+                : $"🔎 `{Shorten(missing.Line)}` isn't in the library — skipped.");
         }
 
         await QueueSettledAsync(state, run).ConfigureAwait(false);
@@ -498,6 +503,7 @@ public sealed partial class MediaModule
     private async Task QueueSettledAsync(GuildState state, ScreeningRun run)
     {
         var guild = run.Request.Guild;
+        var announced = false;
         await state.StartLock.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -517,6 +523,14 @@ public sealed partial class MediaModule
             {
                 await _voice.EnsureAsync(guild, run.Request.Channel, CancellationToken.None).ConfigureAwait(false);
                 run.StartedAt ??= _time.GetUtcNow();
+                if (!run.Announced)
+                {
+                    // Spec 042: one opening message — starting, the schedule and any notes — then straight into the first.
+                    await state.Send(ScheduleText(run)).ConfigureAwait(false);
+                    announced = true;
+                    state.QuietAdvance = true; // no "Coming up next" for the first: the schedule just said it
+                }
+
                 if (await AdvanceHoldingLockAsync(guild, state).ConfigureAwait(false))
                 {
                     StartPlaytimeLimit(guild);
@@ -533,7 +547,7 @@ public sealed partial class MediaModule
             state.StartLock.Release();
         }
 
-        if (run.StartedAt is not null || run.Waiting.Count > 0)
+        if (!announced && (run.StartedAt is not null || run.Waiting.Count > 0 || !run.Announced))
         {
             await state.Send(ScheduleText(run)).ConfigureAwait(false);
         }
@@ -561,7 +575,13 @@ public sealed partial class MediaModule
     /// </summary>
     private static string ScheduleText(ScreeningRun run)
     {
-        var lines = new List<string> { $"🎬 **{Shorten(run.Request.EventName, 80)}** — screening times (in your time zone):" };
+        // Spec 042: the first one opens the event; later ones (after picks) are updates.
+        var lines = new List<string>
+        {
+            run.Announced
+                ? $"🎬 **{Shorten(run.Request.EventName, 80)}** — screening times (in your time zone):"
+                : $"🎬 **{Shorten(run.Request.EventName, 80)}** — the screenings are starting! Screening times (in your time zone):",
+        };
         var at = run.StartedAt;
         var n = 0;
         foreach (var slot in run.Slots)
@@ -586,6 +606,12 @@ public sealed partial class MediaModule
         }
 
         lines.Add(at is { } end ? $"🏁 Ends around {Stamp(end)}" : "🏁 End time to follow, once every pick is made.");
+        if (!run.Announced)
+        {
+            lines.AddRange(run.Notes);
+            run.Announced = true;
+        }
+
         var text = string.Join('\n', lines);
         return text.Length <= CommandCatalog.MessageLimit ? text : text[..CommandCatalog.MessageLimit] + "…";
     }

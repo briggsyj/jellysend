@@ -115,7 +115,7 @@ public sealed class ScreeningRunTests
         await _h.Media.RunScreeningAsync(Request("first film", "second film"), TestContext.Current.CancellationToken);
         Assert.Equal(Channel, _h.Gateway.Links[^1].ChannelId);
         Assert.Equal("First Film (2001)", _h.Current.Request.Title);
-        var schedule = InChannel().Last(t => t.Contains("screening times", StringComparison.Ordinal));
+        var schedule = InChannel().Last(t => t.Contains("creening times", StringComparison.Ordinal));
         var start = _h.Time.GetUtcNow().ToUnixTimeSeconds();
         Assert.Contains($"`1` <t:{start}:t> First Film (2001)", schedule, StringComparison.Ordinal);
         Assert.Contains($"`2` <t:{start + 90 * 60}:t> Second Film (2002)", schedule, StringComparison.Ordinal);
@@ -151,7 +151,7 @@ public sealed class ScreeningRunTests
     {
         var run = _h.Media.RunScreeningAsync(Request("first film", "twin", "second film"), TestContext.Current.CancellationToken);
         await _h.Until(() => InChannel().Any(t => t.StartsWith("🔎 Found 2 matches for `twin`", StringComparison.Ordinal)), "the picker");
-        var before = InChannel().Last(t => t.Contains("screening times", StringComparison.Ordinal));
+        var before = InChannel().Last(t => t.Contains("creening times", StringComparison.Ordinal));
         Assert.Contains("⏳ `twin` — waiting for a pick", before, StringComparison.Ordinal);
         Assert.Contains("🏁 End time to follow", before, StringComparison.Ordinal);
 
@@ -160,7 +160,7 @@ public sealed class ScreeningRunTests
         await _h.Until(() => _h.Hub.WaiterCount > 0);
         await Answer("2");
         await run;
-        var after = InChannel().Last(t => t.Contains("screening times", StringComparison.Ordinal));
+        var after = InChannel().Last(t => t.Contains("creening times", StringComparison.Ordinal));
         var start = _h.Time.GetUtcNow().ToUnixTimeSeconds();
         Assert.Contains($"`2` <t:{start + 90 * 60}:t> Twin (2020)", after, StringComparison.Ordinal);
         Assert.Contains($"`3` <t:{start + 135 * 60}:t> Second Film (2002)", after, StringComparison.Ordinal);
@@ -177,7 +177,7 @@ public sealed class ScreeningRunTests
         _h.Time.Advance(TimeSpan.FromMinutes(1));
         await run;
         Assert.Contains("⌛ No answer — going with the first one.", InChannel());
-        Assert.Contains(InChannel(), t => t.Contains("Twin (1990)", StringComparison.Ordinal) && t.Contains("screening times", StringComparison.Ordinal));
+        Assert.Contains(InChannel(), t => t.Contains("Twin (1990)", StringComparison.Ordinal) && t.Contains("creening times", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -193,10 +193,24 @@ public sealed class ScreeningRunTests
     }
 
     [Fact]
+    public async Task The_start_is_one_message_then_straight_into_the_first()
+    {
+        await _h.Media.RunScreeningAsync(Request("nothing like it", "first film", "second film"), TestContext.Current.CancellationToken);
+        var start = _h.Time.GetUtcNow().ToUnixTimeSeconds();
+        Assert.Equal(
+            [
+                $"🎬 **Movie Night** — the screenings are starting! Screening times (in your time zone):\n`1` <t:{start}:t> First Film (2001)\n`2` <t:{start + 5400}:t> Second Film (2002)\n🏁 Ends around <t:{start + 9000}:t>\n🔎 `nothing like it` isn't in the library — skipped.",
+                "📡 Tuning in to **First Film (2001)**…",
+                "📺 Now showing: **First Film (2001)**",
+            ],
+            InChannel());
+    }
+
+    [Fact]
     public async Task Missing_titles_are_skipped_and_said()
     {
         await _h.Media.RunScreeningAsync(Request("nothing like it", "first film"), TestContext.Current.CancellationToken);
-        Assert.Contains("🔎 `nothing like it` isn't in the library — skipped.", InChannel());
+        Assert.Contains(InChannel(), t => t.Contains("🔎 `nothing like it` isn't in the library — skipped.", StringComparison.Ordinal));
         Assert.Equal("First Film (2001)", _h.Current.Request.Title);
     }
 
