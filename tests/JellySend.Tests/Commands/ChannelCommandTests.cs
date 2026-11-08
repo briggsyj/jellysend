@@ -26,19 +26,22 @@ public sealed class ChannelCommandTests : IDisposable
         }
     }
 
-    private async Task Pick(string answer, string promptStart)
+    /// <summary>An admin (spec 038: !channel default is for admins).</summary>
+    private const ulong Admin = 10;
+
+    private async Task Pick(string answer, string promptStart, ulong author = 20)
     {
         await _h.Until(() => _h.Texts.Count > 0 && _h.Texts[^1].StartsWith(promptStart, StringComparison.Ordinal), promptStart);
-        await _h.Answer(answer);
+        await _h.Answer(answer, author);
     }
 
     [Fact]
     public async Task Default_lists_servers_then_channels_and_saves_the_pick()
     {
-        var run = _h.Start("!channel default");
-        await Pick("1", "📌 **Default voice channel** — which server?");
+        var run = _h.Start("!channel default", Admin);
+        await Pick("1", "📌 **Default voice channel** — which server?", Admin);
         Assert.Contains("`2` Other Place", _h.Texts.First(t => t.StartsWith("📌 **Default voice channel**", StringComparison.Ordinal)), StringComparison.Ordinal);
-        await Pick("voice-101", "📌 **Movie Night** — which voice channel");
+        await Pick("voice-101", "📌 **Movie Night** — which voice channel", Admin);
         await run;
         Assert.Equal("📌 Default voice channel for **Movie Night**: **🔊 voice-101**.", _h.Texts[^1]);
         Assert.Equal(101UL, new SettingsStore(_dir).DefaultVoiceChannel(5)); // saved to disk
@@ -67,12 +70,12 @@ public sealed class ChannelCommandTests : IDisposable
     public async Task The_last_option_clears_the_default_and_marks_where_it_is()
     {
         _h.Media.Settings.SetDefaultVoiceChannel(5, 101);
-        var run = _h.Start("!channel default");
-        await Pick("movie", "📌 **Default voice channel**");
+        var run = _h.Start("!channel default", Admin);
+        await Pick("movie", "📌 **Default voice channel**", Admin);
         await _h.Until(() => _h.Texts[^1].StartsWith("📌 **Movie Night**", StringComparison.Ordinal), "the channel list");
         Assert.Contains("`2` 🔊 voice-101  ← default", _h.Texts[^1], StringComparison.Ordinal);
         Assert.Contains("`4` No default — use the first voice channel", _h.Texts[^1], StringComparison.Ordinal);
-        await Pick("4", "📌 **Movie Night**");
+        await Pick("4", "📌 **Movie Night**", Admin);
         await run;
         Assert.Equal("📌 No default for **Movie Night** — the first voice channel is used.", _h.Texts[^1]);
         Assert.Null(new SettingsStore(_dir).DefaultVoiceChannel(5));
@@ -111,13 +114,13 @@ public sealed class ChannelCommandTests : IDisposable
         Assert.StartsWith("**`!channel`**", _h.Texts[^1], StringComparison.Ordinal);
 
         _h.Gateway.ServersError = new InvalidOperationException("401");
-        await _h.Send("!channel default");
+        await _h.Send("!channel default", author: Admin);
         await _h.Send("!channel set");
         Assert.All(_h.Texts.TakeLast(2), t => Assert.StartsWith("❌ We couldn't load the server list", t, StringComparison.Ordinal));
 
         _h.Gateway.ServersError = null;
         _h.Gateway.Servers.Clear();
-        await _h.Send("!channel default");
+        await _h.Send("!channel default", author: Admin);
         await _h.Send("!channel set");
         Assert.Equal(["🔎 The bot isn't in any servers.", "🔎 There are no voice channels the bot can reach."], _h.Texts.TakeLast(2));
     }
@@ -126,16 +129,25 @@ public sealed class ChannelCommandTests : IDisposable
     public async Task A_server_without_voice_channels_says_so()
     {
         _h.Gateway.Servers.Add(new ServerRef(7, "Text Only"));
-        var run = _h.Start("!channel default");
-        await Pick("Text Only", "📌 **Default voice channel**");
+        var run = _h.Start("!channel default", Admin);
+        await Pick("Text Only", "📌 **Default voice channel**", Admin);
         await run;
         Assert.Equal("🔎 **Text Only** has no voice channels the bot can use.", _h.Texts[^1]);
 
         _h.Gateway.VoiceChannelsError = new InvalidOperationException("403");
-        run = _h.Start("!channel default");
-        await Pick("1", "📌 **Default voice channel**");
+        run = _h.Start("!channel default", Admin);
+        await Pick("1", "📌 **Default voice channel**", Admin);
         await run;
         Assert.StartsWith("❌ We couldn't load the voice channels of **Movie Night**", _h.Texts[^1], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("!channel default")]
+    [InlineData("!media channel default")]
+    public async Task Default_is_for_admins_only(string command)
+    {
+        await _h.Send(command);                                         // a friend
+        Assert.Equal([JellySend.Commands.Routing.CommandRouter.DeniedReply], _h.Texts);
     }
 }
 
@@ -164,6 +176,20 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Null(reloaded.DefaultVoiceChannel(5));
         Assert.Equal(200UL, reloaded.DefaultVoiceChannel(6));
         Assert.False(File.Exists(Path.Combine(_dir, "settings.json.tmp")));
+    }
+
+    [Fact]
+    public void Unsubscribed_events_are_saved_and_reloaded()
+    {
+        var store = new SettingsStore(_dir);
+        Assert.False(store.IsEventUnsubscribed(9));
+        Assert.True(store.SetEventUnsubscribed(9, true));
+        Assert.True(store.SetEventUnsubscribed(8, true));
+        Assert.True(new SettingsStore(_dir).IsEventUnsubscribed(9));
+        store.SetEventUnsubscribed(9, false);
+        var reloaded = new SettingsStore(_dir);
+        Assert.False(reloaded.IsEventUnsubscribed(9));
+        Assert.True(reloaded.IsEventUnsubscribed(8));
     }
 
     [Fact]

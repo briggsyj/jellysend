@@ -110,6 +110,7 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
             MaxPlaytime = options.MaxPlaytime,
             Settings = settings,
             Announcer = new RestMessageSender(rest),
+            Roles = directory,
         };
         var voiceModule = new VoiceModule(
             voice, media, loggers.CreateLogger<VoiceModule>(), emptyChannelTimeout: options.EmptyChannelTimeout, announcer: new RestMessageSender(rest));
@@ -134,9 +135,10 @@ internal sealed class BotService(JellySendOptions options, ILoggerFactory logger
 
         // Spec 028/034: Discord events with a "Screenings" list start the bot; changes arrive pushed over the gateway.
         var events = new EventScheduler(
-            new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>());
+            new RestEventSource(rest), media, directory, new RestMessageSender(rest), logger: loggers.CreateLogger<EventScheduler>(), settings: settings);
         gateway.Dispatch += events.Apply;
         media.UpcomingEvents = events.Upcoming; // spec 036: !schedule events
+        media.Events = events;                  // spec 038: !event subscribe / unsubscribe
         var gatewayTrace = loggers.CreateLogger("JellySend.Gateway.Voice");
         gateway.Dispatch += (type, data) =>
         {

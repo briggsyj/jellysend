@@ -39,7 +39,7 @@ public sealed class MediaPlayTests
     {
         _h.Library.HasUserCredentials = true;
         await _h.Send("!media help");
-        await _h.Send("!media help", guild: 9, author: 30); // a viewer in a server whose name is unknown
+        await _h.Send("!media help", guild: 9);             // a server whose name is unknown
         Assert.EndsWith("join **jellysend · Movie Night** in a Jellyfin app to pause, play and seek this stream together.", _h.Texts[0], StringComparison.Ordinal);
         Assert.EndsWith("join **jellysend · <server name>** in a Jellyfin app to pause, play and seek this stream together.", _h.Texts[1], StringComparison.Ordinal);
     }

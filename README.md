@@ -209,13 +209,14 @@ Arguments are recognised by their format, in any order. If they find nothing, th
 | `!leave` | Stop and leave the voice channel |
 | `!join` | Join your voice channel |
 | `!channel set` | List the voice channels the bot can reach; reply with a number to move there (what's on air carries on) |
-| `!channel default` | Pick a server, then the voice channel the bot uses there when you're not in voice (saved in `DATA_DIR`) |
+| `!channel default` | Admins: pick a server, then the voice channel the bot uses there when you're not in voice (saved in `DATA_DIR`) |
 | `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
 | `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
 | `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
 | `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
 | `!res` / `!resolution` | Output resolution: `!res 360p`, `480p`, `540p`, `720p`, `1080p`, `!res default`. Lower resolutions also lower the bitrate; applies now and to later items. |
-| `!debug` | Stream stats; `!debug on` / `off` toggles the overlay |
+| `!debug` | Admins: stream stats; `!debug on` / `off` toggles the overlay |
+| `!event unsubscribe` / `!event subscribe` | Stop the bot running an upcoming event with a list, or have it run one again — pick from a numbered list of every server's events (saved in `DATA_DIR`) |
 
 Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 15), with a note in that voice channel's chat.
 
@@ -243,7 +244,7 @@ Leave out what comes after `add`, `remove` or `order` and the bot asks for it. T
 
 ### Discord Events (screenings)
 
-Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
+Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). `Screening`, `Showing`, `Showings`, `Playlist`, `Play list`, `Runlist`, `Run list` and `Run-list` work too, also at the end of a short line such as `Now showing:` or `Movie playlist` (up to three words before the keyword; not on a bulleted line). The first such line starts the list. Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
 
 ```
 Our monthly movie night!
@@ -258,6 +259,7 @@ Screenings:
 - Only events created by someone allowed to use `!play` count. Once the bot has picked an event up, it marks itself **Interested** in it (and removes that if the event is edited so it no longer qualifies).
 - In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
 - A title that isn't found, or matches several things, is sorted out with the event's creator in a **DM**: as soon as the event is created or its description edited, and again when it starts if still open. For a missing title they reply with another title to search for (or `skip`); for several matches they pick from a numbered list. At the start the question stays open until shortly before that item is due; unanswered, several matches play the first and a missing title is skipped, with a note in the voice channel's chat. The schedule is posted again after each answer. If the creator can't be messaged, several matches are asked about in the voice channel's chat instead (anyone allowed to `!play` can answer) and missing titles are skipped.
+- `!event unsubscribe` opts an event out (the bot drops its Interested mark and won't run it); `!event subscribe` opts it back in. The choice is saved.
 - Left alone, the bot plays the whole list, even if the channel is empty (the empty-channel timeout doesn't apply), then ends the event and leaves.
 - Change the playlist during the event (`!play`, `!skip`, `!playlist add` / `remove` / `order`) and it's under manual control: the empty-channel timeout applies again, and after the last screening it carries on with the playlist instead of leaving. The event is still ended in Discord.
 - The bot's account needs **Manage Events** in the server to start and end events (the screenings still run without it), and permission to post in the voice channel's chat.
@@ -270,10 +272,9 @@ With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay gro
 
 | Role | Who qualifies |
 |---|---|
-| **Admin** | User IDs listed in `ALLOWED_USER_IDS` |
-| **Friend** | Users on the bot account's friends list — can use every command |
-| **Viewer** | Members of any guild the bot account is in — `!help` and `!ping` |
-| **None** | Everyone else |
+| **Admin** | User IDs listed in `ALLOWED_USER_IDS` — everything, including the admin-only `!debug` and `!channel default` |
+| **Friend** | Users on the bot account's friends list — every other command (`!play`, playlist, tracks, `!channel set`, `!event`, …), and their Discord events with a list are run |
+| **Everyone else** | Anyone who isn't an admin or a friend, including members of the bot's servers — no commands at all, not even `!help` or `!ping` |
 
 A command run by someone whose role doesn't allow it gets a GIF in reply (a bare link, so Discord plays it inline).
 

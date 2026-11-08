@@ -14,6 +14,9 @@ public sealed class SettingsStore
     private readonly string? _path;
     private readonly Action<string>? _warn;
     private readonly Dictionary<ulong, ulong> _defaultVoice = [];
+
+    /// <summary>Spec 038: events opted out with <c>!event unsubscribe</c> (the bot won't run them).</summary>
+    private readonly HashSet<ulong> _optedOut = [];
     private readonly Lock _lock = new();
 
     /// <param name="directory">Where <c>settings.json</c> lives; null keeps everything in memory (tests).</param>
@@ -31,6 +34,17 @@ public sealed class SettingsStore
             if (File.Exists(_path))
             {
                 var root = JsonNode.Parse(File.ReadAllText(_path))?.AsObject();
+                if (root?["unsubscribedEvents"] is JsonArray events)
+                {
+                    foreach (var e in events)
+                    {
+                        if (e?.GetValue<string>() is { } id && ulong.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var eventId))
+                        {
+                            _optedOut.Add(eventId);
+                        }
+                    }
+                }
+
                 if (root?["defaultVoiceChannels"] is JsonObject channels)
                 {
                     foreach (var (guild, channel) in channels)
@@ -78,6 +92,33 @@ public sealed class SettingsStore
         }
     }
 
+    /// <summary>Spec 038: the event was opted out with <c>!event unsubscribe</c>.</summary>
+    public bool IsEventUnsubscribed(ulong eventId)
+    {
+        lock (_lock)
+        {
+            return _optedOut.Contains(eventId);
+        }
+    }
+
+    /// <summary>Opt an event out (or back in). False when it could not be written to disk.</summary>
+    public bool SetEventUnsubscribed(ulong eventId, bool unsubscribed)
+    {
+        lock (_lock)
+        {
+            if (unsubscribed)
+            {
+                _optedOut.Add(eventId);
+            }
+            else
+            {
+                _optedOut.Remove(eventId);
+            }
+
+            return Save();
+        }
+    }
+
     /// <summary>Write the file atomically (temp file, then move). Caller holds the lock.</summary>
     private bool Save()
     {
@@ -92,7 +133,11 @@ public sealed class SettingsStore
             channels[guild.ToString(CultureInfo.InvariantCulture)] = channel.ToString(CultureInfo.InvariantCulture);
         }
 
-        var json = new JsonObject { ["defaultVoiceChannels"] = channels }.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var json = new JsonObject
+        {
+            ["defaultVoiceChannels"] = channels,
+            ["unsubscribedEvents"] = new JsonArray([.. _optedOut.Order().Select(id => (JsonNode)id.ToString(CultureInfo.InvariantCulture))]),
+        }.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);

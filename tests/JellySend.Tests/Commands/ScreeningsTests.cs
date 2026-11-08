@@ -25,6 +25,49 @@ public sealed class ScreeningsParseTests
     [InlineData("Our screenings: big buck bunny")]  // not on a line of its own
     public void Not_the_bots_event(string? description) => Assert.Null(Screenings.Parse(description));
 
+    // ── Spec 037: more keywords ──────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Screening")]
+    [InlineData("screenings:")]
+    [InlineData("Showing")]
+    [InlineData("SHOWINGS:")]
+    [InlineData("Playlist")]
+    [InlineData("play list:")]
+    [InlineData("PlayList")]
+    [InlineData("Runlist")]
+    [InlineData("Run list")]
+    [InlineData("run-list :")]
+    [InlineData("**Playlist:**")]
+    [InlineData("🎬 Showings")]
+    [InlineData("Now showing:")]
+    [InlineData("Movie playlist")]
+    [InlineData("Tonight's screenings:")]
+    [InlineData("Our movie night run list")]               // three words before
+    public void Every_keyword_starts_a_list(string marker) =>
+        Assert.Equal(["Big Buck Bunny"], Screenings.Parse($"{marker}\nBig Buck Bunny"));
+
+    [Theory]
+    [InlineData("Playlists")]                             // no plural for Playlist / Runlist
+    [InlineData("Runlists:")]
+    [InlineData("Play-list")]                             // not hyphenated
+    [InlineData("Schedule:")]                             // not a keyword
+    [InlineData("Schedules")]
+    [InlineData("Our playlist: Big Buck Bunny")]          // the keyword isn't at the end
+    [InlineData("Come along early for the showing")]      // more than three words before
+    [InlineData("- Big Buck Bunny screening")]            // a list item
+    [InlineData("1. Now showing")]
+    [InlineData("Screenplay")]
+    public void Other_lines_do_not(string marker) =>
+        Assert.Null(Screenings.Parse($"{marker}\nBig Buck Bunny"));
+
+    [Fact]
+    public void The_first_keyword_line_starts_the_list()
+    {
+        Assert.Equal(["Big Buck Bunny"], Screenings.Parse("Now showing:\nBig Buck Bunny\n\nPlaylist:\nExample Show s1e1"));
+        Assert.Equal(["Example Show s1e1"], Screenings.Parse("Schedule:\n7pm doors\n\nPlaylist:\nExample Show s1e1"));
+    }
+
     [Fact]
     public void A_marker_with_nothing_after_is_an_empty_list() => Assert.Empty(Screenings.Parse("Screenings:\n\n")!);
 

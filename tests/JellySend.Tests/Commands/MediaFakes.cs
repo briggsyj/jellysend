@@ -251,10 +251,10 @@ internal sealed class MediaHarness
     public MessageHub Hub { get; }
 
     /// <summary>Reply to a picker once it is actually waiting.</summary>
-    public async Task Answer(string content)
+    public async Task Answer(string content, ulong author = 20)
     {
         await Until(() => Hub.WaiterCount > 0, "no prompt is waiting");
-        await Send(content);
+        await Send(content, author: author);
     }
 
     /// <summary>The voice commands registered with the media module (spec 023 tests watch its countdown).</summary>
@@ -270,6 +270,7 @@ internal sealed class MediaHarness
             MaxPlaytime = maxPlaytime ?? TimeSpan.FromHours(12),
             Settings = settings ?? new JellySend.Common.Config.SettingsStore(null),
             Announcer = Sender,
+            Roles = new FakeRoles(),
         };
         Hub = new MessageHub(Time);
         Router = new CommandRouter(new FakeRoles(), Sender, Hub);
@@ -301,7 +302,7 @@ internal sealed class MediaHarness
         Router.DispatchAsync(new ChatMessage(guild, channel, author, content), TestContext.Current.CancellationToken);
 
     /// <summary>Send without awaiting (the handler waits for a picker reply).</summary>
-    public Task Start(string content) => Task.Run(() => Send(content));
+    public Task Start(string content, ulong author = 20) => Task.Run(() => Send(content, author: author));
 
     /// <summary>
     /// <c>!playlist</c> on its own (spec 021): its reply without the menu at the end. The menu keeps waiting for a reply

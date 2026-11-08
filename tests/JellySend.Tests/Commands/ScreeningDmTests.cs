@@ -233,6 +233,32 @@ public sealed partial class EventSchedulerTests
     }
 
     [Fact]
+    public async Task An_opted_out_event_is_not_run_or_marked_until_subscribed_again()
+    {
+        _events.Add(Event(id: 1, startInMinutes: 60));
+        _events.Add(Event(id: 2, startInMinutes: 90));
+        await PollAsync();
+        Assert.Equal([1UL, 2UL], _scheduler.Choices(subscribed: true).Select(c => c.Id));
+        Assert.Empty(_scheduler.Choices(subscribed: false));
+
+        Assert.True(_scheduler.SetSubscribed(1, false));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Equal([(1UL, true), (2UL, true), (1UL, false)], _events.Interest);
+        Assert.Equal([1UL], _scheduler.Choices(subscribed: false).Select(c => c.Id));
+        Assert.DoesNotContain(_scheduler.Upcoming(), u => u.EventId == 1);
+
+        _h.Time.Advance(TimeSpan.FromMinutes(60));
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        Assert.Empty(_events.StatusChanges);                                      // not started
+
+        _scheduler.SetSubscribed(1, true);
+        await _scheduler.TickAsync(false, TestContext.Current.CancellationToken);
+        await Task.WhenAll(_scheduler.Runs);
+        Assert.Equal((1UL, true), _events.Interest[^1]);
+        Assert.Equal([(1UL, EventInfo.Active)], _events.StatusChanges);           // due, so it starts now
+    }
+
+    [Fact]
     public async Task Upcoming_events_from_others_are_not_checked()
     {
         _events.Add(Event(startInMinutes: 60, creator: 30, description: "Screenings:\n1. lost film"));

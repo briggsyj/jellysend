@@ -55,6 +55,74 @@ public sealed partial class MediaModule
         public bool Settled => Items is not null || Missing;
     }
 
+    /// <summary>An event to pick in <c>!event subscribe</c> / <c>unsubscribe</c> (spec 038).</summary>
+    public sealed record EventChoice(ulong Id, ulong Guild, string Name, DateTimeOffset Start);
+
+    /// <summary>The event scheduler's side of <c>!event</c> (spec 038).</summary>
+    public interface IEventControl
+    {
+        /// <summary>Upcoming events with a list, soonest first: subscribed ones, or opted-out ones.</summary>
+        IReadOnlyList<EventChoice> Choices(bool subscribed);
+
+        /// <summary>Subscribe again or opt out (saved); false when it couldn't be written to disk.</summary>
+        bool SetSubscribed(ulong eventId, bool subscribed);
+    }
+
+    /// <summary>The event scheduler (spec 038: <c>!event</c>). Set by the host.</summary>
+    public IEventControl? Events { get; set; }
+
+    /// <summary>
+    /// <c>!event subscribe</c> / <c>!event unsubscribe</c> (spec 038): pick an upcoming event (every server's) to run
+    /// again, or to stop the bot running. Events with a list are subscribed on their own; this opts them out and in.
+    /// </summary>
+    private async Task EventAsync(CommandContext c)
+    {
+        var (word, _) = CommandRouter.SplitFirst(c.Rest);
+        bool subscribe;
+        switch (word.ToLowerInvariant())
+        {
+            case "subscribe" or "sub":
+                subscribe = true;
+                break;
+            case "unsubscribe" or "unsub":
+                subscribe = false;
+                break;
+            default:
+                await c.ReplyAsync(CommandCatalog.Find("event")!.HelpText()).ConfigureAwait(false);
+                return;
+        }
+
+        var choices = Events?.Choices(subscribed: !subscribe) ?? [];
+        if (choices.Count == 0)
+        {
+            await c.ReplyAsync(subscribe
+                ? "📭 No unsubscribed events — every upcoming event with a list is already subscribed."
+                : "📭 No subscribed events — there are no upcoming events with a list (`!help events`).").ConfigureAwait(false);
+            return;
+        }
+
+        var lines = new List<string>
+        {
+            subscribe
+                ? "📅 **Subscribe to which event?** The bot will run it. Reply with a number:"
+                : "📅 **Unsubscribe from which event?** The bot won't run it. Reply with a number:",
+        };
+        lines.AddRange(choices.Select((e, i) => string.Create(CultureInfo.InvariantCulture,
+            $"`{i + 1}` **{Shorten(e.Name, 60)}** · {Shorten(_guildName(e.Guild) ?? "a server", 40)} — <t:{e.Start.ToUnixTimeSeconds()}:f>")));
+        await c.ReplyAsync(Fit(lines)).ConfigureAwait(false);
+        if (await NumberPrompt.AskAsync(c, choices.Count).ConfigureAwait(false) is not { } pick)
+        {
+            return;
+        }
+
+        var chosen = choices[pick - 1];
+        var saved = Events!.SetSubscribed(chosen.Id, subscribe);
+        var text = subscribe
+            ? $"✅ Subscribed to **{Shorten(chosen.Name, 60)}** — the bot will run it, and shows as Interested on it."
+            : $"🚫 Unsubscribed from **{Shorten(chosen.Name, 60)}** — the bot won't run it, and no longer shows as Interested.";
+        await c.ReplyAsync(saved ? text : text + "\n-# Couldn't save it to disk, so it lasts until the bot restarts — an admin should check the data volume.").ConfigureAwait(false);
+    }
+
     /// <summary>An upcoming event the bot will run (spec 036: <c>!schedule events</c>).</summary>
     public sealed record UpcomingScreening(
         ulong EventId, ulong Guild, string Name, DateTimeOffset Start, IReadOnlyList<string> Lines, ulong CreatorId, ulong Channel);

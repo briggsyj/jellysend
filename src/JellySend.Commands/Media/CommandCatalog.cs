@@ -111,21 +111,27 @@ public static class CommandCatalog
         new("channel", [], Role.Friend, Extras, """
             Which voice channel the bot broadcasts in.
             `!channel set` — lists the voice channels the bot can reach; reply with a number to move there (what's on air carries on)
-            `!channel default` — pick a server, then the voice channel the bot uses there when you're not in voice yourself
+            `!channel default` — pick a server, then the voice channel the bot uses there when you're not in voice yourself (admins only)
             -# With no default, the bot uses the server's first voice channel. Defaults are remembered across restarts.
             """),
-        new("debug", [], Role.Friend, Extras, """
+        new("event", ["events"], Role.Friend, Extras, """
+            Discord events with a list (`!help events`) are run by the bot on their own. This opts them out, and back in.
+            `!event unsubscribe` — lists the upcoming events the bot will run; reply with a number to stop it running one
+            `!event subscribe` — lists the ones opted out; reply with a number to have the bot run it again
+            -# Every server's events are listed. The bot shows as **Interested** on the events it will run. Choices are remembered across restarts.
+            """),
+        new("debug", [], Role.Admin, Extras, """
             Stream stats, for when something looks or sounds wrong.
             `!debug on` / `!debug off` — show the stats on the stream itself
             `!debug` — post the stats here once
             -# The stats show each step: Jellyfin (original file or its conversion), the bot's encoder and its speed, and the stream to Discord.
             """),
-        new("help", [], Role.Viewer, Extras, """
+        new("help", [], Role.Friend, Extras, """
             `!help` — the command list
             `!help <command>` — one command in detail, e.g. `!help play`
             `!help all` — every command in detail
             """),
-        new("ping", [], Role.Viewer, Extras, "`!ping` — check the bot is awake."),
+        new("ping", [], Role.Friend, Extras, "`!ping` — check the bot is awake."),
     ];
 
     /// <summary>The old playlist commands (still working); their help is <c>!playlist</c>'s.</summary>
@@ -160,7 +166,8 @@ public static class CommandCatalog
         2. Example Show s1e1-3
         ```
         • Each line is written like `!play`: a title, an episode (`show s2e5`) or several (`show s1e1-3`).
-        • Number them (`1.`), bullet them (`-`), or just put one per line. `Screenings` can be any case; the colon is optional. The list ends at a blank line.
+        • Number them (`1.`), bullet them (`-`), or just put one per line. The list ends at a blank line.
+        • Instead of `Screenings` you can write `Screening`, `Showing(s)`, `Playlist`, `Play list`, `Runlist`, `Run list` or `Run-list` — any case, colon optional, even after a few words (`Now showing:`, `Movie playlist`).
         • Once the bot has picked the event up, it marks itself **Interested** on it.
         • At the start time the bot starts the event and streams the list in the event's voice channel, taking over anything playing.
         • It posts each item's start time and the end time in that channel's chat (in your own time zone).
