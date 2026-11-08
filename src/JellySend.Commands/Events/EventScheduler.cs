@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using JellySend.Commands.Media;
 using JellySend.Commands.Routing;
+using JellySend.Common.Config;
 using JellySend.Common.Permissions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -42,8 +43,11 @@ public interface IEventSource
 /// </summary>
 public sealed class EventScheduler(
     IEventSource source, MediaModule media, IRoleDirectory roles, IMessageSender announcer,
-    TimeProvider? time = null, ILogger<EventScheduler>? logger = null)
+    TimeProvider? time = null, ILogger<EventScheduler>? logger = null, SettingsStore? settings = null) : MediaModule.IEventControl
 {
+    /// <summary>Spec 038: where opt-outs (<c>!event unsubscribe</c>) are kept.</summary>
+    private readonly SettingsStore _settings = settings ?? new SettingsStore(null);
+
     /// <summary>
     /// How often the known events are looked at (no network): the most an event can start late. Spec 034: changes
     /// arrive pushed over the gateway, so Discord is only asked for the full list every <see cref="FullRefreshInterval"/>.
@@ -197,6 +201,38 @@ public sealed class EventScheduler(
     }
 
     /// <summary>
+    /// Spec 038: upcoming events with a list from someone allowed to <c>!play</c>, in every server, soonest first —
+    /// the subscribed ones (the bot will run them), or the ones opted out with <c>!event unsubscribe</c>.
+    /// </summary>
+    public IReadOnlyList<MediaModule.EventChoice> Choices(bool subscribed)
+    {
+        lock (_known)
+        {
+            return [.. Listed()
+                .Where(e => _settings.IsEventUnsubscribed(e.Id) != subscribed)
+                .OrderBy(e => e.Start)
+                .Select(e => new MediaModule.EventChoice(e.Id, e.GuildId, e.Name, e.Start))];
+        }
+    }
+
+    /// <summary>
+    /// Spec 038: subscribe to an event again, or opt it out (saved). The bot's Interested mark and any open questions
+    /// to the creator follow on the next look, which this triggers at once.
+    /// </summary>
+    public bool SetSubscribed(ulong eventId, bool subscribed)
+    {
+        var saved = _settings.SetEventUnsubscribed(eventId, !subscribed);
+        _wake.Release();
+        return saved;
+    }
+
+    /// <summary>Scheduled voice events with a list from someone allowed to <c>!play</c>. Caller holds <c>_known</c>.</summary>
+    private IEnumerable<EventInfo> Listed() =>
+        _known.Values.Where(e => e.Status == EventInfo.Scheduled && e.EntityType == EventInfo.VoiceEntity && e.ChannelId is not null
+            && e.CreatorId is { } creator && RoleResolver.Satisfies(roles, creator, Role.Friend)
+            && Screenings.Parse(e.Description) is { Count: > 0 });
+
+    /// <summary>
     /// Spec 036: the upcoming events the bot will run — scheduled voice events with a Screenings list, from someone
     /// allowed to <c>!play</c> — for <c>!schedule events</c>.
     /// </summary>
@@ -204,9 +240,8 @@ public sealed class EventScheduler(
     {
         lock (_known)
         {
-            return [.. _known.Values
-                .Where(e => e.Status == EventInfo.Scheduled && e.EntityType == EventInfo.VoiceEntity && e.ChannelId is not null
-                    && e.CreatorId is { } creator && RoleResolver.Satisfies(roles, creator, Role.Friend))
+            return [.. Listed()
+                .Where(e => !_settings.IsEventUnsubscribed(e.Id))
                 .Select(e => (Event: e, Lines: Screenings.Parse(e.Description)))
                 .Where(x => x.Lines is { Count: > 0 })
                 .Select(x => new MediaModule.UpcomingScreening(
@@ -264,10 +299,23 @@ public sealed class EventScheduler(
         }
 
         // Spec 033: "Interested" shows on the event that the bot has picked it up (only events it will run).
-        var eligible = e.CreatorId is { } maker && RoleResolver.Satisfies(roles, maker, Role.Friend);
+        // Spec 038: an event opted out with !event unsubscribe isn't run (and isn't marked).
+        var unsubscribed = _settings.IsEventUnsubscribed(e.Id);
+        var eligible = e.CreatorId is { } maker && RoleResolver.Satisfies(roles, maker, Role.Friend) && !unsubscribed;
         if (e.Status == EventInfo.Scheduled || (e.Status == EventInfo.Active && !startup))
         {
             await InterestAsync(e, eligible, ct).ConfigureAwait(false);
+        }
+
+        if (unsubscribed)
+        {
+            if (_checked.Remove(e.Id, out var dropped))
+            {
+                await dropped.Cancel.CancelAsync().ConfigureAwait(false); // no more questions to the creator
+                dropped.Cancel.Dispose();
+            }
+
+            return;
         }
 
         var due = e.Status == EventInfo.Scheduled && e.Start <= _time.GetUtcNow();

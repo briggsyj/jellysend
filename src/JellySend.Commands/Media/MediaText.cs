@@ -106,9 +106,10 @@ public static partial class MediaText
         `!res` — resolution (picture size): shows the choices · `!res 720p`
         ### 🛠️ Extras
         `!channel set` — move the bot to another voice channel
-        `!channel default` — the voice channel to use when you're not in one
-        `!debug on` — stream stats on screen
+        `!channel default` — the voice channel to use when you're not in one (admins)
+        `!debug on` — stream stats on screen (admins)
         `!help events` — play a list from a Discord event (Screenings)
+        `!event unsubscribe` / `subscribe` — stop or restart the bot running an event
         -# More on any command: `!help play` · everything in detail: `!help all` · every command also works as `!media <command>`.
         -# JellySend — a fork of Slopsoil, GPL-3.0.
         """;

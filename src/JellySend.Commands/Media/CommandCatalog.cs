@@ -111,10 +111,16 @@ public static class CommandCatalog
         new("channel", [], Role.Friend, Extras, """
             Which voice channel the bot broadcasts in.
             `!channel set` — lists the voice channels the bot can reach; reply with a number to move there (what's on air carries on)
-            `!channel default` — pick a server, then the voice channel the bot uses there when you're not in voice yourself
+            `!channel default` — pick a server, then the voice channel the bot uses there when you're not in voice yourself (admins only)
             -# With no default, the bot uses the server's first voice channel. Defaults are remembered across restarts.
             """),
-        new("debug", [], Role.Friend, Extras, """
+        new("event", ["events"], Role.Friend, Extras, """
+            Discord events with a list (`!help events`) are run by the bot on their own. This opts them out, and back in.
+            `!event unsubscribe` — lists the upcoming events the bot will run; reply with a number to stop it running one
+            `!event subscribe` — lists the ones opted out; reply with a number to have the bot run it again
+            -# Every server's events are listed. The bot shows as **Interested** on the events it will run. Choices are remembered across restarts.
+            """),
+        new("debug", [], Role.Admin, Extras, """
             Stream stats, for when something looks or sounds wrong.
             `!debug on` / `!debug off` — show the stats on the stream itself
             `!debug` — post the stats here once

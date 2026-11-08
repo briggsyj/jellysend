@@ -54,6 +54,9 @@ public sealed partial class MediaModule : IStreamControl
     private readonly IMediaLibrary? _library;
     private readonly StreamEngine _engine;
 
+    /// <summary>Who may do what (spec 038: <c>!channel default</c> is for admins). Null: everyone (tests).</summary>
+    public JellySend.Common.Permissions.IRoleDirectory? Roles { get; init; }
+
     /// <summary>Settings that survive restarts (spec 027): each server's default voice channel.</summary>
     public JellySend.Common.Config.SettingsStore Settings { get; init; } = new(null);
 
@@ -131,6 +134,7 @@ public sealed partial class MediaModule : IStreamControl
             ["playlist"] = PlaylistAsync,
             ["channel"] = ChannelAsync,
             ["schedule"] = ScheduleAsync,
+            ["event"] = EventAsync,
             ["subtitles"] = SubtitlesAsync,
             ["audio"] = AudioTrackAsync,
             ["language"] = LanguageAsync,
@@ -635,6 +639,13 @@ public sealed partial class MediaModule : IStreamControl
     /// </summary>
     private async Task ChannelDefaultAsync(CommandContext c)
     {
+        // Spec 038: a saved, server-wide setting — admins only (the rest of !channel stays open to friends).
+        if (Roles is { } roles && !JellySend.Common.Permissions.RoleResolver.Satisfies(roles, c.AuthorId, JellySend.Common.Permissions.Role.Admin))
+        {
+            await c.ReplyAsync(CommandRouter.DeniedReply).ConfigureAwait(false);
+            return;
+        }
+
         IReadOnlyList<JellySend.Commands.Voice.ServerRef> servers;
         try
         {

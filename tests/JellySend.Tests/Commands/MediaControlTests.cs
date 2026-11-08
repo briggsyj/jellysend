@@ -6,6 +6,9 @@ namespace JellySend.Tests.Commands;
 
 public sealed class MediaControlTests
 {
+    /// <summary>An admin (spec 038: !debug is for admins).</summary>
+    private const ulong Admin = 10;
+
     private readonly MediaHarness _h = new();
 
     public MediaControlTests()
@@ -172,15 +175,15 @@ public sealed class MediaControlTests
     [Fact]
     public async Task Debug_toggles_the_overlay_and_reports()
     {
-        await _h.Send("!media debug");
-        await _h.Send("!media debug on");
+        await _h.Send("!media debug", author: Admin);
+        await _h.Send("!media debug on", author: Admin);
         Assert.Equal(["🐞 Stats overlay is **off** — nothing's on air.", "🐞 Stats overlay **on** — from the next programme."], _h.Texts);
         await PlayFilm();
         Assert.True(_h.Current.Request.DebugOverlay);
-        await _h.Send("!media debug");
-        await _h.Send("!media debug OFF");
-        await _h.Send("!media debug off");
-        await _h.Send("!media debug on");
+        await _h.Send("!media debug", author: Admin);
+        await _h.Send("!media debug OFF", author: Admin);
+        await _h.Send("!media debug off", author: Admin);
+        await _h.Send("!media debug on", author: Admin);
         Assert.Equal(
             ["🐞 Stats overlay is **on**\n```\ndiag\n```", "🐞 Stats overlay **off**.", "🐞 Stats overlay **off**.", "🐞 Stats overlay **on**."],
             _h.Texts);
@@ -193,10 +196,10 @@ public sealed class MediaControlTests
     public async Task Debug_with_an_unknown_word_shows_its_help()
     {
         await PlayFilm();
-        await _h.Send("!media debug mode");
+        await _h.Send("!media debug mode", author: Admin);
         Assert.Equal(CommandCatalog.Find("debug")!.HelpText(), _h.Texts[^1]);
         _h.Gateway.States.Clear();
-        await _h.Send("!media debug on", guild: null);
+        await _h.Send("!media debug on", guild: null, author: Admin);
         Assert.Equal("🐞 Stats overlay **on**.", _h.Texts[^1]); // DM: applies where the bot is in voice
     }
 
