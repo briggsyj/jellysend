@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JellySend.Commands/JellySend.Commands.csproj" />
+    <Project Path="src/JellySend.Common/JellySend.Common.csproj" />
+    <Project Path="src/JellySend.Discord/JellySend.Discord.csproj" />
+    <Project Path="src/JellySend.Host/JellySend.Host.csproj" />
+    <Project Path="src/JellySend.Services/JellySend.Services.csproj" />
+    <Project Path="src/JellySend.Streaming/JellySend.Streaming.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JellySend.Tests/JellySend.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,304 +1,172 @@
-![](images/slopsoil-banner.png)  
-![](https://github.com/dev-topsoil/slopsoil/actions/workflows/tests.yml/badge.svg) ![Python](https://img.shields.io/badge/python-%3E=3.11-blue.svg) [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/devtopsoil)  
-# Slopsoil - Stream from Jellyfin, YouTube, Tvheadend, or IPTV directly to Discord Voice Channels
+# JellySend - Stream Jellyfin directly to Discord Voice Channels
 
-**Slopsoil** is a Discord self-bot that streams live TV, IPTV playlists, YouTube videos, Jellyfin media, and any HTTP/HLS/RTSP stream directly into a Discord voice channel - as a screenshare that all server members can watch together.
+![Tests](https://github.com/briggsyj/jellysend/actions/workflows/tests.yml/badge.svg) ![.NET](https://img.shields.io/badge/.NET-10-512bd4.svg)
 
-Features include TVheadend integration, Jellyfin integration, M3U/IPTV playlist management with live EPG (now-playing), YouTube playback via yt-dlp, and hardware-accelerated H.264 encoding via VA-API or NVIDIA NVENC.
+**JellySend** is a Discord self-bot that streams movies and TV from a Jellyfin server into a Discord voice channel, as a screenshare that everyone in the channel can watch together.
+
+JellySend is a fork of [Slopsoil](https://github.com/dev-topsoil/slopsoil), rewritten in .NET. It is not the official Slopsoil project — see [Origin & credits](#origin--credits).
+
+It searches your library, plays the original file and encodes it once with hardware-accelerated H.264 (VA-API or NVIDIA NVENC), keeps audio and video on one clock, and lets Jellyfin apps join in through SyncPlay.
 
 > **Disclaimer:**   
-> Slopsoil is a self-bot. It runs on a real Discord user account, not a bot application.  
+> JellySend is a self-bot. It runs on a real Discord user account, not a bot application.  
 > Self-bots violate Discord's [Terms of Service](https://discord.com/terms).  
 > Use it on an account you are willing to lose, and do not use it in a way that disrupts other users or servers.  
 > The authors take no responsibility for account terminations or other consequences.
 
-> **Keywords:** discord iptv bot, discord youtube stream, stream tv to discord, discord live stream bot, discord voice channel video, iptv discord, self-bot streaming, tvheadend discord, hls discord bot
+> **Keywords:** discord jellyfin bot, stream jellyfin to discord, discord watch party, discord voice channel video, self-bot streaming
 
 ---
 
 ## Table of Contents
 
-- [Screenshots](#screenshots)
 - [Features](#features)
 - [How It Works](#how-it-works)
-- [Requirements](#requirements)
-- [Installation - Bare Metal](#installation--bare-metal)
-- [Installation - Docker Compose](#installation--docker-compose)
+- [Installation - Docker Compose](#installation---docker-compose)
 - [Configuration](#configuration)
 - [Commands](#commands)
-- [Updating the Docker Container](#updating-the-docker-container)
+- [Updating](#updating)
 - [Hardware Acceleration](#hardware-acceleration)
-- [Running Tests](#running-tests)
-
----
-
-## Screenshots
-
-| Channel List | Stream Running |
-|---|---|
-| ![Channel list showing TVheadend channels with now-playing info](images/slopsoil4.png) | ![Bot streaming video in a Discord voice channel](images/slopsoil3.png) |
+- [Development](#development)
+- [Origin & credits](#origin--credits)
+- [Licence](#licence)
 
 ---
 
 ## Features
 
-- **YouTube & media streaming** - play any URL that yt-dlp supports (YouTube VODs, YouTube Live, Twitch VODs, etc.) directly into a voice channel; live streams are detected automatically and streamed without downloading
-- **MJPEG / CGI stream support** - play `.cgi` video URLs (IP cameras, legacy streaming servers) and MJPEG-over-HTTP streams directly
-- **IPTV / M3U playlist support** - add M3U sources by URL; channels are listed with live EPG now-playing info
-- **TVheadend integration** - browse and play live TV channels from a TVheadend server; search the EPG by show title and schedule playback; showtimes are shown in the configured timezone
-- **Jellyfin integration** - search and stream movies, series, and episodes from a Jellyfin media server; transcoding is offloaded to Jellyfin so the bot streams H.264/AAC with subtitles suppressed
-- **Auto-leave on empty channel** - the bot automatically leaves and stops streaming when the last user leaves the voice channel
+- **Jellyfin search and play** - movies, series, seasons and episodes, with numbered pickers; casual arguments such as `!play example show s2e3 10m`
+- **Transcode once** - the bot plays the original file and encodes it itself; Jellyfin transcodes only to burn in subtitles
+- **Subtitles and audio tracks** - each film starts on the audio and subtitles Jellyfin picks for it (the bot's Jellyfin user's language and subtitle settings); pick others by number or language (`!subs english`, `!audio japanese`), remembered by language until the bot leaves
+- **Source frame rate** - streams follow the film's own frame rate (23.976 stays 23.976) up to `STREAM_FPS`
+- **One clock for audio and video** - a read-ahead buffer keeps them in sync, even for high-bitrate files
+- **Playlist** - queue up to 10 items; they play in order
+- **Jellyfin SyncPlay** - Jellyfin app users can pause, play and seek the Discord stream together
 - **Go-live / screenshare delivery** - streams appear as a screenshare so all members in the channel can watch
 - **H.264 hardware acceleration** - auto-detects NVIDIA NVENC, VA-API (Intel/AMD), or falls back to software encoding
-- **Discord DAVE E2EE support** - correctly handles Discord's end-to-end encryption protocol for voice channels
-- **Role-based access control** - admin, friend, viewer, and none tiers; friends list and guild membership are used automatically
+- **Discord DAVE E2EE support** - handles Discord's end-to-end encryption for voice channels
+- **Auto-leave** - stops and leaves after the voice channel has been empty for a while (default 15 minutes)
+- **Debug overlay** - `!debug on` burns frame rate, A/V drift, buffer and network stats into the stream
+- **Role-based access control** - admin, friend, viewer and none tiers; friends list and guild membership are used automatically
 
 ---
 
 ## How It Works
 
-slopsoil sends H.264 video and Opus audio directly over Discord's voice UDP protocol, appearing to other users as a screenshare (go-live stream). It patches `discord.py-self` at runtime to add video capability negotiation and implements the full RTP packetization pipeline including SPS/VUI rewriting, RFC 6184 FU-A fragmentation, and DAVE E2EE encryption.
+JellySend is a .NET 10 application with its own Discord user-account gateway, voice and go-live clients. It sends H.264 video and Opus audio over Discord's voice UDP protocol, appearing to other users as a screenshare. The pipeline does SPS/VUI rewriting, RFC 6184 FU-A fragmentation, `aead_xchacha20_poly1305_rtpsize` transport encryption, and DAVE E2EE through Discord's [libdave](https://github.com/discord/libdave) (built into the image).
 
-For a detailed technical explanation of the streaming pipeline, the discord.py-self patches, and the esoteric protocol-level discoveries made while building this, see [STREAMING.md](STREAMING.md).
+FFmpeg decodes the Jellyfin stream and encodes H.264; both video and audio are read ahead into buffers (`STREAM_BUFFER_SECONDS`) and played out against a single clock, so a slow read never pulls them apart.
 
----
-
-## Requirements
-
-### Bare metal
-
-| Requirement | Notes |
+| Project | Role |
 |---|---|
-| Python 3.11+ | |
-| FFmpeg | Fedora: `ffmpeg-free` (not RPM Fusion's `ffmpeg`). See [Hardware Acceleration](#hardware-acceleration). |
-| libdave / dave.py | The official Discord DAVE E2EE C library; `dave.py` wraps it |
-| A Discord account token | **Not** a bot token - slopsoil runs as a self-bot on a real user account |
+| `src/JellySend.Common` | configuration, log redaction, permissions |
+| `src/JellySend.Discord` | gateway, voice, go-live, RTP, crypto, DAVE |
+| `src/JellySend.Services` | Jellyfin and SyncPlay clients |
+| `src/JellySend.Streaming` | FFmpeg video player, audio sender, stream engine |
+| `src/JellySend.Commands` | Discord commands |
+| `src/JellySend.Host` | entry point |
 
-### Docker
-
-- Docker Engine 24+ and Docker Compose v2
-- Optional: a VA-API GPU (`/dev/dri`) or NVIDIA GPU for hardware encoding
-- No build required — pre-built images are published to GHCR and Docker Hub (see below)
-
----
-
-## Installation - Bare Metal
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/dev-topsoil/slopsoil.git
-cd slopsoil
-```
-
-### 2. Install FFmpeg
-
-**Fedora / RHEL:**
-```bash
-sudo dnf install ffmpeg-free
-```
-
-**Ubuntu / Debian:**
-```bash
-sudo apt install ffmpeg
-```
-
-> **Important:** Do **not** use RPM Fusion's `ffmpeg` package on Fedora. It ships libx264, whose output causes Discord to drop the stream after one frame. Fedora's built-in `ffmpeg-free` package (libopenh264) is required. See [STREAMING.md](STREAMING.md) for the full explanation.
-
-### 3. Install Python dependencies
-
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
-
-This installs:
-- `discord.py-self` - self-bot library with voice support
-- `PyNaCl` - libsodium bindings for RTP encryption
-- `python-dotenv` - `.env` file loading
-- `davey` - stub package (replaced at runtime by the DAVE compatibility shim)
-- `dave.py` - DisnakeDev's official libdave Python bindings (working DAVE/E2EE)
-- `yt-dlp` - YouTube and media downloader
-
-### 4. Configure the bot
-
-Copy the example environment file and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-See [Configuration](#configuration) for details on each variable.
-
-### 5. Run the bot
-
-```bash
-python3 bot.py
-```
+Design history and specs live in [`specs/`](specs/).
 
 ---
 
 ## Installation - Docker Compose
 
-Pre-built images are published automatically, so you can run slopsoil **without cloning or building anything**. Building from source is still supported if you want to modify the code.
+Images are published to `ghcr.io/briggsyj/jellysend`:
 
-### Published images
-
-| Registry | Image |
+| Tag | What |
 |---|---|
-| GitHub Container Registry | `ghcr.io/dev-topsoil/slopsoil` |
-| Docker Hub | `docker.io/t0ps0il/slopsoil` |
+| `latest` | newest build of `develop` |
+| `sha-<short sha>` | a pinned build |
+| `1.2.3`, `1.2`, `1` | releases |
 
-| Tag | Tracks |
-|---|---|
-| `latest` | The `develop` branch — newest features, updated on every merge |
-| `1.2.3`, `1.2`, `1` | Pinned stable releases — **use these for production** |
-
-> `latest` follows active development. For a stable deployment, pin a version tag (e.g. `:1.2.3`).
-
-### Option A - Pre-built image (recommended)
-
-#### 1. Create a `docker-compose.yml`
+### 1. Create a `docker-compose.yml`
 
 ```yaml
 services:
-  slopsoil:
-    image: ghcr.io/dev-topsoil/slopsoil:latest
+  jellysend:
+    image: ghcr.io/briggsyj/jellysend:latest
     restart: unless-stopped
     env_file: .env
-
-    # Persist IPTV source list across container restarts.
     volumes:
-      - slopsoil-data:/root/.local/share/slopsoil
-
-    # Uncomment for VA-API hardware encoding (see Hardware Acceleration):
-    # devices:
-    #   - /dev/dri:/dev/dri
-
-volumes:
-  slopsoil-data:
+      - ./data:/data        # saved settings (each server's default voice channel)
+    devices:
+      - /dev/dri:/dev/dri   # VA-API hardware encoding (Intel/AMD)
 ```
 
-#### 2. Create your `.env`
+### 2. Create your `.env`
 
-Create a `.env` file next to it with at least `DISCORD_TOKEN` and `ALLOWED_USER_IDS`. See [Configuration](#configuration) for every supported variable.
+Copy [`.env.example`](.env.example) and fill in at least `DISCORD_TOKEN` and the Jellyfin settings.
 
-#### 3. Pull and start
+### 3. Pull and start
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose pull && docker compose up -d
 ```
 
-### Option B - Build from source
-
-#### 1. Clone the repository
+### Build from source
 
 ```bash
-git clone https://github.com/dev-topsoil/slopsoil.git
-cd slopsoil
-```
-
-#### 2. Configure the bot
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your Discord token and other settings. See [Configuration](#configuration).
-
-#### 3. Build and start
-
-```bash
+git clone https://github.com/briggsyj/jellysend.git && cd jellysend
 docker compose up -d --build
 ```
 
-The container will build automatically on first run.
-
 ### View logs
 
-IPTV source data is persisted in a named Docker volume (`slopsoil-data`) so your M3U sources survive container restarts and updates. Follow the logs with:
-
 ```bash
-docker compose logs -f
+docker compose logs -f jellysend
 ```
+
+### Publishing your own image (forks)
+
+The **Publish Docker image** workflow pushes to `ghcr.io/<owner>/<repo>` with the built-in `GITHUB_TOKEN`, so a fork publishes its own image with no setup. Set the `DOCKERHUB_USERNAME` repository variable and `DOCKERHUB_TOKEN` secret to also push to Docker Hub.
 
 ---
 
 ## Configuration
 
-All configuration is done via environment variables in `.env`:
+All settings are environment variables (see [`.env.example`](.env.example)). Invalid values fall back to the default with a warning in the log.
 
-```env
-# Required - your Discord account token (not a bot token)
-DISCORD_TOKEN=your_token_here
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DISCORD_TOKEN` | Yes | — | Your Discord account token (not a bot token). Never logged. |
+| `ALLOWED_USER_IDS` | No | empty | Comma-separated Discord user IDs with admin access. |
+| `JELLYFIN_URL` | For playback | — | Jellyfin server URL, e.g. `http://192.168.1.100:8096`. |
+| `JELLYFIN_API_KEY` | Key or login | — | Jellyfin API key. |
+| `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` | No | — | Sign in as a Jellyfin user; enables SyncPlay group watch. |
+| `JELLYFIN_DIRECT_STREAM` | No | `true` | Play the original file and transcode once in the bot. Files the bot's FFmpeg can't decode (in the image: HEVC, E-AC-3 audio, 10-bit or interlaced H.264) automatically use Jellyfin's transcode. `false` always uses Jellyfin's transcode. |
+| `STREAM_QUALITY` | No | `1080p` | Preset: `720p` (30 fps, 10000k), `1080p` (60 fps, 12000k) or `4k` (60 fps, 24000k). Discord caps resolution/fps per account. |
+| `STREAM_RESOLUTION` | No | preset | Bounding box `W:H` (or `WxH`). |
+| `STREAM_FPS` | No | preset | Frame-rate **ceiling**, 1–60. Each stream follows the source rate at or below it; faster sources are divided evenly (60 → 30, 50 → 25). |
+| `STREAM_VIDEO_BITRATE` | No | preset | Constant bitrate, e.g. `7000k`. |
+| `STREAM_BUFFER_SECONDS` | No | `8` | Read-ahead of video and audio, 0–30. More smooths out slow reads; it delays the start by the same amount. |
+| `STREAM_PACKET_PACE` | No | `0.0` | Spread each frame's packets over this fraction of the frame interval (0.0–0.95). Can reduce freezes on bursty networks. |
+| `STREAM_AV_SYNC_MS` | No | `0` | Lip-sync offset, ±5000 ms. Positive plays audio earlier. |
+| `STREAM_LOADING_IMAGE` | No | bundled card | Image shown on the stream while it loads (start and after a jump). Default: the test card in [`assets/cards/`](assets/cards/), built into the image. A file path in the container overrides it; `none` turns it off. |
+| `STREAM_PAUSED_IMAGE` | No | bundled card | Image shown on the stream while paused (default: the pause symbol in `assets/cards/`); same rules. |
+| `MAX_STREAM_HOURS` | No | `12` | Longest a stream plays, counted from a `!play` (through auto-advance and skips). Then it stops, staying in voice and keeping the playlist; `!play` starts again. 0–168, 0 = no limit. |
+| `EMPTY_CHANNEL_TIMEOUT_MINUTES` | No | `15` | Stop and leave after the voice channel stayed empty this long, 0–1440 (0 = immediately). |
+| `DATA_DIR` | No | `/data` | Where saved settings (`settings.json`) are kept. Mount it as a volume (`./data:/data`) so they survive updates. |
 
-# Comma-separated Discord user IDs that can control the bot
-ALLOWED_USER_IDS=123456789012345678,987654321098765432
+### Logs
 
-# Optional - TVheadend server (all three must be set to enable TV commands)
-TVHEADEND_URL=http://192.168.1.100:9981
-TVHEADEND_USER=admin
-TVHEADEND_PASS=yourpassword
+Everything goes to the container's stdout (`docker compose logs -f jellysend`). Each play attempt logs:
+- **The start:** the mode (original file or Jellyfin transcode), codecs, audio track, source frame rate and start time.
+- **FFmpeg:** the full FFmpeg command, any FFmpeg warnings or errors, when the audio FIFO opened, and when the first video frame was sent.
+- **Voice and screenshare:** every voice-gateway event, labelled `[voice …]` or `[stream …]`, with Discord's close codes explained.
+- **Self events:** the bot's own voice state, voice server and stream (`STREAM_*`) events.
+- **Stats per step:** the `!debug` overlay (and the 10 s stats log line) shows each step of the chain:
+  - `JELLYFIN`: `original file — not transcoded`, or `Jellyfin transcode (<why>): <codec, size, bitrate, fps, % done, hw or software>`. Jellyfin's own transcode stats are polled every 10 s; the reasons are subtitles burned in, an external audio track, a format the bot can't decode, the original failed to start, not a plain file, or direct streaming turned off.
+  - `FFMPEG`: the bot's decode → encode for Discord, with its fps and speed. About 1.00× is healthy once the buffer is full; below 1× while the buffer drains means this step can't keep up. Dropped or duplicated frames are shown when there are any.
+  - `STREAM`: the position, and whether the picture is encoded once (bot) or twice (Jellyfin + bot).
+  - `VIDEO` / `BUFFER` / `NETWORK`: playout to Discord.
+- **The end:** one line saying why the stream ended (reason, position, whether a frame was ever sent, and how the screenshare closed).
 
-# Optional - IANA timezone for showtimes displayed by !search (e.g. America/New_York)
-# If unset, the system timezone of the machine running the bot is used.
-TIMEZONE=
+If a direct stream of the original file fails before its first frame, the bot retries it once through Jellyfin's transcode and keeps using the transcode for that item.
 
-# Optional - Jellyfin server (both must be set to enable Jellyfin commands)
-JELLYFIN_URL=http://192.168.1.100:8096
-JELLYFIN_API_KEY=your_api_key_here
+libdave's (DAVE encryption) debug output is hidden; set `Logging__LogLevel__JellySend.Dave=Debug` to see it. `Logging__LogLevel__Default=Debug` turns on debug logging everywhere.
 
-# Optional - yt-dlp format selector for downloaded !play <URL> VODs.
-# Defaults to "bestvideo+bestaudio/best". On hardware that can't decode AV1/4K
-# in real time (e.g. older GPUs), pin to H.264 <=1080p to avoid stutter and to
-# skip downloading 4K only to downscale it:
-#   YTDLP_FORMAT=bv*[vcodec^=avc1][height<=1080]+ba/b[height<=1080]
-YTDLP_FORMAT=
-
-# Optional - output stream quality preset (resolution/fps/bitrate together).
-# One of: 720p, 1080p (default), 4k. Discord enforces per-account resolution/fps
-# caps (e.g. 720p30 up to 4K60 by tier), so pick one your account supports.
-STREAM_QUALITY=
-
-# Optional - fine-grained overrides for the preset above (set only to deviate).
-#   STREAM_RESOLUTION=1280:720   # W:H (or WxH)
-#   STREAM_FPS=30                # 1-60
-#   STREAM_VIDEO_BITRATE=2500k   # -b:v/-maxrate/-bufsize (CBR)
-STREAM_RESOLUTION=
-STREAM_FPS=
-STREAM_VIDEO_BITRATE=
-
-# Optional - pace each frame's RTP packets across this fraction of the frame
-# interval instead of bursting them (0.0 = off/default; e.g. 0.75). Can reduce
-# freezes from dropped packet bursts on some networks. Clamped to 0.0-0.95.
-STREAM_PACKET_PACE=
-
-# Optional - lip-sync correction in ms (default 0). Positive advances audio
-# (fixes "audio behind"); negative delays audio (fixes "audio ahead"). Dial in
-# by testing; clamped to +/-5000.
-STREAM_AV_SYNC_MS=
-```
-
-| Variable | Required | Description |
-|---|---|---|
-| `DISCORD_TOKEN` | Yes | Your Discord account token |
-| `ALLOWED_USER_IDS` | Yes | Comma-separated user IDs with admin access |
-| `TVHEADEND_URL` | No | Base URL of your TVheadend server |
-| `TVHEADEND_USER` | No | TVheadend username |
-| `TVHEADEND_PASS` | No | TVheadend password |
-| `TIMEZONE` | No | [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for `!search` showtimes (e.g. `America/Chicago`). Defaults to the system timezone. |
-| `JELLYFIN_URL` | No | Base URL of your Jellyfin server |
-| `JELLYFIN_API_KEY` | No | Jellyfin API key (generate in Dashboard → API Keys) |
-| `YTDLP_FORMAT` | No | [yt-dlp format selector](https://github.com/yt-dlp/yt-dlp#format-selection) for downloaded `!play <URL>` VODs. Defaults to `bestvideo+bestaudio/best`. Pin a codec/resolution (e.g. `bv*[vcodec^=avc1][height<=1080]+ba/b[height<=1080]`) on hardware that can't decode AV1/4K in real time. |
-| `STREAM_QUALITY` | No | Output quality preset (default `1080p`): `720p`→1280×720/30/2500k, `1080p`→1920×1080/60/6000k, `4k`→3840×2160/60/12000k (resolution/fps/bitrate set together). Discord enforces per-account resolution/fps caps, so pick a tier your account supports. |
-| `STREAM_RESOLUTION` | No | Override the preset resolution as `W:H` (or `WxH`), e.g. `1280:720`. |
-| `STREAM_FPS` | No | Override the preset frame rate, 1–60. Matching the source fps avoids wasteful frame duplication. |
-| `STREAM_VIDEO_BITRATE` | No | Override the preset video bitrate (used for `-b:v`/`-maxrate`/`-bufsize`, CBR), e.g. `2500k`. |
-| `STREAM_PACKET_PACE` | No | Spread each frame's RTP packets across this fraction of the frame interval instead of bursting them (default `0.0` = off; e.g. `0.75`). Can reduce freezes caused by dropped packet bursts on some networks. Clamped to 0.0–0.95. |
-| `STREAM_AV_SYNC_MS` | No | Lip-sync correction in ms (default `0`). Audio and video send on independent threads, so a constant offset can appear. **Positive** advances audio (fixes "audio behind"); **negative** delays audio (fixes "audio ahead"). Dial in by testing; clamped to ±5000. |
-
-TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, the `!channels`, `!search`, and TVheadend-backed `!play` commands are not loaded.
+Variables the old Python bot used (`TVHEADEND_*`, `YTDLP_FORMAT`, `TIMEZONE`) are ignored, so an existing `.env` keeps working.
 
 ### Finding your Discord token
 
@@ -313,135 +181,151 @@ TVheadend is optional. If any of the three `TVHEADEND_*` variables are missing, 
 
 ## Commands
 
-### Voice
+Every command works as a short form (`!play`) and under `!media` (`!media play`). Names are case-insensitive. `!help <command>` shows the details of one command.
 
-| Command | Role | Description |
-|---|---|---|
-| `!join` | Friend | Join your current voice channel |
-| `!leave` | Friend | Leave the voice channel |
-| `!stop` | Friend | Stop the active stream |
+### Play
 
-### Streaming
+| Command | Description |
+|---|---|
+| `!play <title>` | Search and play, e.g. `!play big buck bunny` |
+| `!play <show> s03e05` | An episode (also `3x5`, `season 3 episode 5`, `episode 5 season 3`) |
+| `!play <show>` | Pick season → episode |
+| `!play <show> s03` | Pick an episode of season 3 (also `season 3`) |
+| Episode picker: `2,5,8` or `3-6` | Pick several episodes in order. With `!play` the first plays now and the rest are queued to play next; with `!playlist add` they all go to the end of the playlist (max 10). |
+| `!play <title> 1:23:45` | Start at a time (also `45m`, `90s`, `1h30m`) |
+| `!play "<title>"` | Quotes: read it all as the title |
 
-| Command | Role | Description |
-|---|---|---|
-| `!play <channel number>` | Friend | Play a TVheadend channel by number |
-| `!play <channel name>` | Friend | Play a channel by name (case-insensitive substring match; searches TVheadend and IPTV) |
-| `!play <URL>` | Friend | Play any URL — YouTube VODs, YouTube Live streams, direct HLS/HTTP/RTSP streams, `.cgi` MJPEG feeds, etc. Live streams are detected automatically and streamed without downloading. |
-| `!channels` | Viewer | List all available channels with live now-playing info (paginated) |
-| `!channels <keyword>` | Viewer | Filter the channel list by name (case-insensitive substring match) |
-| `!search <show title>` | Friend | Search EPG for a show — plays immediately if airing now, or schedules for upcoming airtime. Showtimes are shown in the `TIMEZONE` configured in `.env`. |
+Arguments are recognised by their format, in any order. If they find nothing, the whole text is searched as a title.
 
-### Jellyfin
+### Control
 
-| Command | Role | Description |
-|---|---|---|
-| `!media <title>` | Friend | Search Jellyfin for a movie or series and stream it into your voice channel. A single movie match plays immediately. For series, the bot walks you through season → episode selection. Accepts an optional `sXXeYY` suffix (e.g. `!media breaking bad s03e05`) to jump directly to a specific episode. Transcoding is handled server-side by Jellyfin; subtitles are always suppressed. |
+| Command | Description |
+|---|---|
+| `!play` | Resume, or start the playlist |
+| `!pause` | Pause |
+| `!time` | Show the position; `!time 1:23:45` jumps (`1:23` = 1 h 23 min). `!play 1:23:45` also jumps while something plays. |
+| `!skip` | Next playlist item |
+| `!stop` | Stop, stay in voice |
+| `!leave` | Stop and leave the voice channel |
+| `!join` | Join your voice channel |
+| `!channel set` | List the voice channels the bot can reach; reply with a number to move there (what's on air carries on) |
+| `!channel default` | Admins: pick a server, then the voice channel the bot uses there when you're not in voice (saved in `DATA_DIR`) |
+| `!language` / `!lang` | Audio + subtitles shortcut: `!language japanese english`, `!language english off` |
+| `!subs` / `!sub` / `!subtitles` | Pick subtitles, or `!subs english`, `!subs 2`, `!subs off` |
+| `!audio` | Pick the audio track, or `!audio japanese`, `!audio jpn` |
+| `!ar` / `!aspect` / `!aspect-ratio` | Picture shape: `!ar 16:9`, `!ar widescreen`, `!ar scope`, `!ar original` |
+| `!res` / `!resolution` | Output resolution: `!res 360p`, `480p`, `540p`, `720p`, `1080p`, `!res default`. Lower resolutions also lower the bitrate; applies now and to later items. |
+| `!debug` | Admins: stream stats; `!debug on` / `off` toggles the overlay |
+| `!event unsubscribe` / `!event subscribe` | Stop the bot running an upcoming event with a list, or have it run one again — pick from a numbered list of every server's events (saved in `DATA_DIR`) |
 
-### IPTV Source Management
+Not in a voice channel? From a server channel, `!play` and `!join` use the bot's current voice channel, or else the server's default voice channel (`!channel default`), or else its first one (not the AFK one). They stop again if nobody joins within the empty-channel timeout (`EMPTY_CHANNEL_TIMEOUT_MINUTES`, default 15), with a note in that voice channel's chat.
 
-| Command | Role | Description |
-|---|---|---|
-| `!add-source <name> <url>` | Admin | Add an M3U playlist source |
-| `!sources` | Admin | List all sources with enabled/disabled status |
-| `!sources enable <name>` | Admin | Enable a source |
-| `!sources disable <name>` | Admin | Disable a source |
-| `!delete-source` | Admin | Interactively delete a source |
+The bot's account can only be in one voice call at a time. If it's already streaming in another server, `!play` (and anything else that starts a stream) says what's on there and asks you to reply `yes` before stopping it; `no`, or no answer, leaves it running.
+
+Pickers accept a number or a name, and time out after 30 seconds.
+
+### Playlist
+
+| Command | Description |
+|---|---|
+| `!playlist` | What's playing and up next, numbered. Then reply `add`, `remove` or `order` to change it — the bot asks for the rest. |
+| `!playlist add <title>` | Add to the end (max 10, plays from the start); `!playlist add <show> s01e02`, `s1e1-6` |
+| `!playlist remove <# or title>` | Take an item off, e.g. `!playlist remove 2` |
+| `!playlist order <# or title> <new #>` | Move an item, e.g. `!playlist order 3 1` (item 3 to the top) |
+| `!schedule` | When each queued item starts and when it all ends, from the time left in what's on now (in each reader's time zone) |
+| `!schedule events` | Every upcoming event with screenings — this server's, or every server's in a DM — soonest first, each with its item start times and end time |
+
+Leave out what comes after `add`, `remove` or `order` and the bot asks for it. The old `!queue`, `!remove` and `!order` still work and point to their new names.
 
 ### General
 
-| Command | Role | Description |
-|---|---|---|
-| `!ping` | Any | Check if the bot is responding |
-| `!help` | Any | List available commands |
+| Command | Description |
+|---|---|
+| `!help` | All commands; `!help <command>` for one; `!help all` for every command in detail |
+| `!ping` | Is the bot alive? |
+
+### Discord Events (screenings)
+
+Schedule a **voice channel** event in Discord and list what to play in its description, under a line `Screenings` (any case, colon optional). `Screening`, `Showing`, `Showings`, `Playlist`, `Play list`, `Runlist`, `Run list` and `Run-list` work too, also at the end of a short line such as `Now showing:` or `Movie playlist` (up to three words before the keyword; not on a bulleted line). The first such line starts the list. Each item is written like `!play`: a title, an episode (`example show s1e2`) or several (`example show s1e1-3`), numbered, bulleted or one per line:
+
+```
+Our monthly movie night!
+
+Screenings:
+1. Big Buck Bunny
+2. Example Show s1e1-3
+```
+
+- At the event's start time (within 30 seconds) the bot starts the event and streams the screenings in the event's voice channel, taking over anything already playing. Starting the event by hand in Discord starts them too.
+- The bot learns of new and edited events as Discord announces them, and fetches every server's events itself only at startup and every 15 minutes, in case an announcement was missed.
+- Only events created by someone allowed to use `!play` count. Once the bot has picked an event up, it marks itself **Interested** in it (and removes that if the event is edited so it no longer qualifies).
+- In that voice channel's chat it posts the schedule: when each item starts and when it all ends, shown in each person's own time zone.
+- A title that isn't found, or matches several things, is sorted out with the event's creator in a **DM**: as soon as the event is created or its description edited, and again when it starts if still open. For a missing title they reply with another title to search for (or `skip`); for several matches they pick from a numbered list. At the start the question stays open until shortly before that item is due; unanswered, several matches play the first and a missing title is skipped, with a note in the voice channel's chat. The schedule is posted again after each answer. If the creator can't be messaged, several matches are asked about in the voice channel's chat instead (anyone allowed to `!play` can answer) and missing titles are skipped.
+- `!event unsubscribe` opts an event out (the bot drops its Interested mark and won't run it); `!event subscribe` opts it back in. The choice is saved.
+- Left alone, the bot plays the whole list, even if the channel is empty (the empty-channel timeout doesn't apply), then ends the event and leaves.
+- Change the playlist during the event (`!play`, `!skip`, `!playlist add` / `remove` / `order`) and it's under manual control: the empty-channel timeout applies again, and after the last screening it carries on with the playlist instead of leaving. The event is still ended in Discord.
+- The bot's account needs **Manage Events** in the server to start and end events (the screenings still run without it), and permission to post in the voice channel's chat.
+
+#### Jellyfin SyncPlay (group watch)
+
+With `JELLYFIN_USERNAME` / `JELLYFIN_PASSWORD` set, the bot opens a SyncPlay group named after the Discord server. Join it in a Jellyfin app to pause, play and seek the Discord stream together.
 
 ### Permission tiers
 
 | Role | Who qualifies |
 |---|---|
-| **Admin** | User IDs listed in `ALLOWED_USER_IDS` |
-| **Friend** | Users on the bot account's friends list |
-| **Viewer** | Members of any guild the bot account is in |
-| **None** | Everyone else |
+| **Admin** | User IDs listed in `ALLOWED_USER_IDS` — everything, including the admin-only `!debug` and `!channel default` |
+| **Friend** | Users on the bot account's friends list — every other command (`!play`, playlist, tracks, `!channel set`, `!event`, …), and their Discord events with a list are run |
+| **Everyone else** | Anyone who isn't an admin or a friend, including members of the bot's servers — no commands at all, not even `!help` or `!ping` |
+
+A command run by someone whose role doesn't allow it gets a GIF in reply (a bare link, so Discord plays it inline).
 
 ---
 
-## Updating the Docker Container
-
-### Pre-built image (Option A)
-
-Pull the newest published image and recreate the container:
+## Updating
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose pull && docker compose up -d
 ```
 
-If you pinned a version tag (e.g. `:1.2.3`), bump it in `docker-compose.yml` before pulling to move to a newer release.
-
-### Built from source (Option B)
-
-When you pull new changes to the project, rebuild the image:
+Built from source:
 
 ```bash
-# Pull latest changes
-git pull
-
-# Rebuild the image and restart the container
-docker compose up -d --build
+git pull && docker compose up -d --build
 ```
 
-If you only changed `.env` (no code changes), a restart is enough - no rebuild needed:
+### Upgrading from Slopsoil
+
+The image, the compose service and the image variable were renamed. Use the new image `ghcr.io/briggsyj/jellysend` and service `jellysend` in your compose file, and rename `SLOPSOIL_IMAGE` to `JELLYSEND_IMAGE` in `.env` if you pin a build. Then remove the old container so two bots don't run on the same account:
 
 ```bash
-docker compose restart
-```
-
-To completely reset the container and its image (does **not** delete IPTV source data, which lives in the volume):
-
-```bash
-docker compose down
-docker compose up -d --build
-```
-
-To also wipe the IPTV source data volume:
-
-```bash
-docker compose down -v
-docker compose up -d --build
+docker compose pull && docker compose up -d --remove-orphans
 ```
 
 ---
 
 ## Hardware Acceleration
 
-slopsoil auto-detects the best available H.264 encoder in this priority order:
+JellySend picks the best working H.264 encoder in this order:
 
 | Encoder | Type | Requires |
 |---|---|---|
 | `h264_nvenc` | NVIDIA GPU | NVIDIA driver + `nvidia-container-toolkit` |
 | `h264_vaapi` | VA-API (Intel/AMD) | `/dev/dri` device |
-| `libopenh264` | Cisco software | Included in `ffmpeg-free` |
-| `libx264` | Software (fallback) | **Not used** in Docker (see below) |
+| `libopenh264` | Cisco software | Included in the image |
 
-### Enabling VA-API in Docker
+### VA-API in Docker
 
-Uncomment the `devices` section in `docker-compose.yml`:
+Map the render device in `docker-compose.yml`:
 
 ```yaml
 devices:
   - /dev/dri:/dev/dri
 ```
 
-Then recreate the container (add `--build` if you build from source):
+### NVIDIA NVENC in Docker
 
-```bash
-docker compose up -d
-```
-
-### Enabling NVIDIA NVENC in Docker
-
-Install [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), then add to `docker-compose.yml`:
+Install [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), then add:
 
 ```yaml
 deploy:
@@ -453,48 +337,37 @@ deploy:
           capabilities: [gpu]
 ```
 
-### Why libx264 isn't used in Docker
+### Why libx264 isn't used
 
-The Docker image is based on Fedora and uses `ffmpeg-free`. This package does not include `libx264` (which requires a separate RPM Fusion repository and a different FFmpeg build). More importantly, `libx264`-encoded streams cause Discord to silently drop the stream after the very first frame. `libopenh264` and the hardware encoders do not have this problem. See [STREAMING.md](STREAMING.md) for the technical details.
+The image is based on Fedora's `ffmpeg-free`, which does not include `libx264`. More importantly, `libx264`-encoded streams cause Discord to silently drop the stream after the first frame; `libopenh264` and the hardware encoders do not.
 
 ---
 
-## Running Tests
+## Development
 
-The test suite covers the permissions system, the IPTV/EPG and stream-probing services, the Jellyfin and TVheadend clients, the yt-dlp helpers, the video player's stream-profile logic, voice utilities, the video compat patches, and the DAVE shim logic.
-
-### Install test dependencies
+Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download), `libsodium` and `libopus` (Debian/Ubuntu: `libsodium23 libopus0`), and FFmpeg for the end-to-end tests.
 
 ```bash
-source venv/bin/activate
-pip install pytest pytest-asyncio pytest-mock
+ci/test.sh
 ```
 
-Or without activating the venv:
+`ci/test.sh` builds the solution, runs the tests with coverage and fails below 90 % line coverage. CI runs the same script. The long-run soak harness is described in [`tests/soak/README.md`](tests/soak/README.md).
 
-```bash
-venv/bin/pip install pytest pytest-asyncio pytest-mock
-```
+Dependencies are kept current by [Dependabot](.github/dependabot.yml): every Monday it opens pull requests into `develop` for NuGet packages, the .NET SDK in `global.json`, the Dockerfile's base images and the GitHub Actions, and CI checks each one. Major upgrades (.NET, Fedora) are left for deliberate updates.
 
-### Run all tests
+Features are planned with [Spec Kit](https://github.com/github/spec-kit): specs, plans and tasks live in [`specs/`](specs/), and the project principles in [`.specify/memory/constitution.md`](.specify/memory/constitution.md).
 
-```bash
-venv/bin/pytest
-```
+---
 
-### Useful flags
+## Origin & credits
 
-```bash
-# Verbose output with print statements
-venv/bin/pytest -v -s
+JellySend is a fork of [Slopsoil](https://github.com/dev-topsoil/slopsoil) by topsoil ([dev-topsoil](https://github.com/dev-topsoil)) and its contributors, rewritten in .NET, November 2026. The git history keeps every original commit and its author.
 
-# Stop on first failure
-venv/bin/pytest -x
+This is a modified version of Slopsoil. It is not the official Slopsoil project and is not endorsed by its authors. If you enjoy it, you can also support Slopsoil's author: [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/devtopsoil)
 
-# Run a specific file
-venv/bin/pytest tests/test_permissions.py
+Copyright (C) 2026 John Briggs  
+Slopsoil copyright (C) 2026 its authors.
 
-# With coverage report
-venv/bin/pip install pytest-cov
-venv/bin/pytest --cov --cov-report=term-missing
-```
+## Licence
+
+JellySend is free software, distributed under the GNU General Public License version 3, the same licence as Slopsoil — see [`LICENSE`](LICENSE). It comes with no warranty.

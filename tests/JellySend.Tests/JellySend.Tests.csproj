@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\JellySend.Commands\JellySend.Commands.csproj" />
+    <ProjectReference Include="..\..\src\JellySend.Common\JellySend.Common.csproj" />
+    <ProjectReference Include="..\..\src\JellySend.Discord\JellySend.Discord.csproj" />
+    <ProjectReference Include="..\..\src\JellySend.Host\JellySend.Host.csproj" />
+    <ProjectReference Include="..\..\src\JellySend.Services\JellySend.Services.csproj" />
+    <ProjectReference Include="..\..\src\JellySend.Streaming\JellySend.Streaming.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.MTP" Version="10.1.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Vectors/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+</Project>

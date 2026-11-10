@@ -1,0 +1,216 @@
+using System.Globalization;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using JellySend.Discord.Gateway;
+
+namespace JellySend.Discord.Rest;
+
+/// <summary>Raised for a non-success Discord REST response (the body is not included: it may echo content).</summary>
+public sealed class DiscordRestException(HttpStatusCode status, string route)
+    : Exception($"Discord REST {route} failed with HTTP {(int)status}")
+{
+    public HttpStatusCode Status { get; } = status;
+}
+
+/// <summary>
+/// The REST calls the bot needs, sent with the same browser-like headers as <c>discord.py-self</c>
+/// (<c>HTTPClient.request</c>): user token, user agent, base64 <c>X-Super-Properties</c>, locale.
+/// 429s wait for <c>retry_after</c> and retry (at most <see cref="MaxRetries"/> times).
+/// </summary>
+public sealed class DiscordRestClient
+{
+    public const int MaxRetries = 3;
+
+    /// <summary>Discord's epoch (2015-01-01) for nonce snowflakes.</summary>
+    public const long DiscordEpochMs = 1_420_070_400_000;
+
+    private readonly HttpClient _http;
+    private readonly string _token;
+    private readonly ClientProperties _properties;
+    private readonly TimeProvider _time;
+    private readonly string _superProperties;
+
+    public DiscordRestClient(HttpClient http, string token, ClientProperties? properties = null, TimeProvider? time = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        _http = http;
+        _token = token;
+        _properties = properties ?? new ClientProperties();
+        _time = time ?? TimeProvider.System;
+        _superProperties = Convert.ToBase64String(Encoding.UTF8.GetBytes(_properties.ToSuperPropertiesJson().ToJsonString()));
+    }
+
+    public static Uri ApiBase { get; } = new("https://discord.com/api/v9/");
+
+    /// <summary>POST /channels/{id}/messages (<c>Messageable.send</c>).</summary>
+    public Task SendMessageAsync(ulong channelId, string content, CancellationToken ct)
+    {
+        var body = new JsonObject
+        {
+            ["mobile_network_type"] = "unknown",
+            ["content"] = content,
+            ["nonce"] = Nonce(),
+            ["tts"] = false,
+            ["flags"] = 0,
+        };
+        return (Task)SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/messages", body, ct);
+    }
+
+    /// <summary>Time-based snowflake, as <c>utils._generate_nonce</c>.</summary>
+    /// <summary>
+    /// The guild's voice channels in the order Discord lists them (position, then id), without its AFK channel
+    /// (spec 023: where to broadcast when the person asking isn't in voice).
+    /// </summary>
+    public async Task<IReadOnlyList<(ulong Id, string Name)>> GetVoiceChannelsAsync(ulong guildId, CancellationToken ct)
+    {
+        var id = guildId.ToString(CultureInfo.InvariantCulture);
+        using var guild = JsonDocument.Parse(await SendAsync(HttpMethod.Get, $"guilds/{id}", null, ct).ConfigureAwait(false));
+        ulong? afk = guild.RootElement.TryGetProperty("afk_channel_id", out var a) && a.ValueKind == JsonValueKind.String
+            && ulong.TryParse(a.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var afkId) ? afkId : null;
+        using var channels = JsonDocument.Parse(await SendAsync(HttpMethod.Get, $"guilds/{id}/channels", null, ct).ConfigureAwait(false));
+        return [.. channels.RootElement.EnumerateArray()
+            .Where(c => c.TryGetProperty("type", out var t) && t.TryGetInt32(out var type) && type == VoiceChannelType)
+            .Select(c => (
+                Id: ulong.Parse(c.GetProperty("id").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture),
+                Name: c.TryGetProperty("name", out var n) && n.GetString() is { } name ? name : "voice",
+                Position: c.TryGetProperty("position", out var p) && p.TryGetInt32(out var pos) ? pos : int.MaxValue))
+            .Where(c => c.Id != afk)
+            .OrderBy(c => c.Position).ThenBy(c => c.Id)
+            .Select(c => (c.Id, c.Name))];
+    }
+
+    /// <summary>
+    /// The guild's scheduled events (spec 028): id, name, description, voice channel, status (1 scheduled, 2 active,
+    /// 3 completed, 4 cancelled), entity type (2 voice), scheduled start and creator.
+    /// </summary>
+    public async Task<IReadOnlyList<ScheduledEvent>> GetScheduledEventsAsync(ulong guildId, CancellationToken ct)
+    {
+        using var events = JsonDocument.Parse(await SendAsync(
+            HttpMethod.Get, $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events", null, ct).ConfigureAwait(false));
+        return [.. events.RootElement.EnumerateArray().Select(e => new ScheduledEvent(
+            Snowflake(e, "id") ?? 0,
+            guildId,
+            e.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
+            e.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString()! : "",
+            Snowflake(e, "channel_id"),
+            e.TryGetProperty("status", out var s) && s.TryGetInt32(out var status) ? status : 0,
+            e.TryGetProperty("entity_type", out var t) && t.TryGetInt32(out var type) ? type : 0,
+            e.TryGetProperty("scheduled_start_time", out var st) && st.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(st.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var start)
+                ? start : DateTimeOffset.MaxValue,
+            Snowflake(e, "creator_id")))];
+    }
+
+    /// <summary>PATCH an event's status (spec 028): 2 starts it, 3 ends it.</summary>
+    public Task SetScheduledEventStatusAsync(ulong guildId, ulong eventId, int status, CancellationToken ct) =>
+        SendAsync(
+            new HttpMethod("PATCH"),
+            $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events/{eventId.ToString(CultureInfo.InvariantCulture)}",
+            new JsonObject { ["status"] = status },
+            ct);
+
+    private static ulong? Snowflake(JsonElement e, string property) =>
+        e.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
+        && ulong.TryParse(v.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) ? id : null;
+
+    /// <summary>
+    /// Mark the account as interested in an event, or not (spec 033) — the event's "Interested" button.
+    /// </summary>
+    public Task SetEventInterestAsync(ulong guildId, ulong eventId, bool interested, CancellationToken ct) =>
+        SendAsync(
+            interested ? HttpMethod.Put : HttpMethod.Delete,
+            $"guilds/{guildId.ToString(CultureInfo.InvariantCulture)}/scheduled-events/{eventId.ToString(CultureInfo.InvariantCulture)}/users/@me",
+            null,
+            ct);
+
+    /// <summary>Open (or reuse) the direct-message channel with <paramref name="userId"/> (spec 031); its id.</summary>
+    public async Task<ulong?> OpenDmAsync(ulong userId, CancellationToken ct)
+    {
+        using var channel = JsonDocument.Parse(await SendAsync(
+            HttpMethod.Post,
+            "users/@me/channels",
+            new JsonObject { ["recipients"] = new JsonArray(userId.ToString(CultureInfo.InvariantCulture)) },
+            ct).ConfigureAwait(false));
+        return Snowflake(channel.RootElement, "id");
+    }
+
+    /// <summary>The servers the account is in (spec 027: <c>!channel default</c>), in Discord's order.</summary>
+    public async Task<IReadOnlyList<(ulong Id, string Name)>> GetGuildsAsync(CancellationToken ct)
+    {
+        using var guilds = JsonDocument.Parse(await SendAsync(HttpMethod.Get, "users/@me/guilds", null, ct).ConfigureAwait(false));
+        return [.. guilds.RootElement.EnumerateArray().Select(g => (
+            ulong.Parse(g.GetProperty("id").GetString()!, NumberStyles.None, CultureInfo.InvariantCulture),
+            g.TryGetProperty("name", out var n) && n.GetString() is { } name ? name : "server"))];
+    }
+
+    /// <summary>Discord's channel type for a voice channel (stage channels, 13, are left out).</summary>
+    public const int VoiceChannelType = 2;
+
+    /// <summary>POST /channels/{id}/typing: "typing…" for about 10 seconds or until the next message (spec 035).</summary>
+    public Task TriggerTypingAsync(ulong channelId, CancellationToken ct) =>
+        SendAsync(HttpMethod.Post, $"channels/{channelId.ToString(CultureInfo.InvariantCulture)}/typing", null, ct);
+
+    internal string Nonce() =>
+        ((_time.GetUtcNow().ToUnixTimeMilliseconds() - DiscordEpochMs) << 22).ToString(CultureInfo.InvariantCulture);
+
+    private async Task<string> SendAsync(HttpMethod method, string route, JsonNode? body, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            using var request = new HttpRequestMessage(method, new Uri(ApiBase, route));
+            request.Headers.TryAddWithoutValidation("Authorization", _token);
+            request.Headers.TryAddWithoutValidation("User-Agent", _properties.UserAgent);
+            request.Headers.TryAddWithoutValidation("X-Super-Properties", _superProperties);
+            request.Headers.TryAddWithoutValidation("X-Discord-Locale", _properties.SystemLocale);
+            request.Headers.TryAddWithoutValidation("X-Debug-Options", "bugReporterEnabled");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+            request.Headers.TryAddWithoutValidation("Origin", "https://discord.com");
+            request.Headers.TryAddWithoutValidation("Referer", "https://discord.com/channels/@me");
+            if (body is not null)
+            {
+                request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+            }
+
+            using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                return await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            }
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt < MaxRetries)
+            {
+                var wait = await RetryAfterAsync(response, ct).ConfigureAwait(false);
+                await Task.Delay(wait, _time, ct).ConfigureAwait(false);
+                continue;
+            }
+
+            throw new DiscordRestException(response.StatusCode, $"{method} {route}");
+        }
+    }
+
+    /// <summary><c>retry_after</c> seconds from the JSON body, else the Retry-After header, else 1 s; capped at 60 s.</summary>
+    private static async Task<TimeSpan> RetryAfterAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        double? seconds = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+            if (doc.RootElement.TryGetProperty("retry_after", out var r) && r.TryGetDouble(out var v))
+            {
+                seconds = v;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        seconds ??= response.Headers.RetryAfter?.Delta?.TotalSeconds;
+        return TimeSpan.FromSeconds(Math.Clamp(seconds ?? 1.0, 0.0, 60.0));
+    }
+}
+
+/// <summary>A Discord scheduled event (spec 028).</summary>
+public sealed record ScheduledEvent(
+    ulong Id, ulong GuildId, string Name, string Description, ulong? ChannelId, int Status, int EntityType, DateTimeOffset Start, ulong? CreatorId);

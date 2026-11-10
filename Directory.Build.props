@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <!-- Product metadata. JellySend is a fork of Slopsoil (GPL-3.0); see README "Origin & credits" and LICENSE. -->
+  <PropertyGroup>
+    <Product>JellySend</Product>
+    <Title>JellySend</Title>
+    <Description>Discord self-bot that streams Jellyfin into a Discord voice channel. A fork of Slopsoil, rewritten in .NET.</Description>
+    <Authors>John Briggs</Authors>
+    <Copyright>Copyright (C) 2026 John Briggs. Slopsoil copyright (C) 2026 its authors.</Copyright>
+  </PropertyGroup>
+</Project>

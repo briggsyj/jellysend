@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JellySend.Commands\JellySend.Commands.csproj" />
+    <ProjectReference Include="..\JellySend.Services\JellySend.Services.csproj" />
+    <ProjectReference Include="..\JellySend.Streaming\JellySend.Streaming.csproj" />
+    <ProjectReference Include="..\JellySend.Discord\JellySend.Discord.csproj" />
+    <ProjectReference Include="..\JellySend.Common\JellySend.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+</Project>

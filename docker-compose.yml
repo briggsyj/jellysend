@@ -1,14 +1,14 @@
 services:
-  slopsoil:
+  jellysend:
+    # Image published by this repo's "Publish Docker image" workflow.
+    # `docker compose pull && docker compose up -d` uses the CI-built image;
+    # `docker compose up -d --build` builds locally instead. Override with
+    # JELLYSEND_IMAGE in .env (e.g. a sha-xxxxxxx tag to pin a build).
+    image: ${JELLYSEND_IMAGE:-ghcr.io/briggsyj/jellysend:latest}
     build: .
     restart: unless-stopped
     env_file: .env
-
-    # Persist IPTV source list across container restarts.
     volumes:
-      - slopsoil-data:/root/.local/share/slopsoil
+      - ./data:/data        # saved settings (e.g. each server's default voice channel)
     devices:
-      - /dev/dri:/dev/dri
-
-volumes:
-  slopsoil-data:
+      - /dev/dri:/dev/dri   # VA-API hardware encoding (Intel/AMD)

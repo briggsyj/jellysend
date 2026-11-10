@@ -1,30 +1,20 @@
 name: Unit tests
 description: >-
-  Set up Python and run the slopsoil unit test suite. Thin GitHub wrapper around
-  the provider-agnostic ci/test/run.sh so the same invocation works locally and
-  in CI.
-
-inputs:
-  python-version:
-    description: Python version to set up.
-    required: false
-    default: "3.12"
-  pytest-args:
-    description: Extra arguments forwarded to pytest.
-    required: false
-    default: ""
+  Set up .NET and run the jellysend test suite with its coverage gate. Thin GitHub
+  wrapper around ci/test.sh so the same invocation works locally and in CI.
 
 runs:
   using: composite
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v5
       with:
-        python-version: ${{ inputs.python-version }}
-        cache: pip
+        global-json-file: global.json
 
-    - name: Run unit tests
+    - name: Install native dependencies
       shell: bash
-      env:
-        PYTEST_ARGS: ${{ inputs.pytest-args }}
-      run: "${GITHUB_WORKSPACE}/ci/test/run.sh"
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium23 libopus0 ffmpeg
+
+    - name: Run tests with coverage gate
+      shell: bash
+      run: "${GITHUB_WORKSPACE}/ci/test.sh"
